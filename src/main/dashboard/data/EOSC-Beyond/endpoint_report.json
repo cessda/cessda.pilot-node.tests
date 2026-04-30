@@ -1,0 +1,78 @@
+{
+  "generated": "2026-04-30T09:48:35+01:00",
+  "node_name": "EOSC-Beyond",
+  "node_id": "4",
+  "node_pid": "21.T15999/EOSC-BEYOND",
+  "node_endpoint": "https://providers.sandbox.eosc-beyond.eu/node/endpoint",
+  "legal_entity": {
+    "name": "EGI",
+    "ror_id": "https://ror.org/052jj4m32"
+  },
+  "total_capabilities": 9,
+  "available_capabilities": 6,
+  "capabilities": [
+  {
+    "capability_type": "Resource Catalogue",
+    "endpoint": "https://providers.sandbox.eosc-beyond.eu/api",
+    "version": "5.2",
+    "status": "Available",
+    "http_code": "302"
+  },
+  {
+    "capability_type": "AAI",
+    "endpoint": "https://core-proxy.sandbox.eosc-beyond.eu/auth/realms/core",
+    "version": "1.0.0",
+    "status": "Available",
+    "http_code": "200"
+  },
+  {
+    "capability_type": "Execution Framework",
+    "endpoint": "https://deploy.sandbox.eosc-beyond.eu/",
+    "version": "1.0.0",
+    "status": "Not available",
+    "http_code": "502"
+  },
+  {
+    "capability_type": "Monitoring",
+    "endpoint": "https://core.sandbox.eosc-beyond.eu/",
+    "version": "1.0.0",
+    "status": "Not available",
+    "http_code": "000"
+  },
+  {
+    "capability_type": "Accounting",
+    "endpoint": "https://ui.acc.argo.grnet.gr/",
+    "version": "1.0.0",
+    "status": "Available",
+    "http_code": "200"
+  },
+  {
+    "capability_type": "Order Management",
+    "endpoint": "https://userspace.sandbox.eosc-beyond.eu/",
+    "version": "3.60.0",
+    "status": "Available",
+    "http_code": "200"
+  },
+  {
+    "capability_type": "Front Office",
+    "endpoint": "https://userspace.sandbox.eosc-beyond.eu/",
+    "version": "3.60.0",
+    "status": "Available",
+    "http_code": "200"
+  },
+  {
+    "capability_type": "Helpdesk",
+    "endpoint": "https://ansible-awx.scc.kit.edu/webhook/docs",
+    "version": "1.0.0",
+    "status": "Not found",
+    "http_code": "404"
+  },
+  {
+    "capability_type": "Application Deployment Management",
+    "endpoint": "https://deploy.sandbox.eosc-beyond.eu/adim",
+    "version": "0.5.0",
+    "status": "Available",
+    "http_code": "307"
+  }
+]
+}

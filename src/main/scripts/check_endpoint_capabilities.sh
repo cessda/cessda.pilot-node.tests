@@ -4,9 +4,18 @@
 # Queries the Node Registry and checks availability of capabilities for all
 # registered nodes.
 #
+<<<<<<< Updated upstream:src/main/scripts/check_endpoint_capabilities.sh
 # Usage: ./check_endpoint_capabilities.sh <API_KEY> [format]
 #   format: text, json, or both (default: both)
 #   Example: ./check_endpoint_capabilities.sh myapikey json
+=======
+# Usage:           ./check_node_capabilities.sh API_KEY [format] [dashboard_dir]
+# format:          text, json, or both (default: both)
+# dashboard_dir:   Path to the dashboard data directory (optional)
+#                  Per-node output is written to <dashboard_dir>/<NODE_NAME>/
+#                  The registry summary is written to <dashboard_dir>/
+#                  Example: ./check_node_capabilities.sh myapikey json ../dashboard/data
+>>>>>>> Stashed changes:src/main/scripts/check_node_capabilities.sh
 
 NODE_REGISTRY_URL="https://node-devel.eosc.grnet.gr/federation-backend/tenants/eosc-beyond/nodes"
 TIMESTAMP=$(date +%Y%m%d_%H%M%S)

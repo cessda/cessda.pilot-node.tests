@@ -1,0 +1,43 @@
+{
+  "generated": "2026-04-30T09:48:31+01:00",
+  "node_name": "NFDI",
+  "node_id": "8",
+  "node_pid": "21.T15999/NFDI",
+  "node_endpoint": "https://nfdi-pilot-endpoint.desy.de/api/endpoint",
+  "legal_entity": {
+    "name": "German National Research Data Infrastructure",
+    "ror_id": "https://ror.org/05qj6w324"
+  },
+  "total_capabilities": 4,
+  "available_capabilities": 4,
+  "capabilities": [
+  {
+    "capability_type": "Resource Catalogue",
+    "endpoint": "https://public-data.desy.de",
+    "version": "1.0.0",
+    "status": "Available",
+    "http_code": "200"
+  },
+  {
+    "capability_type": "PID",
+    "endpoint": "https://public-doi.desy.de",
+    "version": "1.0.0",
+    "status": "Available",
+    "http_code": "200"
+  },
+  {
+    "capability_type": "Front Office",
+    "endpoint": "https://nfdi-pilot.desy.de",
+    "version": "1.0.0",
+    "status": "Available",
+    "http_code": "200"
+  },
+  {
+    "capability_type": "AAI",
+    "endpoint": "https://login-dev.helmholtz.de/oauth2",
+    "version": "1.0.0",
+    "status": "Available",
+    "http_code": "301"
+  }
+]
+}

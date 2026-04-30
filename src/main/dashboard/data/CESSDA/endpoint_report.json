@@ -1,0 +1,50 @@
+{
+  "generated": "2026-04-30T09:48:38+01:00",
+  "node_name": "CESSDA",
+  "node_id": "6",
+  "node_pid": "21.T15999/CESSDA",
+  "node_endpoint": "https://node-endpoint-staging.beyond.cessda.eu/api/endpoint",
+  "legal_entity": {
+    "name": "Consortium of European Social Science Data Archives",
+    "ror_id": "https://ror.org/02wg9xc72"
+  },
+  "total_capabilities": 5,
+  "available_capabilities": 5,
+  "capabilities": [
+  {
+    "capability_type": "Front Office",
+    "endpoint": "https://marketplace-staging.cessda.eu/",
+    "version": "4.1.0",
+    "status": "Available",
+    "http_code": "200"
+  },
+  {
+    "capability_type": "AAI",
+    "endpoint": "https://idp.cessda.eu/",
+    "version": "1.0.0",
+    "status": "Available",
+    "http_code": "302"
+  },
+  {
+    "capability_type": "Monitoring",
+    "endpoint": "https://cessda.ui.devel.mon.argo.grnet.gr/cessda/CORE",
+    "version": "1.0.0",
+    "status": "Available",
+    "http_code": "200"
+  },
+  {
+    "capability_type": "Resource Catalogue",
+    "endpoint": "https://service-catalogue-staging.beyond.cessda.eu/",
+    "version": "5.2.0",
+    "status": "Available",
+    "http_code": "200"
+  },
+  {
+    "capability_type": "Helpdesk",
+    "endpoint": "https://helpdesk.cessda.eu/",
+    "version": "1.0.0",
+    "status": "Available",
+    "http_code": "200"
+  }
+]
+}

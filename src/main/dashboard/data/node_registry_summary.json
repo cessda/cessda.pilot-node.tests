@@ -1,0 +1,43 @@
+{
+  "generated": "2026-04-30T09:48:39+01:00",
+  "registry_source": "https://node-devel.eosc.grnet.gr/federation-backend/tenants/eosc-beyond/nodes",
+  "nodes": [{
+  "name": "ENES",
+  "endpoint": "https://enes-node-endpoint.pilot.eosc-beyond.eu/api/endpoint",
+  "total_capabilities": 5,
+  "available_capabilities": 5,
+  "report_file": "../dashboard/data/ENES/endpoint_report.json"
+}
+,
+{
+  "name": "NFDI",
+  "endpoint": "https://nfdi-pilot-endpoint.desy.de/api/endpoint",
+  "total_capabilities": 4,
+  "available_capabilities": 4,
+  "report_file": "../dashboard/data/NFDI/endpoint_report.json"
+}
+,
+{
+  "name": "EOSC-Beyond",
+  "endpoint": "https://providers.sandbox.eosc-beyond.eu/node/endpoint",
+  "total_capabilities": 9,
+  "available_capabilities": 6,
+  "report_file": "../dashboard/data/EOSC-Beyond/endpoint_report.json"
+}
+,
+{
+  "name": "CESSDA",
+  "endpoint": "https://node-endpoint-staging.beyond.cessda.eu/api/endpoint",
+  "total_capabilities": 5,
+  "available_capabilities": 5,
+  "report_file": "../dashboard/data/CESSDA/endpoint_report.json"
+}
+,
+{
+  "name": "NI4OS-EUROPE",
+  "endpoint": "https://frontoffice.ni4os.eu/api/endpoint",
+  "total_capabilities": 4,
+  "available_capabilities": 3,
+  "report_file": "../dashboard/data/NI4OS-EUROPE/endpoint_report.json"
+}]
+}
