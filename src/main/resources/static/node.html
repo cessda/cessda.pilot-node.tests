@@ -402,6 +402,16 @@ function uptimeColour(pct) {
   return 'red';
 }
 
+// A node meets MVP if it has both an AAI and a Resource Catalogue capability
+// with status "Available" in its endpoint report.
+function meetsMvp(endpointReport) {
+  if (!endpointReport || !Array.isArray(endpointReport.capabilities)) return false;
+  const avail = endpointReport.capabilities.filter(c => c.status === 'Available');
+  const hasAAI       = avail.some(c => c.capability_type === 'AAI');
+  const hasCatalogue = avail.some(c => c.capability_type === 'Resource Catalogue');
+  return hasAAI && hasCatalogue;
+}
+
 // ── Overview strip ────────────────────────────────────────────────────────────
 
 function buildOverview(ep, cat, argo) {
@@ -469,6 +479,15 @@ function buildOverview(ep, cat, argo) {
   } else {
     cards.push(`<div class="ov-card"><div class="ov-value" style="color:var(--grey-400)">—</div><div class="ov-label">Avg ARGO uptime</div></div>`);
   }
+
+  // MVP
+  const mvp = ep ? meetsMvp(ep) : null;
+  cards.push(mvp === null
+    ? `<div class="ov-card"><div class="ov-value" style="color:var(--grey-400)">—</div><div class="ov-label">Meet MVP</div></div>`
+    : mvp
+      ? `<div class="ov-card"><div class="ov-value green">✓</div><div class="ov-label">Meet MVP</div></div>`
+      : `<div class="ov-card"><div class="ov-value red">✗</div><div class="ov-label">Meet MVP</div></div>`
+  );
 
   return `<div class="overview-strip">${cards.join('')}</div>`;
 }

@@ -32,8 +32,8 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
-import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -57,8 +57,8 @@ import com.fasterxml.jackson.databind.node.ObjectNode;
  * <pre>
  *   dashboard.data-dir   = ../dashboard/data   # already used by DashboardDataController
  *   check.node-name      = CESSDA              # NODE_NAME arg for all three checks
- *   check.api-key-argo   =                     # API key for CheckServiceUptime
  *   check.api-key-node   =                     # API key for CheckNodeCapabilities
+ *   check.api-key-argo   =                     # fallback ARGO key if not supplied in request
  * </pre>
  *
  * <p>Jobs run asynchronously on a dedicated single-thread executor so that
@@ -136,7 +136,7 @@ public class CheckRunnerController {
                 checker.run();
                 rec.markDone("node_registry_summary.json written");
             } catch (Exception e) {
-                log.warning("CheckNodeCapabilities failed" + e);
+                log.warning("CheckNodeCapabilities failed: " + e.getMessage());
                 rec.markError(e.getMessage());
             }
         });
@@ -147,15 +147,26 @@ public class CheckRunnerController {
     /**
      * Triggers {@link CheckCatalogueServices}.
      *
-     * <p>Requires {@code check.node-name} to be set.</p>
+     * <p>Accepts a JSON body: {@code { "node": "...", "catalogueUrl": "..." }}.
+     * {@code node} is the target node name (overrides {@code check.node-name});
+     * {@code catalogueUrl} is the Resource Catalogue API base URL read from that
+     * node's {@code endpoint_report.json} (capability_type "Resource Catalogue")
+     * by the dashboard before making this call.</p>
      *
-     * @param quantity optional max services to retrieve (default 10)
+     * @param body JSON body containing {@code node} and {@code catalogueUrl}
      */
     @PostMapping("/catalogue-services")
     public ResponseEntity<ObjectNode> runCatalogueServices(
-            @RequestParam(defaultValue = "10") int quantity) {
-        if (nodeName.isBlank()) {
-            return configError("check.node-name is not configured");
+            @RequestBody Map<String, String> body) {
+
+        String targetNode   = body.getOrDefault("node", nodeName).strip();
+        String catalogueUrl = body.getOrDefault("catalogueUrl", "").strip();
+
+        if (targetNode.isBlank()) {
+            return configError("No node specified in request body and check.node-name is not configured");
+        }
+        if (catalogueUrl.isBlank()) {
+            return configError("catalogueUrl is required — it must be the Resource Catalogue endpoint for this node");
         }
 
         String jobId = jobId("catalogue-services");
@@ -165,17 +176,12 @@ public class CheckRunnerController {
         executor.submit(() -> {
             rec.markRunning();
             try {
-                // CheckCatalogueServices is a CLI-only class; invoke its logic
-                // through main() using a String[] args contract.
-                String[] args = {
-                    nodeName,
-                    String.valueOf(quantity),
-                    dataDirPath
-                };
+                // Arg order: NODE_NAME, api_base_url, [quantity], [dashboard_dir]
+                String[] args = { targetNode, catalogueUrl, "10", dataDirPath };
                 CheckCatalogueServices.main(args);
-                rec.markDone("catalogue_services_report.json written");
+                rec.markDone("catalogue_services_report.json written for " + targetNode);
             } catch (Exception e) {
-                log.warning("CheckCatalogueServices failed" + e);
+                log.warning("CheckCatalogueServices failed: " + e.getMessage());
                 rec.markError(e.getMessage());
             }
         });
@@ -186,50 +192,51 @@ public class CheckRunnerController {
     /**
      * Triggers {@link CheckServiceUptime}.
      *
-     * <p>Requires {@code check.node-name} and {@code check.api-key-argo}.</p>
+     * <p>Accepts a JSON body: {@code { "node": "...", "apiKey": "..." }}.
+     * {@code node} is the target node name (overrides {@code check.node-name});
+     * {@code apiKey} is the ARGO API key entered by the user in the dashboard
+     * modal — it is used only for this invocation and never persisted.
+     * Falls back to {@code check.api-key-argo} from config if not supplied.</p>
      *
-     * @param startDate optional start date (YYYY-MM-DD, defaults to 30 days ago)
-     * @param endDate   optional end date   (YYYY-MM-DD, defaults to today)
+     * @param body JSON body containing {@code node} and {@code apiKey}
      */
     @PostMapping("/service-uptime")
     public ResponseEntity<ObjectNode> runServiceUptime(
-            @RequestParam(required = false) String startDate,
-            @RequestParam(required = false) String endDate) {
-        if (argoApiKey.isBlank()) {
-            return configError("check.api-key-argo is not configured");
+            @RequestBody Map<String, String> body) {
+
+        String targetNode   = body.getOrDefault("node", nodeName).strip();
+        // User-supplied key takes precedence; config value is the fallback
+        String effectiveKey = body.getOrDefault("apiKey", "").strip();
+        if (effectiveKey.isBlank()) effectiveKey = argoApiKey;
+
+        if (targetNode.isBlank()) {
+            return configError("No node specified in request body and check.node-name is not configured");
         }
-        if (nodeName.isBlank()) {
-            return configError("check.node-name is not configured");
+        if (effectiveKey.isBlank()) {
+            return configError("No ARGO API key provided in request body and check.api-key-argo is not configured");
         }
 
-        LocalDate start = startDate != null
-                ? LocalDate.parse(startDate, DateTimeFormatter.ISO_LOCAL_DATE)
-                : LocalDate.now().minusDays(30);
-        LocalDate end = endDate != null
-                ? LocalDate.parse(endDate, DateTimeFormatter.ISO_LOCAL_DATE)
-                : LocalDate.now();
-
-        if (!start.isBefore(end)) {
-            ObjectNode err = mapper.createObjectNode();
-            err.put("error", "startDate must be before endDate");
-            return ResponseEntity.badRequest().body(err);
-        }
+        LocalDate start = LocalDate.now().minusDays(30);
+        LocalDate end   = LocalDate.now();
 
         String jobId = jobId("service-uptime");
         JobRecord rec = new JobRecord(jobId, "service-uptime");
         jobs.put(jobId, rec);
 
+        final String finalKey = effectiveKey; // final for lambda capture; goes out of scope after submit
+
         executor.submit(() -> {
             rec.markRunning();
             try {
                 CheckServiceUptime checker = new CheckServiceUptime(
-                        nodeName, argoApiKey, start, end, Path.of(dataDirPath));
+                        targetNode, finalKey, start, end, Path.of(dataDirPath));
                 checker.run();
-                rec.markDone("argo_uptime_report.json written");
+                rec.markDone("argo_uptime_report.json written for " + targetNode);
             } catch (Exception e) {
-                log.warning("CheckServiceUptime failed" + e);
+                log.warning("CheckServiceUptime failed: " + e.getMessage());
                 rec.markError(e.getMessage());
             }
+            // finalKey goes out of scope here — not stored anywhere
         });
 
         return ResponseEntity.accepted().body(statusBody(rec));
@@ -262,7 +269,7 @@ public class CheckRunnerController {
     }
 
     private ResponseEntity<ObjectNode> configError(String message) {
-        log.warning("Configuration error:  " + message);
+        log.warning("Configuration error: " + message);
         ObjectNode err = mapper.createObjectNode();
         err.put("error", message);
         err.put("hint",  "Set the missing property in application.properties");

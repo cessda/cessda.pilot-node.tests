@@ -416,6 +416,16 @@ function pctColour(pct) {
   return 'red';
 }
 
+// A node meets MVP if it has both an AAI and a Resource Catalogue capability
+// with status "Available" in its endpoint report.
+function meetsMvp(endpointReport) {
+  if (!endpointReport || !Array.isArray(endpointReport.capabilities)) return false;
+  const avail = endpointReport.capabilities.filter(c => c.status === 'Available');
+  const hasAAI      = avail.some(c => c.capability_type === 'AAI');
+  const hasCatalogue = avail.some(c => c.capability_type === 'Resource Catalogue');
+  return hasAAI && hasCatalogue;
+}
+
 // ── Card renderer ─────────────────────────────────────────────────────────────
 
 function renderNodeCard(node, reports) {
@@ -477,6 +487,21 @@ function renderNodeCard(node, reports) {
          <span class="rr-val missing">No report</span>
        </div>`;
 
+  // MVP row
+  const mvp = reports.endpoint
+    ? meetsMvp(reports.endpoint)
+    : null;
+  const mvpRow = `<div class="report-row">
+         <span class="rr-icon">🏆</span>
+         <span class="rr-label">MVP</span>
+         ${mvp === null
+           ? `<span class="rr-dot grey"></span><span class="rr-val missing">No endpoint report</span>`
+           : mvp
+             ? `<span class="rr-dot green"></span><span class="rr-val" style="color:var(--green)">Meets MVP</span>`
+             : `<span class="rr-dot red"></span><span class="rr-val" style="color:var(--red)">Does not meet MVP</span>`
+         }
+       </div>`;
+
   return `
   <a class="node-card ${statusClass === 'ok' ? '' : statusClass}"
      href="node.html#${encodeURIComponent(node.node_name)}">
@@ -487,7 +512,7 @@ function renderNodeCard(node, reports) {
       </div>
       <span class="status-badge status-${statusClass}">${statusText}</span>
     </div>
-    <div class="report-rows">${epRow}${catRow}${arRow}</div>
+    <div class="report-rows">${epRow}${catRow}${arRow}${mvpRow}</div>
     <div class="report-chips">${chips}</div>
     <div class="node-footer">
       <span>View node detail</span>
@@ -502,12 +527,14 @@ function renderSummaryStats(registry, allReports) {
   const totalNodes = registry.nodes.length;
   let okNodes = 0, totalCaps = 0, availCaps = 0;
 
+  let mvpNodes = 0;
   allReports.forEach(r => {
     const ep = summariseEndpoint(r.endpoint);
     const ar = summariseArgo(r.argo);
     if (statusBadgeFromReports(ep, ar)[0] === 'ok') okNodes++;
     // Count caps from the actual capabilities array, not the (potentially stale) registry field
     if (ep) { totalCaps += ep.total; availCaps += ep.avail; }
+    if (meetsMvp(r.endpoint)) mvpNodes++;
   });
 
   const degraded = totalNodes - okNodes;
@@ -521,6 +548,10 @@ function renderSummaryStats(registry, allReports) {
     <div class="stat-card">
       <div class="stat-value ${pctColour(upPct)}">${availCaps}<span style="font-size:1.25rem;color:var(--grey-400)">/${totalCaps}</span></div>
       <div class="stat-label">Available caps</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-value ${mvpNodes === totalNodes ? 'green' : mvpNodes > 0 ? 'orange' : 'red'}">${mvpNodes}<span style="font-size:1.25rem;color:var(--grey-400)">/${totalNodes}</span></div>
+      <div class="stat-label">Meet MVP</div>
     </div>`;
 }
 

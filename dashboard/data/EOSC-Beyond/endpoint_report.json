@@ -1,5 +1,5 @@
 {
-  "generated" : "2026-05-06T12:03:06.499925+01:00",
+  "generated" : "2026-05-12T15:37:44.824279+02:00",
   "node_name" : "EOSC-Beyond",
   "node_id" : "4",
   "node_pid" : "21.T15999/EOSC-BEYOND",
@@ -9,8 +9,8 @@
     "ror_id" : "https://ror.org/052jj4m32"
   },
   "total_capabilities" : 9,
-  "available_capabilities" : 0,
-  "report_file" : "/Users/johnshepherdson/GitHub/cessda-pilot-node-tests/src/main/dashboard/data/EOSC-Beyond/endpoint_report.json",
+  "available_capabilities" : 7,
+  "report_file" : "dashboard/data/EOSC-Beyond/endpoint_report.json",
   "capabilities" : [ {
     "capability_type" : "Resource Catalogue",
     "endpoint" : "https://providers.sandbox.eosc-beyond.eu/api",

@@ -1,0 +1,39 @@
+{
+  "generated" : "2026-05-06T12:03:03.914767+01:00",
+  "node_name" : "METROFOOD",
+  "node_id" : "9",
+  "node_pid" : "21.T15999/METROFOOD",
+  "node_endpoint" : "https://api.catalogues.eosc.metrofood-services.eu/capabilities",
+  "legal_entity" : {
+    "name" : "ENEA Casaccia Research Center",
+    "ror_id" : "https://ror.org/02khqd465"
+  },
+  "total_capabilities" : 4,
+  "available_capabilities" : 0,
+  "report_file" : "/Users/johnshepherdson/GitHub/cessda-pilot-node-tests/src/main/dashboard/data/METROFOOD/endpoint_report.json",
+  "capabilities" : [ {
+    "capability_type" : "AAI",
+    "endpoint" : "https://aai.staging.metrofood-services.eu/",
+    "version" : "1.0.0",
+    "status" : "Available",
+    "http_code" : "200"
+  }, {
+    "capability_type" : "Helpdesk",
+    "endpoint" : "https://helpdesk.metrofood-services.eu/",
+    "version" : "1.0.0",
+    "status" : "Available",
+    "http_code" : "200"
+  }, {
+    "capability_type" : "Monitoring",
+    "endpoint" : "https://beyond.ui.devel.mon.argo.grnet.gr/eoscbeyond/METROFOOD",
+    "version" : "1.0.0",
+    "status" : "Available",
+    "http_code" : "200"
+  }, {
+    "capability_type" : "Resource Catalogue",
+    "endpoint" : "https://catalogues.eosc.metrofood-services.eu/",
+    "version" : "1.0.0",
+    "status" : "Available",
+    "http_code" : "200"
+  } ]
+}

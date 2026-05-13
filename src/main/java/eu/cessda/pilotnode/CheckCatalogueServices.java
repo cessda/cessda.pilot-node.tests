@@ -40,18 +40,21 @@ import com.fasterxml.jackson.databind.node.ObjectNode;
  *
  * Reads JSON from API and checks availability of each resource webpage.
  *
- * Usage: java CheckCatalogueServices NODE_NAME [quantity] [dashboard_dir]
- *   NODE_NAME:     Node name to use as keyword filter (required)
- *   quantity:      Maximum number of services to retrieve (default: 10)
+ * Usage: java CheckCatalogueServices NODE_NAME [api_base_url] [quantity] [dashboard_dir]
+ *   NODE_NAME:    Node name to use as keyword filter (required)
+ *   api_base_url: Base URL of the node's Resource Catalogue API
+ *                 (default: the CESSDA staging URL below)
+ *                 Should be the endpoint value for capability_type "Resource Catalogue"
+ *                 from that node's endpoint_report.json, with "/api/service/all" appended.
+ *   quantity:     Maximum number of services to retrieve (default: 10)
  *   dashboard_dir: Path to the dashboard data directory (default: ../dashboard/data)
- *                  Output is written to <dashboard_dir>/<NODE_NAME>/catalogue_services_report.json
+ *                 Output is written to <dashboard_dir>/<NODE_NAME>/catalogue_services_report.json
  */
 public class CheckCatalogueServices {
 
-    // Use either the Sandbox Resource Catalogue API or your Node's
-    // Resource Catalogue API, depending on the Metric being evaluated
-    // private static final String API_BASE_URL = "https://providers.sandbox.eosc-beyond.eu/api/service/all";
-    private static final String API_BASE_URL = "https://service-catalogue-staging.beyond.cessda.eu/api/service/all";
+    /** Fallback API base URL used when no api_base_url argument is supplied. */
+    private static final String DEFAULT_API_BASE_URL =
+            "https://service-catalogue-staging.beyond.cessda.eu/api/service/all";
 
     private static final Logger log = Logger.getLogger(CheckCatalogueServices.class.getName());
 
@@ -67,13 +70,19 @@ public class CheckCatalogueServices {
         // ── Argument parsing ──────────────────────────────────────────────────
         if (args.length < 1) {
             log.warning("Error: NODE_NAME is required");
-            log.warning("Usage: java CheckCatalogueServices NODE_NAME [quantity] [dashboard_dir]");
+            log.warning("Usage: java CheckCatalogueServices NODE_NAME [api_base_url] [quantity] [dashboard_dir]");
             throw new RuntimeException("Failed to fetch Catalogue Services data");
         }
 
         String nodeName     = args[0];
-        int    quantity     = args.length >= 2 ? Integer.parseInt(args[1]) : 10;
-        String dashboardDir = args.length >= 3 ? args[2] : "../dashboard/data";
+        // 2nd argument: the node's Resource Catalogue API base URL.
+        // The dashboard passes the "Resource Catalogue" endpoint from endpoint_report.json
+        // with "/api/service/all" appended. Falls back to the CESSDA staging URL.
+        String apiBaseUrl   = args.length >= 2 && !args[1].isBlank()
+                ? args[1]
+                : DEFAULT_API_BASE_URL;
+        int    quantity     = args.length >= 3 ? Integer.parseInt(args[2]) : 10;
+        String dashboardDir = args.length >= 4 ? args[3] : "../dashboard/data";
 
         // ── Output paths ──────────────────────────────────────────────────────
         Path outputDir      = Path.of(dashboardDir, nodeName);
@@ -82,7 +91,7 @@ public class CheckCatalogueServices {
 
         // ── Build API URL ─────────────────────────────────────────────────────
         String apiUrl = "%s?keyword=%s&from=0&quantity=%d&order=asc"
-                .formatted(API_BASE_URL, nodeName, quantity);
+                .formatted(apiBaseUrl, nodeName, quantity);
 
         // ── Header ────────────────────────────────────────────────────────────
         separator();

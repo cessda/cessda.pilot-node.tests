@@ -1,56 +1,49 @@
 {
-  "generated": "2026-03-26T16:44:06+00:00",
-  "node_name": "CESSDA",
-  "api_source": "https://service-catalogue-staging.beyond.cessda.eu/api/service/all?keyword=CESSDA&from=0&quantity=10&order=asc",
-  "total_services": 6,
-  "services": [
-  {
-    "name": "CESSDA Data Catalogue",
-    "abbreviation": "CDC",
-    "service_id": "service/S1Ux8C",
-    "webpage": "https://www.cessda.eu/Tools/Data-Catalogue",
-    "status": "Available",
-    "http_code": "200"
-  },
-  {
-    "name": "CESSDA Vocabulary Service",
-    "abbreviation": "CVS",
-    "service_id": "service/qnmegF",
-    "webpage": "https://www.cessda.eu/Tools/Vocabulary-Service",
-    "status": "Available",
-    "http_code": "200"
-  },
-  {
-    "name": "CESSDA Metadata Validator",
-    "abbreviation": "CMV",
-    "service_id": "service/YgC1HE",
-    "webpage": "https://cmv.cessda.eu/#!validation",
-    "status": "Available",
-    "http_code": "200"
-  },
-  {
-    "name": "CESSDA European Language Social Science Thesaurus",
-    "abbreviation": "ELSST",
-    "service_id": "service/P10Zgj",
-    "webpage": "https://www.cessda.eu/Tools/ELSST-Thesaurus",
-    "status": "Available",
-    "http_code": "200"
-  },
-  {
-    "name": "CESSDA Data Management Expert Guide",
-    "abbreviation": "DMEG",
-    "service_id": "service/pCVouY",
-    "webpage": "https://dmeg.cessda.eu/",
-    "status": "Available",
-    "http_code": "200"
-  },
-  {
-    "name": "CESSDA Data Archiving Guide",
-    "abbreviation": "DAG",
-    "service_id": "service/YakRKr",
-    "webpage": "https://www.cessda.eu/Training/DAG",
-    "status": "Available",
-    "http_code": "200"
-  }
-]
+  "generated" : "2026-04-30T16:58:32.224531Z",
+  "node_name" : "CESSDA",
+  "api_source" : "https://service-catalogue-staging.beyond.cessda.eu/api/service/all?keyword=CESSDA&from=0&quantity=10&order=asc",
+  "total_services" : 6,
+  "services" : [ {
+    "name" : "CESSDA Data Catalogue",
+    "abbreviation" : "CDC",
+    "service_id" : "service/S1Ux8C",
+    "webpage" : "https://www.cessda.eu/Tools/Data-Catalogue",
+    "status" : "Available",
+    "http_code" : "200"
+  }, {
+    "name" : "CESSDA Vocabulary Service",
+    "abbreviation" : "CVS",
+    "service_id" : "service/qnmegF",
+    "webpage" : "https://www.cessda.eu/Tools/Vocabulary-Service",
+    "status" : "Available",
+    "http_code" : "200"
+  }, {
+    "name" : "CESSDA Metadata Validator",
+    "abbreviation" : "CMV",
+    "service_id" : "service/YgC1HE",
+    "webpage" : "https://cmv.cessda.eu/#!validation",
+    "status" : "Available",
+    "http_code" : "200"
+  }, {
+    "name" : "CESSDA European Language Social Science Thesaurus",
+    "abbreviation" : "ELSST",
+    "service_id" : "service/P10Zgj",
+    "webpage" : "https://www.cessda.eu/Tools/ELSST-Thesaurus",
+    "status" : "Available",
+    "http_code" : "200"
+  }, {
+    "name" : "CESSDA Data Management Expert Guide",
+    "abbreviation" : "DMEG",
+    "service_id" : "service/pCVouY",
+    "webpage" : "https://dmeg.cessda.eu/",
+    "status" : "Available",
+    "http_code" : "200"
+  }, {
+    "name" : "CESSDA Data Archiving Guide",
+    "abbreviation" : "DAG",
+    "service_id" : "service/YakRKr",
+    "webpage" : "https://www.cessda.eu/Training/DAG",
+    "status" : "Available",
+    "http_code" : "200"
+  } ]
 }

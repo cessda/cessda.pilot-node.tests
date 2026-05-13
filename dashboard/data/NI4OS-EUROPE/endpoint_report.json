@@ -1,0 +1,39 @@
+{
+  "generated" : "2026-05-12T15:37:52.562869+02:00",
+  "node_name" : "NI4OS-EUROPE",
+  "node_id" : "3",
+  "node_pid" : "21.T15999/NI4OS-EUROPE",
+  "node_endpoint" : "https://frontoffice.ni4os.eu/api/endpoint",
+  "legal_entity" : {
+    "name" : "National Infrastructures for Research and Technology -  GRNET S.A",
+    "ror_id" : "https://ror.org/05tcasm11"
+  },
+  "total_capabilities" : 4,
+  "available_capabilities" : 3,
+  "report_file" : "dashboard/data/NI4OS-EUROPE/endpoint_report.json",
+  "capabilities" : [ {
+    "capability_type" : "Front Office",
+    "endpoint" : "https://frontoffice.ni4os.eu/",
+    "version" : "v3.61.0",
+    "status" : "Available",
+    "http_code" : "200"
+  }, {
+    "capability_type" : "AAI",
+    "endpoint" : "https://aai.ni4os.eu",
+    "version" : "v1.0",
+    "status" : "Available",
+    "http_code" : "200"
+  }, {
+    "capability_type" : "Monitoring",
+    "endpoint" : "https://api.argo.grnet.gr",
+    "version" : "v2.0",
+    "status" : "Not found",
+    "http_code" : "404"
+  }, {
+    "capability_type" : "Resource Catalogue",
+    "endpoint" : "https://cat.ni4os.eu/api",
+    "version" : "v5.11",
+    "status" : "Available",
+    "http_code" : "302"
+  } ]
+}

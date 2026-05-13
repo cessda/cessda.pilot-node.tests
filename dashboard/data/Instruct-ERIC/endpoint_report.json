@@ -1,0 +1,45 @@
+{
+  "generated" : "2026-05-12T15:37:40.736932+02:00",
+  "node_name" : "Instruct-ERIC",
+  "node_id" : "10",
+  "node_pid" : "21.T15999/Instruct-ERIC",
+  "node_endpoint" : "https://pilot-node.instruct-eric.org/api/capabilities",
+  "legal_entity" : {
+    "name" : "Instruct-ERIC",
+    "ror_id" : "https://ror.org/05528ey35"
+  },
+  "total_capabilities" : 5,
+  "available_capabilities" : 4,
+  "report_file" : "dashboard/data/Instruct-ERIC/endpoint_report.json",
+  "capabilities" : [ {
+    "capability_type" : "Resource Catalogue",
+    "endpoint" : "https://pilot-node.instruct-eric.org/catalogue/services",
+    "version" : "1.0.0",
+    "status" : "Available",
+    "http_code" : "200"
+  }, {
+    "capability_type" : "Monitoring",
+    "endpoint" : "https://status.api.aria.services",
+    "version" : "1.0.0",
+    "status" : "Not found",
+    "http_code" : "404"
+  }, {
+    "capability_type" : "Helpdesk",
+    "endpoint" : "https://instruct-helpdesk.scc.kit.edu",
+    "version" : "1.0.0",
+    "status" : "Available",
+    "http_code" : "200"
+  }, {
+    "capability_type" : "AAI",
+    "endpoint" : "https://auth.aria.services/auth/realms/ARIA",
+    "version" : "1.0.0",
+    "status" : "Available",
+    "http_code" : "200"
+  }, {
+    "capability_type" : "Front Office",
+    "endpoint" : "https://instruct-eric.org",
+    "version" : "1.0.0",
+    "status" : "Available",
+    "http_code" : "200"
+  } ]
+}

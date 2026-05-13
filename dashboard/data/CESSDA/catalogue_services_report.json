@@ -1,0 +1,7 @@
+{
+  "generated" : "2026-05-12T13:31:35.239578Z",
+  "node_name" : "CESSDA",
+  "api_source" : "https://service-catalogue-staging.beyond.cessda.eu/api/service/all?keyword=CESSDA&from=0&quantity=10&order=asc",
+  "total_services" : 0,
+  "services" : [ ]
+}
