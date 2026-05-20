@@ -318,14 +318,14 @@
             <div class="run-item-label">Catalogue Services</div>
             <div class="run-item-desc">CheckCatalogueServices · catalogue_services_report.json</div>
           </div>
-          <button class="run-btn" id="btn-catalogue-services" onclick="promptAndRun('catalogue-services')">Run</button>
+          <button class="run-btn" id="btn-catalogue-services" onclick="runCatalogueCheck()">Run</button>
         </div>
         <div class="run-item" role="menuitem">
           <div class="run-item-info">
             <div class="run-item-label">Service Uptime</div>
             <div class="run-item-desc">CheckServiceUptime · argo_uptime_report.json</div>
           </div>
-          <button class="run-btn" id="btn-service-uptime" onclick="promptAndRun('service-uptime')">Run</button>
+          <button class="run-btn" id="btn-service-uptime" onclick="promptAndRun()">Run</button>
         </div>
       </div>
     </div>
@@ -483,10 +483,10 @@ function buildOverview(ep, cat, argo) {
   // MVP
   const mvp = ep ? meetsMvp(ep) : null;
   cards.push(mvp === null
-    ? `<div class="ov-card"><div class="ov-value" style="color:var(--grey-400)">—</div><div class="ov-label">Meet MVP</div></div>`
+    ? `<div class="ov-card"><div class="ov-value" style="color:var(--grey-400)">—</div><div class="ov-label">Meets MVP</div></div>`
     : mvp
-      ? `<div class="ov-card"><div class="ov-value green">✓</div><div class="ov-label">Meet MVP</div></div>`
-      : `<div class="ov-card"><div class="ov-value red">✗</div><div class="ov-label">Meet MVP</div></div>`
+      ? `<div class="ov-card"><div class="ov-value green">✓</div><div class="ov-label">Meets MVP</div></div>`
+      : `<div class="ov-card"><div class="ov-value red">✗</div><div class="ov-label">Meets MVP</div></div>`
   );
 
   return `<div class="overview-strip">${cards.join('')}</div>`;
@@ -839,20 +839,61 @@ document.addEventListener('keydown', e => {
   }
 });
 
-// ── API key modal ─────────────────────────────────────────────────────────────
+// ── Catalogue Services check (no API key needed) ─────────────────────────────
+// Reads the Resource Catalogue endpoint from this node's endpoint_report.json,
+// then POSTs { node, catalogueUrl } to the backend. No credentials required.
 
-let _pendingCheckType = null;
-
-function promptAndRun(type) {
-  _pendingCheckType = type;
+async function runCatalogueCheck() {
   document.getElementById('run-menu').setAttribute('aria-expanded', 'false');
+  const btn      = document.getElementById('btn-catalogue-services');
+  const nodeName = decodeURIComponent(window.location.hash.substring(1));
+  if (btn) { btn.disabled = true; btn.textContent = '…'; }
+  showToast('info', 'Catalogue Services', `Starting for ${nodeName}…`);
 
-  const label = NODE_CHECK_LABELS[type] || type;
+  // Fetch the endpoint report for the current node and find the Resource Catalogue URL
+  const epData = await tryFetchJSON(`/api/data/${encodeURIComponent(nodeName)}/endpoint_report.json`);
+  const rawUrl = epData?.capabilities
+    ?.find(c => c.capability_type === 'Resource Catalogue')
+    ?.endpoint || null;
+  const catalogueUrl = rawUrl ? rawUrl.replace(/\/+$/, '') + '/api/service/all' : null;
+
+  if (!catalogueUrl) {
+    showToast('err', 'Catalogue Services',
+      'No Resource Catalogue endpoint found in endpoint_report.json for this node.');
+    resetBtn(btn);
+    return;
+  }
+
+  let jobId;
+  try {
+    const res  = await fetch('/api/run/catalogue-services', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ node: nodeName, catalogueUrl }),
+    });
+    const data = await res.json();
+    if (!res.ok) { showToast('err', 'Catalogue Services', data.error || 'HTTP ' + res.status); resetBtn(btn); return; }
+    jobId = data.jobId;
+  } catch (e) {
+    showToast('err', 'Catalogue Services', 'Request failed: ' + e.message);
+    resetBtn(btn); return;
+  }
+
+  showToast('info', 'Catalogue Services', 'Running… (job ' + jobId + ')');
+  const result = await pollJobStatus(jobId);
+  if (result.status === 'DONE') { showToast('ok', 'Catalogue Services', result.message || 'Completed'); init(); }
+  else                          { showToast('err', 'Catalogue Services', result.message || 'Check failed'); }
+  resetBtn(btn);
+}
+
+// ── Service Uptime check (ARGO API key required) ──────────────────────────────
+
+function promptAndRun() {
+  document.getElementById('run-menu').setAttribute('aria-expanded', 'false');
   const nodeName = decodeURIComponent(window.location.hash.substring(1)) || 'this node';
-  document.getElementById('apikey-check-label').textContent = label;
-  document.getElementById('apikey-node-label').textContent  = nodeName;
+  document.getElementById('apikey-node-label').textContent = nodeName;
 
-  // Always start blank — never pre-fill
+  // Always start blank — key must never be pre-filled or persisted
   const input = document.getElementById('apikey-input');
   input.value = '';
 
@@ -862,8 +903,8 @@ function promptAndRun(type) {
 
 function closeApiKeyModal() {
   document.getElementById('apikey-overlay').classList.remove('open');
+  // Clear immediately so the key does not linger in the DOM
   document.getElementById('apikey-input').value = '';
-  _pendingCheckType = null;
 }
 
 // Close on backdrop click
@@ -878,45 +919,38 @@ document.getElementById('apikey-input').addEventListener('keydown', e => {
 
 function confirmApiKey() {
   const apiKey = document.getElementById('apikey-input').value.trim();
-  if (!apiKey) {
-    document.getElementById('apikey-input').focus();
-    return;
-  }
-  const type = _pendingCheckType;
-  closeApiKeyModal(); // clears input and _pendingCheckType
-  runNodeCheck(type, apiKey);
+  if (!apiKey) { document.getElementById('apikey-input').focus(); return; }
+  closeApiKeyModal(); // clears the field before anything async happens
+  runUptimeCheck(apiKey);
 }
 
-async function runNodeCheck(type, apiKey) {
-  const btn = document.getElementById('btn-' + type);
-  if (btn) { btn.disabled = true; btn.textContent = '…'; }
-
-  const label    = NODE_CHECK_LABELS[type] || type;
+async function runUptimeCheck(apiKey) {
+  const btn      = document.getElementById('btn-service-uptime');
   const nodeName = decodeURIComponent(window.location.hash.substring(1));
-  showToast('info', label, `Starting for ${nodeName}…`);
+  if (btn) { btn.disabled = true; btn.textContent = '…'; }
+  showToast('info', 'Service Uptime', `Starting for ${nodeName}…`);
 
   let jobId;
   try {
-    const res  = await fetch(`/api/run/${type}`, {
+    const res  = await fetch('/api/run/service-uptime', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
+      // apiKey is passed in the request body and not stored anywhere
       body: JSON.stringify({ node: nodeName, apiKey }),
     });
-    // apiKey reference ends here — it is not stored anywhere
     const data = await res.json();
-    if (!res.ok) { showToast('err', label, data.error || 'HTTP ' + res.status); resetBtn(btn); return; }
+    if (!res.ok) { showToast('err', 'Service Uptime', data.error || 'HTTP ' + res.status); resetBtn(btn); return; }
     jobId = data.jobId;
   } catch (e) {
-    showToast('err', label, 'Request failed: ' + e.message);
+    showToast('err', 'Service Uptime', 'Request failed: ' + e.message);
     resetBtn(btn); return;
   }
+  // apiKey goes out of scope here — it is never written to any storage
 
-  showToast('info', label, 'Running… (job ' + jobId + ')');
+  showToast('info', 'Service Uptime', 'Running… (job ' + jobId + ')');
   const result = await pollJobStatus(jobId);
-
-  if (result.status === 'DONE') { showToast('ok', label, result.message || 'Completed'); init(); }
-  else                          { showToast('err', label, result.message || 'Check failed'); }
-
+  if (result.status === 'DONE') { showToast('ok', 'Service Uptime', result.message || 'Completed'); init(); }
+  else                          { showToast('err', 'Service Uptime', result.message || 'Check failed'); }
   resetBtn(btn);
 }
 

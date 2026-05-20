@@ -102,15 +102,14 @@ The dashboard must be served over HTTP — opening the HTML files directly via
 ## Deployment
 
 For local development the application reads and writes report files relative to
-`dashboard.data-dir` on the local filesystem. For Kubernetes deployment, three
-CronJob resources can be defined — one per check — each running the appropriate
-Java class and writing output to a shared PersistentVolumeClaim mounted by both
-the job pods and the dashboard pod:
+`dashboard.data-dir` on the local filesystem. For Kubernetes deployment,
+the various checks should write output to a PersistentVolumeClaim mounted
+by the dashboard pod:
 
 ```text
 PersistentVolumeClaim (ReadWriteMany)
     ├── mounted at /data/dashboard in the Spring Boot pod  (reads)
-    └── mounted at /data/dashboard in each CronJob pod     (writes)
+    └── mounted at /data/dashboard output fromm Run Checks  (writes)
 ```
 
 Set `dashboard.data-dir=/data/dashboard` (or the environment variable
