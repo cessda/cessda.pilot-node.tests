@@ -1,5 +1,7 @@
 # Pilot Node Tests
 
+[![SQAaaS badge shields.io](https://img.shields.io/badge/sqaaas%20software-silver-lightgrey)](https://api.eu.badgr.io/public/assertions/nTNIwzBeS1KdZdKvAVKfGQ "SQAaaS silver badge achieved")
+
 This repository contains the Java checks for testing some of the functionality of
 an EOSC Beyond Pilot Node, and a dashboard to display the outputs.
 
