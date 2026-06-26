@@ -19,8 +19,8 @@ package eu.cessda.pilotnode;
 
 import java.nio.file.Path;
 import java.time.LocalDate;
-import java.time.OffsetDateTime;
-import java.time.format.DateTimeFormatter;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
@@ -28,13 +28,9 @@ import java.util.concurrent.Executors;
 import java.util.logging.Logger;
 
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
-import org.springframework.web.bind.annotation.GetMapping;
-import org.springframework.web.bind.annotation.PathVariable;
-import org.springframework.web.bind.annotation.PostMapping;
-import org.springframework.web.bind.annotation.RequestBody;
-import org.springframework.web.bind.annotation.RequestMapping;
-import org.springframework.web.bind.annotation.RestController;
+import org.springframework.web.bind.annotation.*;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
@@ -74,7 +70,7 @@ public class CheckRunnerController {
 
     // ── Config ────────────────────────────────────────────────────────────────
 
-    private final String dataDirPath;
+    private final Path dataDirPath;
     private final String nodeName;
     private final String argoApiKey;
     private final String nodeApiKey;
@@ -94,7 +90,7 @@ public class CheckRunnerController {
     // ── Constructor ───────────────────────────────────────────────────────────
 
     public CheckRunnerController(
-            @Value("${dashboard.data-dir}")   String dataDirPath,
+            @Value("${dashboard.data-dir}")   Path dataDirPath,
             @Value("${check.node-name:}")     String nodeName,
             @Value("${check.api-key-argo:}")  String argoApiKey,
             @Value("${check.api-key-node:}")  String nodeApiKey) {
@@ -113,26 +109,25 @@ public class CheckRunnerController {
      * set in {@code application.properties}.</p>
      */
     @PostMapping("/node-capabilities")
-    public ResponseEntity<ObjectNode> runNodeCapabilities() {
+    @ResponseStatus(HttpStatus.ACCEPTED)
+    public JobRecord runNodeCapabilities() {
         if (nodeApiKey.isBlank()) {
-            return configError("check.api-key-node is not configured");
+            throw new IllegalArgumentException("check.api-key-node is not configured");
         }
         if (nodeName.isBlank()) {
-            return configError("check.node-name is not configured");
+            throw new IllegalArgumentException("check.node-name is not configured");
         }
 
-        String jobId = jobId("node-capabilities");
-        JobRecord rec = new JobRecord(jobId, "node-capabilities");
-        jobs.put(jobId, rec);
+        JobRecord rec = new JobRecord("node-capabilities");
+        jobs.put(rec.getJobId(), rec);
 
         executor.submit(() -> {
             rec.markRunning();
             try {
-                Path dashDir = Path.of(dataDirPath);
                 CheckNodeCapabilities checker = new CheckNodeCapabilities(
                         nodeApiKey,
                         CheckNodeCapabilities.OutputFormat.JSON,
-                        dashDir);
+                        dataDirPath);
                 checker.run();
                 rec.markDone("node_registry_summary.json written");
             } catch (Exception e) {
@@ -141,7 +136,7 @@ public class CheckRunnerController {
             }
         });
 
-        return ResponseEntity.accepted().body(statusBody(rec));
+        return rec;
     }
 
     /**
@@ -156,29 +151,28 @@ public class CheckRunnerController {
      * @param body JSON body containing {@code node} and {@code catalogueUrl}
      */
     @PostMapping("/catalogue-services")
-    public ResponseEntity<ObjectNode> runCatalogueServices(
+    @ResponseStatus(HttpStatus.ACCEPTED)
+    public JobRecord runCatalogueServices(
             @RequestBody Map<String, String> body) {
 
         String targetNode   = body.getOrDefault("node", nodeName).strip();
         String catalogueUrl = body.getOrDefault("catalogueUrl", "").strip();
 
         if (targetNode.isBlank()) {
-            return configError("No node specified in request body and check.node-name is not configured");
+            throw new IllegalArgumentException("No node specified in request body and check.node-name is not configured");
         }
         if (catalogueUrl.isBlank()) {
-            return configError("catalogueUrl is required — it must be the Resource Catalogue endpoint for this node");
+            throw new IllegalArgumentException("catalogueUrl is required — it must be the Resource Catalogue endpoint for this node");
         }
 
-        String jobId = jobId("catalogue-services");
-        JobRecord rec = new JobRecord(jobId, "catalogue-services");
-        jobs.put(jobId, rec);
+        JobRecord rec = new JobRecord("catalogue-services");
+        jobs.put(rec.getJobId(), rec);
 
         executor.submit(() -> {
             rec.markRunning();
             try {
                 // Arg order: NODE_NAME, api_base_url, [quantity], [dashboard_dir]
-                String[] args = { targetNode, catalogueUrl, "10", dataDirPath };
-                CheckCatalogueServices.main(args);
+                CheckCatalogueServices.run(dataDirPath, targetNode, catalogueUrl, 10);
                 rec.markDone("catalogue_services_report.json written for " + targetNode);
             } catch (Exception e) {
                 log.warning("CheckCatalogueServices failed: " + e.getMessage());
@@ -186,7 +180,7 @@ public class CheckRunnerController {
             }
         });
 
-        return ResponseEntity.accepted().body(statusBody(rec));
+        return rec;
     }
 
     /**
@@ -201,35 +195,31 @@ public class CheckRunnerController {
      * @param body JSON body containing {@code node} and {@code apiKey}
      */
     @PostMapping("/service-uptime")
-    public ResponseEntity<ObjectNode> runServiceUptime(
-            @RequestBody Map<String, String> body) {
+    @ResponseStatus(HttpStatus.ACCEPTED)
+    public JobRecord runServiceUptime(@RequestBody Map<String, String> body) {
 
         String targetNode   = body.getOrDefault("node", nodeName).strip();
         // User-supplied key takes precedence; config value is the fallback
-        String effectiveKey = body.getOrDefault("apiKey", "").strip();
-        if (effectiveKey.isBlank()) effectiveKey = argoApiKey;
+        String argoAPIKey = body.getOrDefault("apiKey", argoApiKey).strip();
 
         if (targetNode.isBlank()) {
-            return configError("No node specified in request body and check.node-name is not configured");
+            throw new IllegalArgumentException("No node specified in request body and check.node-name is not configured");
         }
-        if (effectiveKey.isBlank()) {
-            return configError("No ARGO API key provided in request body and check.api-key-argo is not configured");
+        if (argoAPIKey.isBlank()) {
+            throw new IllegalArgumentException("No ARGO API key provided in request body and check.api-key-argo is not configured");
         }
 
-        LocalDate start = LocalDate.now().minusDays(30);
-        LocalDate end   = LocalDate.now();
+        JobRecord rec = new JobRecord("service-uptime");
+        jobs.put(rec.getJobId(), rec);
 
-        String jobId = jobId("service-uptime");
-        JobRecord rec = new JobRecord(jobId, "service-uptime");
-        jobs.put(jobId, rec);
-
-        final String finalKey = effectiveKey; // final for lambda capture; goes out of scope after submit
+        // final for lambda capture; goes out of scope after submit
 
         executor.submit(() -> {
             rec.markRunning();
             try {
-                CheckServiceUptime checker = new CheckServiceUptime(
-                        targetNode, finalKey, start, end, Path.of(dataDirPath));
+                LocalDate start = LocalDate.now().minusDays(30);
+                LocalDate end = LocalDate.now();
+                CheckServiceUptime checker = new CheckServiceUptime(targetNode, argoAPIKey, start, end, dataDirPath);
                 checker.run();
                 rec.markDone("argo_uptime_report.json written for " + targetNode);
             } catch (Exception e) {
@@ -239,84 +229,37 @@ public class CheckRunnerController {
             // finalKey goes out of scope here — not stored anywhere
         });
 
-        return ResponseEntity.accepted().body(statusBody(rec));
+        return rec;
     }
 
     // ── Status endpoints ──────────────────────────────────────────────────────
 
     /** Returns the status of a single job by its ID. */
     @GetMapping("/{jobId}/status")
-    public ResponseEntity<ObjectNode> getJobStatus(@PathVariable String jobId) {
+    public ResponseEntity<JobRecord> getJobStatus(@PathVariable String jobId) {
         JobRecord rec = jobs.get(jobId);
-        if (rec == null) return ResponseEntity.notFound().build();
-        return ResponseEntity.ok(statusBody(rec));
+        if (rec == null) {
+            return ResponseEntity.notFound().build();
+        }
+        return ResponseEntity.ok(rec);
     }
 
     /** Returns the status of all recent jobs (most-recent last). */
     @GetMapping("/status")
-    public ResponseEntity<Object> getAllStatuses() {
-        var list = jobs.values().stream()
-                .sorted((a, b) -> a.startedAt.compareTo(b.startedAt))
-                .map(this::statusBody)
-                .toList();
-        return ResponseEntity.ok(list);
+    public List<JobRecord> getAllStatuses() {
+        List<JobRecord> list = new ArrayList<>(jobs.values());
+        list.sort(null);
+        return list;
     }
 
     // ── Helpers ───────────────────────────────────────────────────────────────
 
-    private String jobId(String type) {
-        return type + "-" + System.currentTimeMillis();
-    }
-
-    private ResponseEntity<ObjectNode> configError(String message) {
-        log.warning("Configuration error: " + message);
+    @ExceptionHandler
+    @ResponseStatus(HttpStatus.BAD_REQUEST)
+    private ObjectNode configError(IllegalArgumentException ex) {
         ObjectNode err = mapper.createObjectNode();
-        err.put("error", message);
+        err.put("error", ex.getMessage());
         err.put("hint",  "Set the missing property in application.properties");
-        return ResponseEntity.badRequest().body(err);
-    }
-
-    private ObjectNode statusBody(JobRecord rec) {
-        ObjectNode n = mapper.createObjectNode();
-        n.put("jobId",      rec.jobId);
-        n.put("type",       rec.type);
-        n.put("status",     rec.status.name());
-        n.put("startedAt",  rec.startedAt);
-        if (rec.finishedAt != null) n.put("finishedAt", rec.finishedAt);
-        if (rec.message    != null) n.put("message",    rec.message);
-        return n;
-    }
-
-    // ── JobRecord ─────────────────────────────────────────────────────────────
-
-    enum JobStatus { QUEUED, RUNNING, DONE, ERROR }
-
-    static final class JobRecord {
-        final String    jobId;
-        final String    type;
-        final String    startedAt;
-        volatile JobStatus status     = JobStatus.QUEUED;
-        volatile String    finishedAt = null;
-        volatile String    message    = null;
-
-        JobRecord(String jobId, String type) {
-            this.jobId     = jobId;
-            this.type      = type;
-            this.startedAt = OffsetDateTime.now().format(DateTimeFormatter.ISO_OFFSET_DATE_TIME);
-        }
-
-        void markRunning() { this.status = JobStatus.RUNNING; }
-
-        void markDone(String msg) {
-            this.status     = JobStatus.DONE;
-            this.message    = msg;
-            this.finishedAt = OffsetDateTime.now().format(DateTimeFormatter.ISO_OFFSET_DATE_TIME);
-        }
-
-        void markError(String msg) {
-            this.status     = JobStatus.ERROR;
-            this.message    = msg;
-            this.finishedAt = OffsetDateTime.now().format(DateTimeFormatter.ISO_OFFSET_DATE_TIME);
-        }
+        return err;
     }
 }

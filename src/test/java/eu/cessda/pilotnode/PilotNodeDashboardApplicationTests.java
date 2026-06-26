@@ -18,7 +18,7 @@ class PilotNodeDashboardApplicationTests {
 
     @Test
     void indexPageLoads() throws Exception {
-        mockMvc.perform(get("/")).andExpect(status().is3xxRedirection());
+        mockMvc.perform(get("/")).andExpect(status().isOk());
     }
 
     @Test

@@ -17,8 +17,10 @@
 
 package eu.cessda.pilotnode;
 
+import java.io.BufferedWriter;
 import java.io.IOException;
 import java.net.URI;
+import java.net.URISyntaxException;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
@@ -29,6 +31,8 @@ import java.time.OffsetDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.logging.Level;
+import java.util.logging.LogRecord;
 import java.util.logging.Logger;
 
 import com.fasterxml.jackson.databind.JsonNode;
@@ -207,8 +211,7 @@ public class CheckNodeCapabilities {
             summaryJson.put("registry_source", NODE_REGISTRY_URL);
             ArrayNode nodesOut = summaryJson.putArray("nodes");
             nodeSummaries.forEach(nodesOut::add);
-            Files.writeString(summaryJsonPath,
-                    mapper.writerWithDefaultPrettyPrinter().writeValueAsString(summaryJson));
+            mapper.writerWithDefaultPrettyPrinter().writeValue(summaryJsonPath.toFile(), summaryJson);
         }
 
         // ── Final output ──────────────────────────────────────────────────────
@@ -243,11 +246,6 @@ public class CheckNodeCapabilities {
         Path reportJsonPath = nodeDir.resolve("endpoint_report.json");
         Path reportTxtPath  = nodeDir.resolve("endpoint_report.txt");
 
-        if (format.includesText()) {
-            writeNodeTextHeader(reportTxtPath, nodeName, nodeId, nodePid,
-                    nodeEndpoint, nodeLogo, legalEntityName, legalEntityRor);
-        }
-
         // ── Fetch capabilities ────────────────────────────────────────────────
 
         log.info("Fetching capabilities for " + nodeName + "...");
@@ -262,11 +260,6 @@ public class CheckNodeCapabilities {
             capabilitiesBody = resp.body();
         } catch (Exception e) {
             log.warning("ERROR: Failed to fetch capabilities from " + nodeEndpoint + ": " + e.getMessage());
-            if (format.includesText()) {
-                Files.writeString(reportTxtPath,
-                        Files.readString(reportTxtPath) +
-                        "ERROR: Failed to fetch capabilities from endpoint\n");
-            }
             
             // Return an empty summary for this node
             return buildNodeSummary(nodeName, nodeId, nodePid, nodeEndpoint,
@@ -286,76 +279,107 @@ public class CheckNodeCapabilities {
         log.info("Capabilities retrieved successfully!");
         
         log.info("Checking capabilities...");
-        
 
-        // ── Check each capability ─────────────────────────────────────────────
 
-        ArrayNode capabilitiesOut = mapper.createArrayNode();
-        int total = 0;
-        int available = 0;
+        BufferedWriter reportTxtPathWriter = null;
 
-        JsonNode capsArray = capsRoot.path("capabilities");
-        if (capsArray.isArray()) {
-            for (JsonNode cap : capsArray) {
-                String capType  = cap.path("capability_type").asText();
-                String endpoint = cap.path("endpoint").asText();
-                String version  = cap.path("version").asText();
+        try {
 
-                System.out.printf("  %-35s ", capType);
+             if (format.includesText()) {
+                 reportTxtPathWriter = Files.newBufferedWriter(reportTxtPath);
+                 var header = buildNodeTextHeader(nodeName, nodeId, nodePid,
+                         nodeEndpoint, nodeLogo, legalEntityName, legalEntityRor);
+                 reportTxtPathWriter.write(header);
+             }
 
-                CapabilityStatus status = probeEndpoint(endpoint);
-                total++;
-                if (status.isAvailable()) available++;
 
-                System.out.printf("%s (HTTP %s)%n", status.label(), status.httpCode());
+             // ── Check each capability ─────────────────────────────────────────────
 
-                if (format.includesText()) {
-                    appendCapabilityToText(reportTxtPath, capType, endpoint, version, status);
-                }
+             ArrayNode capabilitiesOut = mapper.createArrayNode();
+             int total = 0;
+             int available = 0;
 
-                ObjectNode capOut = mapper.createObjectNode();
-                capOut.put("capability_type", capType);
-                capOut.put("endpoint", endpoint);
-                capOut.put("version", version);
-                capOut.put("status", status.label());
-                capOut.put("http_code", status.httpCode());
-                capabilitiesOut.add(capOut);
+             JsonNode capsArray = capsRoot.path("capabilities");
+             if (capsArray.isArray()) {
+                 for (JsonNode cap : capsArray) {
+                     String capType = cap.path("capability_type").asText();
+                     String endpoint = cap.path("endpoint").asText();
+                     String version = cap.path("version").asText();
+
+                     System.out.printf("  %-35s ", capType);
+
+                     try {
+                         URI uri = new URI(endpoint);
+                         CapabilityStatus status = probeEndpoint(uri);
+                         total++;
+                         if (status.available()) {
+                             available++;
+                         }
+
+                         System.out.printf("%s (HTTP %s)%n", status.label(), status.httpCode());
+
+                         if (reportTxtPathWriter != null) {
+                             String capability = appendCapabilityToText(capType, endpoint, version, status);
+                             reportTxtPathWriter.write(capability);
+                         }
+
+                         ObjectNode capOut = mapper.createObjectNode();
+                         capOut.put("capability_type", capType);
+                         capOut.put("endpoint", endpoint);
+                         capOut.put("version", version);
+                         capOut.put("status", status.label());
+                         capOut.put("http_code", status.httpCode());
+                         capabilitiesOut.add(capOut);
+                     } catch (URISyntaxException e) {
+                         LogRecord logRecord = new LogRecord(Level.SEVERE, "URI {} is not a valid URI");
+                         logRecord.setParameters(new Object[]{endpoint});
+                         logRecord.setThrown(e);
+                         log.log(logRecord);
+                     }
+                 }
+             }
+
+
+             // ── Write per-node JSON report ────────────────────────────────────────
+
+             ObjectNode nodeReport = buildNodeSummary(nodeName, nodeId, nodePid, nodeEndpoint,
+                     legalEntityName, legalEntityRor, total, available, capabilitiesOut, reportJsonPath);
+
+
+             if (format.includesJson()) {
+                 mapper.writerWithDefaultPrettyPrinter().writeValue(reportJsonPath.toFile(), nodeReport);
+             }
+
+
+             log.info("Node reports generated:");
+             if (format.includesText()) log.info("  Text: " + reportTxtPath);
+             if (format.includesJson()) log.info("  JSON: " + reportJsonPath);
+
+
+             return nodeReport;
+        } finally {
+            if (reportTxtPathWriter != null) {
+                reportTxtPathWriter.close();
             }
         }
-
-        // ── Write per-node JSON report ────────────────────────────────────────
-
-        ObjectNode nodeReport = buildNodeSummary(nodeName, nodeId, nodePid, nodeEndpoint,
-                legalEntityName, legalEntityRor, total, available, capabilitiesOut, reportJsonPath);
-
-        if (format.includesJson()) {
-            Files.writeString(reportJsonPath,
-                    mapper.writerWithDefaultPrettyPrinter().writeValueAsString(nodeReport));
-        }
-
-        
-        log.info("Node reports generated:");
-        if (format.includesText()) log.info("  Text: " + reportTxtPath);
-        if (format.includesJson()) log.info("  JSON: " + reportJsonPath);
-        
-
-        return nodeReport;
     }
 
     // ── HTTP probe ────────────────────────────────────────────────────────────
 
-    private CapabilityStatus probeEndpoint(String url) {
-        if (url == null || url.isBlank()) return CapabilityStatus.of("000");
+    private CapabilityStatus probeEndpoint(URI url) {
         try {
             HttpRequest req = HttpRequest.newBuilder()
-                    .uri(URI.create(url))
+                    .uri(url)
                     .method("HEAD", HttpRequest.BodyPublishers.noBody())
                     .timeout(CAPABILITY_CHECK_TIMEOUT)
                     .build();
             HttpResponse<Void> resp = http.send(req, HttpResponse.BodyHandlers.discarding());
-            return CapabilityStatus.of(String.valueOf(resp.statusCode()));
-        } catch (Exception e) {
-            return CapabilityStatus.of("000");
+            return CapabilityStatus.of(resp.statusCode());
+        } catch (IOException e) {
+            return CapabilityStatus.of(-1);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            return CapabilityStatus.of(-1);
         }
     }
 
@@ -420,10 +444,10 @@ public class CheckNodeCapabilities {
         Files.writeString(path, header);
     }
 
-    private void writeNodeTextHeader(Path path,
+    private String buildNodeTextHeader(
             String nodeName, String nodeId, String nodePid, String nodeEndpoint,
             String nodeLogo, String legalEntityName, String legalEntityRor) throws IOException {
-        String header = """
+        return """
                 ==========================================
                 Node: %s
                 ==========================================
@@ -438,14 +462,12 @@ public class CheckNodeCapabilities {
 
                 """.formatted(nodeName, nowIso(), nodeId, nodePid, nodeEndpoint,
                 legalEntityName, legalEntityRor, nodeLogo);
-        Files.writeString(path, header);
     }
 
-    private void appendCapabilityToText(Path path, String capType, String endpoint,
-            String version, CapabilityStatus status) throws IOException {
-        String entry = "%-40s %s (HTTP %s)%n  └─ Endpoint: %s%n  └─ Version: %s%n%n"
+    private String appendCapabilityToText(String capType, String endpoint,
+            String version, CapabilityStatus status) {
+        return "%-40s %s (HTTP %s)%n  └─ Endpoint: %s%n  └─ Version: %s%n%n"
                 .formatted(capType, status.label(), status.httpCode(), endpoint, version);
-        Files.writeString(path, entry, java.nio.file.StandardOpenOption.APPEND);
     }
 
     private void appendTextSummaryEntry(Path path, ObjectNode nodeSummary) throws IOException {
@@ -485,28 +507,27 @@ public class CheckNodeCapabilities {
     /**
      * Represents the HTTP-probed status of a single capability endpoint.
      */
-    record CapabilityStatus(String httpCode, String label) {
-
-        /** Sentinel used only for equality checks; not returned by {@link #of}. */
-        public static final CapabilityStatus AVAILABLE =
-                new CapabilityStatus("200", "Available");
-
-        /** Returns true when this status represents a successful HTTP probe. */
-        public boolean isAvailable() {
-            return "Available".equals(this.label());
-        }
-
-        static CapabilityStatus of(String code) {
+    record CapabilityStatus(int httpCode, boolean available) {
+        static CapabilityStatus of(int code) {
             return switch (code) {
-                case "000"  -> new CapabilityStatus("000", "Not available");
-                case "404"  -> new CapabilityStatus("404", "Not found");
-                default     -> {
-                    int c = Integer.parseInt(code);
-                    yield (c >= 200 && c < 400)
-                            ? new CapabilityStatus(code, "Available")
-                            : new CapabilityStatus(code, "Not available");
+                case 0  -> new CapabilityStatus(-1, true);
+                case 404  -> new CapabilityStatus(404, false);
+                default -> {
+                    if (code >= 200 && code < 400) {
+                        yield new CapabilityStatus(code, true);
+                    } else {
+                        yield new CapabilityStatus(code, false);
+                    }
                 }
             };
+        }
+
+        String label() {
+            if (available) {
+                return "Available";
+            } else {
+                return "Not available";
+            }
         }
     }
 }

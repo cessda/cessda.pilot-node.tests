@@ -28,7 +28,6 @@ import java.time.Duration;
 import java.time.LocalDate;
 import java.time.OffsetDateTime;
 import java.time.format.DateTimeFormatter;
-import java.time.format.DateTimeParseException;
 import java.util.logging.Logger;
 
 import com.fasterxml.jackson.databind.JsonNode;
@@ -71,12 +70,12 @@ public class CheckServiceUptime {
 
         if (args.length < 1 || args[0].isBlank()) {
             printUsage();
-            throw new RuntimeException("Failed to fetch Service Uptime data");
+            System.exit(-1);
         }
         if (args.length < 2 || args[1].isBlank()) {
-            log.warning("Error: API_KEY is required");
+            System.err.println("api-key is required");
             printUsage();
-            throw new RuntimeException("Failed to fetch Service Uptime data");
+            System.exit(-1);
         }
 
         String nodeName = args[0];
@@ -254,7 +253,7 @@ public class CheckServiceUptime {
         // ── Write JSON report ─────────────────────────────────────────────────
 
         ObjectNode report = mapper.createObjectNode();
-        report.put("generated",  nowIso());
+        report.put("generated", OffsetDateTime.now().format(DateTimeFormatter.ISO_OFFSET_DATE_TIME));
         report.put("api_source", apiUrl);
         ObjectNode period = report.putObject("period");
         period.put("start", startTime);
@@ -277,36 +276,27 @@ public class CheckServiceUptime {
     // ── Utility ───────────────────────────────────────────────────────────────
 
     private static LocalDate parseDate(String s) {
-        try {
-            return LocalDate.parse(s, DateTimeFormatter.ISO_LOCAL_DATE);
-        } catch (DateTimeParseException e) {
-            log.warning("Error: Invalid date format '" + s + "'. Expected YYYY-MM-DD");
-            throw new RuntimeException("Failed to fetch Service Uptime data");
-        }
+        return LocalDate.parse(s, DateTimeFormatter.ISO_LOCAL_DATE);
     }
 
     private static double round2(double v) {
         return Math.round(v * 100.0) / 100.0;
     }
 
-    private static String nowIso() {
-        return OffsetDateTime.now().format(DateTimeFormatter.ISO_OFFSET_DATE_TIME);
-    }
-
     private static void printUsage() {
-        log.warning("Usage: CheckServiceUptime NODE_NAME API_KEY [START_DATE] [END_DATE] [dashboard_dir]");
-        log.info("======================================");
-        log.warning("Arguments:");
-        log.warning("  NODE_NAME     - Node name used for the output directory (required)");
-        log.warning("  API_KEY       - API key for ARGO authentication (required)");
-        log.warning("  START_DATE    - Start date in YYYY-MM-DD format (optional, defaults to 30 days ago)");
-        log.warning("  END_DATE      - End date in YYYY-MM-DD format (optional, defaults to today)");
-        log.warning("  dashboard_dir - Path to dashboard data directory (optional, defaults to ../dashboard/data)");
-        log.info("======================================");
-        log.warning("Examples:");
-        log.warning("  CheckServiceUptime CESSDA my-api-key");
-        log.warning("  CheckServiceUptime CESSDA my-api-key 2026-02-01");
-        log.warning("  CheckServiceUptime CESSDA my-api-key 2026-02-01 2026-03-17");
-        log.warning("  CheckServiceUptime CESSDA my-api-key 2026-02-01 2026-03-17 /path/to/dashboard/data");
+        System.err.println("usage: CheckServiceUptime <node-name> <api-key> [<start-date>] [<end-date>] [<dashboard-dir>]");
+        System.err.println("======================================");
+        System.err.println("Arguments:");
+        System.err.println("  node-name     - Node name used for the output directory (required)");
+        System.err.println("  api-key       - API key for ARGO authentication (required)");
+        System.err.println("  start-date    - Start date in YYYY-MM-DD format (optional, defaults to 30 days ago)");
+        System.err.println("  end-date      - End date in YYYY-MM-DD format (optional, defaults to today)");
+        System.err.println("  dashboard-dir - Path to dashboard data directory (optional, defaults to ../dashboard/data)");
+        System.err.println("======================================");
+        System.err.println("Examples:");
+        System.err.println("  CheckServiceUptime CESSDA my-api-key");
+        System.err.println("  CheckServiceUptime CESSDA my-api-key 2026-02-01");
+        System.err.println("  CheckServiceUptime CESSDA my-api-key 2026-02-01 2026-03-17");
+        System.err.println("  CheckServiceUptime CESSDA my-api-key 2026-02-01 2026-03-17 /path/to/dashboard/data");
     }
 }
