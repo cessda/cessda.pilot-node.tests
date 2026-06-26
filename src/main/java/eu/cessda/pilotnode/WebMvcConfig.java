@@ -47,11 +47,6 @@ public class WebMvcConfig implements WebMvcConfigurer {
      */
     @Override
     public void addResourceHandlers(ResourceHandlerRegistry registry) {
-        // Static paths
-        registry.addResourceHandler("/**")
-                .addResourceLocations("classpath:/static/")
-                .resourceChain(true);
-
         // /api/data paths
         registry.addResourceHandler("/api/data/**")
                 .addResourceLocations(dataDir, "classpath:/dashboard/data/");

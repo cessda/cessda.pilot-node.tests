@@ -404,7 +404,7 @@ public class CheckNodeCapabilities {
         le.put("ror_id", legalEntityRor);
         n.put("total_capabilities", total);
         n.put("available_capabilities", available);
-        n.put("report_file", reportPath.toString());
+        n.put("report_file", reportPath.toString().replace('\\', '/'));
         n.set("capabilities", capabilities);
         return n;
     }

@@ -53,5 +53,10 @@ pipeline {
             }
             when { branch 'main' }
         }
+        stage('Deploy Pilot Node Tests') {
+            steps {
+                build job: 'cessda.resource-catalogue.deploy/main', parameters: [string(name: 'TESTS_IMAGE_TAG', value: GIT_COMMIT)], wait: false
+            }
+        }
     }
 }
