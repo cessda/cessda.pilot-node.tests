@@ -106,15 +106,18 @@ public class CheckRunnerController {
      *
      * <p>Requires {@code check.node-name} and {@code check.api-key-node} to be
      * set in {@code application.properties}.</p>
+     *
+     * @throws IllegalStateException if {@code check.api-key-node} or
+     *                               {@code check.node-name} is unset
      */
     @PostMapping("/node-capabilities")
     @ResponseStatus(HttpStatus.ACCEPTED)
     public JobRecord runNodeCapabilities() {
         if (nodeApiKey.isBlank()) {
-            throw new IllegalArgumentException("check.api-key-node is not configured");
+            throw new IllegalStateException("check.api-key-node is not configured");
         }
         if (nodeName.isBlank()) {
-            throw new IllegalArgumentException("check.node-name is not configured");
+            throw new IllegalStateException("check.node-name is not configured");
         }
 
         JobRecord rec = new JobRecord("node-capabilities");
