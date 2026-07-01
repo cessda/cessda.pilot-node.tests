@@ -29,7 +29,7 @@ the other Node's Resource Catalogue API for metric 11.
 ## Metric 12
 
 Use [check_service_uptime](./src/main/scripts/check_service_uptime.sh).
-You will need to request an ACCESS TOKEN from the ARGO Monitoring team.
+You will need to request an ACCESS TOKEN from the ARGO Service Monitoring team.
 
 ## Metric 13
 

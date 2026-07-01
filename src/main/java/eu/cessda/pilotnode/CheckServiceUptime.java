@@ -38,7 +38,7 @@ import com.fasterxml.jackson.databind.node.ObjectNode;
 /**
  * ARGO Uptime Monitor.
  *
- * <p>Queries the ARGO Monitoring API and writes {@code argo_uptime_report.json}
+ * <p>Queries the ARGO Service Monitoring API and writes {@code argo_uptime_report.json}
  * to {@code <dashboardDir>/<nodeName>/argo_uptime_report.json}.
  *
  * <p>Usage:
@@ -146,7 +146,7 @@ public class CheckServiceUptime {
         // ── Banner ────────────────────────────────────────────────────────────
 
         log.info("==========================================");
-        log.info("ARGO Monitoring - Uptime Report");
+        log.info("ARGO Service Monitoring - Uptime Report");
         log.info("==========================================");
         
         log.info("Node:   " + nodeName);

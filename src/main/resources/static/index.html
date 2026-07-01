@@ -220,6 +220,7 @@
   .rr-dot   { width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0; }
   .rr-dot.green { background: var(--green); }
   .rr-dot.amber { background: var(--amber); }
+  .rr-dot.orange { background: var(--orange); }
   .rr-dot.red   { background: var(--red); }
   .rr-dot.grey  { background: var(--grey-400); }
   .rr-val   { font-weight: 600; font-size: 0.82rem; color: var(--black); }
@@ -242,6 +243,93 @@
   .footer-logo { height: 20px; width: auto; display: block; opacity: 0.7; }
   .footer-text { font-family: var(--mono); font-size: 0.62rem; color: rgba(255,255,255,0.4); }
 
+  /* ── About modal ── */
+  .about-btn {
+    background: none; border: 1px solid rgba(255,255,255,0.3); color: var(--white);
+    font-family: var(--mono); font-size: 0.62rem; font-weight: 500;
+    letter-spacing: 0.06em; text-transform: uppercase;
+    padding: 0 0.85rem; height: 30px; cursor: pointer;
+    transition: border-color 0.15s, color 0.15s; white-space: nowrap;
+  }
+  .about-btn:hover { border-color: var(--white); }
+
+  .about-overlay {
+    display: none; position: fixed; inset: 0;
+    background: rgba(0,0,0,0.55); z-index: 500;
+    align-items: center; justify-content: center;
+  }
+  .about-overlay.open { display: flex; }
+
+  .about-modal {
+    background: var(--white); border: 2px solid var(--black);
+    max-width: 740px; width: calc(100% - 2rem);
+    max-height: calc(100vh - 4rem); display: flex; flex-direction: column;
+    box-shadow: 6px 6px 0 rgba(0,0,0,0.18);
+  }
+  .about-modal-header {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 0.9rem 1.25rem; border-bottom: 1px solid var(--grey-200);
+    background: var(--grey-100); flex-shrink: 0;
+  }
+  .about-modal-title {
+    font-family: var(--mono); font-size: 0.68rem; font-weight: 700;
+    text-transform: uppercase; letter-spacing: 0.08em; color: var(--black);
+  }
+  .about-modal-close {
+    background: none; border: none; cursor: pointer; font-size: 1.1rem;
+    color: var(--grey-400); line-height: 1; padding: 0.1rem 0.3rem;
+  }
+  .about-modal-close:hover { color: var(--black); }
+  .about-modal-body {
+    overflow-y: auto; padding: 1.75rem 2rem; flex: 1;
+    font-family: var(--serif); font-size: 0.92rem; line-height: 1.7;
+    color: var(--black);
+  }
+  .about-modal-body h1 {
+    font-size: 1.35rem; font-weight: 700; margin-bottom: 1.25rem;
+    padding-bottom: 0.5rem; border-bottom: 2px solid var(--black);
+  }
+  .about-modal-body h2 {
+    font-size: 1rem; font-weight: 700; margin-top: 1.5rem;
+    margin-bottom: 0.75rem; font-family: var(--sans);
+    text-transform: uppercase; letter-spacing: 0.04em; color: var(--grey-600);
+  }
+  .about-modal-body h3 {
+    font-size: 0.88rem; font-weight: 700; margin-top: 1.25rem;
+    margin-bottom: 0.5rem; font-family: var(--mono); color: var(--orange);
+  }
+  .about-modal-body p { margin-bottom: 0.9rem; }
+  .about-modal-body ul, .about-modal-body ol {
+    margin: 0.75rem 0 0.9rem 1.25rem;
+  }
+  .about-modal-body li { margin-bottom: 0.3rem; }
+  .about-modal-body code {
+    font-family: var(--mono); font-size: 0.78em;
+    background: var(--grey-100); padding: 0.1em 0.35em;
+    border: 1px solid var(--grey-200);
+  }
+  .about-modal-body pre {
+    background: var(--grey-100); border: 1px solid var(--grey-200);
+    padding: 0.85rem 1rem; overflow-x: auto; margin: 0.75rem 0 0.9rem;
+    font-family: var(--mono); font-size: 0.75rem; line-height: 1.5;
+  }
+  .about-modal-body pre code {
+    background: none; border: none; padding: 0;
+  }
+  .about-modal-body table {
+    border-collapse: collapse; width: 100%; margin: 0.75rem 0 0.9rem;
+    font-size: 0.82rem;
+  }
+  .about-modal-body th {
+    font-family: var(--mono); font-size: 0.6rem; text-transform: uppercase;
+    letter-spacing: 0.08em; color: var(--grey-400); text-align: left;
+    padding: 0.4rem 0.7rem; border-bottom: 2px solid var(--grey-200);
+  }
+  .about-modal-body td {
+    padding: 0.5rem 0.7rem; border-bottom: 1px solid var(--grey-200);
+    vertical-align: top;
+  }
+
   @media (max-width: 640px) {
     .header-inner { padding: 2rem 1rem 1.5rem; }
     main { padding: 1.5rem 1rem 3rem; }
@@ -253,23 +341,45 @@
 </head>
 <body>
 
+<!-- About modal -->
+<div class="about-overlay" id="about-overlay" role="dialog"
+     aria-modal="true" aria-labelledby="about-modal-title"
+     onclick="handleAboutOverlayClick(event)">
+  <div class="about-modal">
+    <div class="about-modal-header">
+      <span class="about-modal-title" id="about-modal-title">About</span>
+      <button class="about-modal-close" onclick="closeAbout()"
+              aria-label="Close">&times;</button>
+    </div>
+    <div class="about-modal-body" id="about-modal-body">Loading…</div>
+  </div>
+</div>
+
 <nav class="topbar">
   <a class="topbar-brand" href="./">
-    <img src="logo-eosc-beyond-horizontal-fc.png" alt="EOSC Beyond" class="topbar-logo">
+    <img src="logo-eosc-beyond-horizontal-fc.png" alt="EOSC Beyond"
+         class="topbar-logo">
   </a>
-  <div class="run-menu" id="run-menu" aria-expanded="false">
-    <button class="run-menu-btn" aria-haspopup="true" aria-controls="run-dropdown" onclick="toggleRunMenu()">
-      Run checks
-      <svg viewBox="0 0 10 6" fill="currentColor" aria-hidden="true"><path d="M0 0l5 6 5-6z"/></svg>
+  <div style="display:flex;align-items:center;gap:0.75rem;">
+    <button class="about-btn" onclick="openAbout('About_index.md')">
+      About
     </button>
-    <div class="run-dropdown" id="run-dropdown" role="menu">
-      <div class="run-dropdown-header">Data collection checks</div>
-      <div class="run-item" role="menuitem">
-        <div class="run-item-info">
-          <div class="run-item-label">Node Capabilities</div>
-          <div class="run-item-desc">CheckNodeCapabilities · endpoint_report.json</div>
+    <div class="run-menu" id="run-menu" aria-expanded="false">
+      <button class="run-menu-btn" aria-haspopup="true"
+              aria-controls="run-dropdown" onclick="toggleRunMenu()">
+        Run checks
+        <svg viewBox="0 0 10 6" fill="currentColor" aria-hidden="true"><path d="M0 0l5 6 5-6z"/></svg>
+      </button>
+      <div class="run-dropdown" id="run-dropdown" role="menu">
+        <div class="run-dropdown-header">Data collection checks</div>
+        <div class="run-item" role="menuitem">
+          <div class="run-item-info">
+            <div class="run-item-label">Node Capabilities</div>
+            <div class="run-item-desc">CheckNodeCapabilities · endpoint_report.json</div>
+          </div>
+          <button class="run-btn" id="btn-node-capabilities"
+                  onclick="runCheck('node-capabilities')">Run</button>
         </div>
-        <button class="run-btn" id="btn-node-capabilities" onclick="runCheck('node-capabilities')">Run</button>
       </div>
     </div>
   </div>
@@ -416,14 +526,39 @@ function pctColour(pct) {
   return 'red';
 }
 
-// A node meets MVP if it has both an AAI and a Resource Catalogue capability
-// with status "Available" in its endpoint report.
+// ── Capability compliance tiers ─────────────────────────────────────────────
+// Tier 1 (MVP, required): AAI, Resource Catalogue
+// Tier 2 (Standard):      Helpdesk, Service Monitoring
+// Tier 3 (Advanced):      Service Accounting, Research Product Accounting,
+//                         Order Management, Application Deployment Management
+const COMPLIANCE_TIERS = [
+  { key: 'mvp',      level: 1, label: 'MVP',      types: ['AAI', 'Resource Catalogue'] },
+  { key: 'standard', level: 2, label: 'Standard', types: ['Helpdesk', 'Monitoring'] },
+  { key: 'advanced', level: 3, label: 'Advanced', types: ['Service Accounting', 'Research Product Accounting', 'Order Management', 'Application Deployment Management'] },
+];
+
+function computeComplianceTiers(endpointReport) {
+  const caps  = (endpointReport && Array.isArray(endpointReport.capabilities)) ? endpointReport.capabilities : [];
+  const avail = new Set(caps.filter(c => c.status === 'Available').map(c => c.capability_type));
+
+  const tiers = COMPLIANCE_TIERS.map(t => {
+    const total = t.types.length;
+    const have  = t.types.filter(type => avail.has(type)).length;
+    return { ...t, total, avail: have, met: have === total };
+  });
+
+  let highest = null;
+  for (const t of tiers) {
+    if (t.met) highest = t;
+    else break;
+  }
+
+  return { tiers, highest };
+}
+
+// Back-compat helper: a node "meets MVP" if Tier 1 is satisfied.
 function meetsMvp(endpointReport) {
-  if (!endpointReport || !Array.isArray(endpointReport.capabilities)) return false;
-  const avail = endpointReport.capabilities.filter(c => c.status === 'Available');
-  const hasAAI      = avail.some(c => c.capability_type === 'AAI');
-  const hasCatalogue = avail.some(c => c.capability_type === 'Resource Catalogue');
-  return hasAAI && hasCatalogue;
+  return computeComplianceTiers(endpointReport).tiers[0].met;
 }
 
 // ── Card renderer ─────────────────────────────────────────────────────────────
@@ -487,18 +622,19 @@ function renderNodeCard(node, reports) {
          <span class="rr-val missing">No report</span>
        </div>`;
 
-  // MVP row
-  const mvp = reports.endpoint
-    ? meetsMvp(reports.endpoint)
+  // Compliance tier row
+  const compliance = reports.endpoint ? computeComplianceTiers(reports.endpoint) : null;
+  const tierColour = compliance && compliance.highest
+    ? (compliance.highest.level === 3 ? 'green' : compliance.highest.level === 2 ? 'orange' : 'amber')
     : null;
-  const mvpRow = `<div class="report-row">
+  const tierRow = `<div class="report-row">
          <span class="rr-icon">🏆</span>
-         <span class="rr-label">MVP</span>
-         ${mvp === null
+         <span class="rr-label">Compliance</span>
+         ${!compliance
            ? `<span class="rr-dot grey"></span><span class="rr-val missing">No endpoint report</span>`
-           : mvp
-             ? `<span class="rr-dot green"></span><span class="rr-val" style="color:var(--green)">Meets MVP</span>`
-             : `<span class="rr-dot red"></span><span class="rr-val" style="color:var(--red)">Does not meet MVP</span>`
+           : compliance.highest
+             ? `<span class="rr-dot ${tierColour}"></span><span class="rr-val" style="color:var(--${tierColour})">${compliance.highest.label} tier</span>`
+             : `<span class="rr-dot red"></span><span class="rr-val" style="color:var(--red)">Below MVP</span>`
          }
        </div>`;
 
@@ -512,7 +648,7 @@ function renderNodeCard(node, reports) {
       </div>
       <span class="status-badge status-${statusClass}">${statusText}</span>
     </div>
-    <div class="report-rows">${epRow}${catRow}${arRow}${mvpRow}</div>
+    <div class="report-rows">${epRow}${catRow}${arRow}${tierRow}</div>
     <div class="report-chips">${chips}</div>
     <div class="node-footer">
       <span>View node detail</span>
@@ -527,14 +663,17 @@ function renderSummaryStats(registry, allReports) {
   const totalNodes = registry.nodes.length;
   let okNodes = 0, totalCaps = 0, availCaps = 0;
 
-  let mvpNodes = 0;
+  let mvpNodes = 0, standardNodes = 0, advancedNodes = 0;
   allReports.forEach(r => {
     const ep = summariseEndpoint(r.endpoint);
     const ar = summariseArgo(r.argo);
     if (statusBadgeFromReports(ep, ar)[0] === 'ok') okNodes++;
     // Count caps from the actual capabilities array, not the (potentially stale) registry field
     if (ep) { totalCaps += ep.total; availCaps += ep.avail; }
-    if (meetsMvp(r.endpoint)) mvpNodes++;
+    const { highest } = computeComplianceTiers(r.endpoint);
+    if (highest && highest.level >= 1) mvpNodes++;
+    if (highest && highest.level >= 2) standardNodes++;
+    if (highest && highest.level >= 3) advancedNodes++;
   });
 
   const degraded = totalNodes - okNodes;
@@ -550,8 +689,16 @@ function renderSummaryStats(registry, allReports) {
       <div class="stat-label">Available caps</div>
     </div>
     <div class="stat-card">
-      <div class="stat-value ${mvpNodes === totalNodes ? 'green' : mvpNodes > 0 ? 'orange' : 'red'}">${mvpNodes}<span style="font-size:1.25rem;color:var(--grey-400)">/${totalNodes}</span></div>
-      <div class="stat-label">Meet MVP</div>
+      <div class="stat-value ${mvpNodes === totalNodes ? 'green' : mvpNodes > 0 ? 'amber' : 'red'}">${mvpNodes}<span style="font-size:1.25rem;color:var(--grey-400)">/${totalNodes}</span></div>
+      <div class="stat-label">Tier 1 &middot; MVP</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-value ${standardNodes === totalNodes ? 'green' : standardNodes > 0 ? 'orange' : 'red'}">${standardNodes}<span style="font-size:1.25rem;color:var(--grey-400)">/${totalNodes}</span></div>
+      <div class="stat-label">Tier 2 &middot; Standard</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-value ${advancedNodes === totalNodes ? 'green' : advancedNodes > 0 ? 'orange' : 'red'}">${advancedNodes}<span style="font-size:1.25rem;color:var(--grey-400)">/${totalNodes}</span></div>
+      <div class="stat-label">Tier 3 &middot; Advanced</div>
     </div>`;
 }
 
@@ -629,8 +776,114 @@ document.addEventListener('click', e => {
   if (menu && !menu.contains(e.target)) menu.setAttribute('aria-expanded', 'false');
 });
 document.addEventListener('keydown', e => {
-  if (e.key === 'Escape') document.getElementById('run-menu')?.setAttribute('aria-expanded', 'false');
+  if (e.key === 'Escape') {
+    document.getElementById('run-menu')?.setAttribute('aria-expanded', 'false');
+    closeAbout();
+  }
 });
+
+// ── About modal ───────────────────────────────────────────────────────────────
+
+function mdToHtml(md) {
+  // Minimal Markdown renderer: headings, paragraphs, fenced code,
+  // inline code, unordered lists, tables, bold.
+  const lines  = md.split('\n');
+  const out    = [];
+  let inCode   = false, codeLang = '', codeBuf = [];
+  let inTable  = false, tableRows = [];
+  let inList   = false, listBuf  = [];
+
+  const flushList = () => {
+    if (!inList) return;
+    out.push('<ul>' + listBuf.map(l => `<li>${inlineHtml(l)}</li>`).join('') + '</ul>');
+    listBuf = []; inList = false;
+  };
+  const flushTable = () => {
+    if (!inTable) return;
+    const rows = tableRows.filter(r => !/^\s*[-|: ]+$/.test(r));
+    if (rows.length === 0) { inTable = false; tableRows = []; return; }
+    const cells = r => r.split('|').map(c => c.trim()).filter((_, i, a) => i > 0 && i < a.length - 1);
+    const [hdr, ...body] = rows;
+    out.push('<table><thead><tr>' +
+      cells(hdr).map(c => `<th>${inlineHtml(c)}</th>`).join('') +
+      '</tr></thead><tbody>' +
+      body.map(r => '<tr>' + cells(r).map(c => `<td>${inlineHtml(c)}</td>`).join('') + '</tr>').join('') +
+      '</tbody></table>');
+    inTable = false; tableRows = [];
+  };
+
+  const inlineHtml = s => s
+    .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
+    .replace(/`([^`]+)`/g, '<code>$1</code>')
+    .replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
+
+  for (let raw of lines) {
+    const line = raw.trimEnd();
+
+    // Fenced code block
+    if (/^```/.test(line)) {
+      if (!inCode) {
+        flushList(); flushTable();
+        inCode = true; codeLang = line.slice(3).trim(); codeBuf = [];
+      } else {
+        out.push(`<pre><code>${codeBuf.join('\n').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')}</code></pre>`);
+        inCode = false; codeBuf = [];
+      }
+      continue;
+    }
+    if (inCode) { codeBuf.push(line); continue; }
+
+    // Table row
+    if (/^\|/.test(line)) {
+      flushList();
+      inTable = true; tableRows.push(line); continue;
+    }
+    if (inTable) flushTable();
+
+    // Headings
+    const hm = line.match(/^(#{1,3})\s+(.*)/);
+    if (hm) {
+      flushList();
+      const lvl = hm[1].length;
+      out.push(`<h${lvl}>${inlineHtml(hm[2])}</h${lvl}>`);
+      continue;
+    }
+
+    // Unordered list
+    if (/^- /.test(line)) {
+      inList = true; listBuf.push(line.slice(2)); continue;
+    }
+    flushList();
+
+    // Blank line / paragraph
+    if (line === '') { out.push('<p></p>'); continue; }
+    out.push(`<p>${inlineHtml(line)}</p>`);
+  }
+  flushList(); flushTable();
+  return out.join('\n');
+}
+
+async function openAbout(file) {
+  document.getElementById('about-overlay').classList.add('open');
+  const body = document.getElementById('about-modal-body');
+  body.innerHTML = 'Loading…';
+  try {
+    const r = await fetch(file);
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+    const text = await r.text();
+    body.innerHTML = mdToHtml(text);
+  } catch (e) {
+    body.innerHTML = `<p style="color:var(--red)">Could not load ${file}: ${e.message}</p>`;
+  }
+}
+
+function closeAbout() {
+  document.getElementById('about-overlay').classList.remove('open');
+}
+
+function handleAboutOverlayClick(e) {
+  if (e.target === document.getElementById('about-overlay')) closeAbout();
+}
 
 async function runCheck(type) {
   const btn = document.getElementById('btn-' + type);

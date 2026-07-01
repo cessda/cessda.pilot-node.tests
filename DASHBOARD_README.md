@@ -68,7 +68,7 @@ Triggered via: `POST /api/run/catalogue-services` with body `{ "node": "...", "c
 
 ### CheckServiceUptime
 
-Queries the ARGO Monitoring API and writes `argo_uptime_report.json` covering the last 30 days. Requires an ARGO API key.
+Queries the ARGO Service Monitoring API and writes `argo_uptime_report.json` covering the last 30 days. Requires an ARGO API key.
 
 ```
 CheckServiceUptime NODE_NAME API_KEY [START_DATE] [END_DATE] [dashboard_dir]

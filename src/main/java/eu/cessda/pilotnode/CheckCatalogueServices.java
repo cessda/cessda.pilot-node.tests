@@ -103,6 +103,7 @@ public class CheckCatalogueServices {
         Path reportFileJson = outputDir.resolve("catalogue_services_report.json");
 
         // ── Build API URL ─────────────────────────────────────────────────────
+        //TODO: String apiUrl = "%s?from=0&quantity=%d"
         String apiUrl = "%s?keyword=%s&from=0&quantity=%d&order=asc"
                 .formatted(apiBaseUrl, nodeName, quantity);
 

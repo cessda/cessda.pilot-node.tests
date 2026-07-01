@@ -221,7 +221,7 @@ The script handles various error conditions:
 - Invalid JSON from node: falls back to basic grep/sed parsing if `jq` is unavailable
 - Timeout: 10-second timeout per endpoint check
 
-## Integration with Monitoring Systems
+## Integration with  Service Monitoring Systems
 
 ### Prometheus Integration
 

@@ -1,7 +1,7 @@
 # Check Service Uptime
 
 A Bash script for monitoring and reporting on service uptime from the ARGO
-Monitoring API. The script queries the ARGO API for a specified time period
+Service Monitoring API. The script queries the ARGO API for a specified time period
 and writes `argo_uptime_report.json` directly to the node's subdirectory in
 the dashboard data directory.
 
@@ -264,5 +264,5 @@ date -d "30 days ago" "+%Y-%m-%d"
 For issues related to:
 
 - Script functionality: check this README or review error messages
-- ARGO API: consult the [ARGO Monitoring API documentation](https://argoeu.github.io/argo-web-api/)
-- Missing data: contact the Monitoring Team at GRNET
+- ARGO API: consult the [ARGO Service Monitoring API documentation](https://argoeu.github.io/argo-web-api/)
+- Missing data: contact the Service Monitoring Team at GRNET
