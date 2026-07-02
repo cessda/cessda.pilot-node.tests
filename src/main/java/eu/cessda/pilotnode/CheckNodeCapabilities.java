@@ -17,11 +17,6 @@
 
 package eu.cessda.pilotnode;
 
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
-import com.fasterxml.jackson.databind.node.ArrayNode;
-import com.fasterxml.jackson.databind.node.ObjectNode;
-
 import java.io.BufferedWriter;
 import java.io.IOException;
 import java.net.URI;
@@ -39,6 +34,11 @@ import java.util.List;
 import java.util.logging.Level;
 import java.util.logging.LogRecord;
 import java.util.logging.Logger;
+
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.node.ArrayNode;
+import com.fasterxml.jackson.databind.node.ObjectNode;
 
 /**
  * EOSC Beyond Node Registry Endpoint Capabilities Checker.
@@ -61,6 +61,9 @@ public class CheckNodeCapabilities {
             "https://node-devel.eosc.grnet.gr/federation-backend/tenants/eosc-beyond/nodes";
 
     private static final Duration CAPABILITY_CHECK_TIMEOUT = Duration.ofSeconds(10);
+    private static final String BROWSER_USER_AGENT =
+            "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 " +
+            "(KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36";
 
     private static final Logger log = Logger.getLogger(CheckNodeCapabilities.class.getName());
 
@@ -130,6 +133,7 @@ public class CheckNodeCapabilities {
         HttpRequest registryRequest = HttpRequest.newBuilder()
                 .uri(URI.create(NODE_REGISTRY_URL))
                 .header("X-Api-Key", apiKey)
+                .header("User-Agent", BROWSER_USER_AGENT)
                 .header("Accept", "application/json")
                 .GET()
                 .build();
@@ -254,9 +258,18 @@ public class CheckNodeCapabilities {
         try {
             HttpRequest req = HttpRequest.newBuilder()
                     .uri(URI.create(nodeEndpoint))
+                    .header("User-Agent", BROWSER_USER_AGENT)
+                    .header("Accept", "application/json")
                     .GET()
                     .build();
             HttpResponse<String> resp = http.send(req, HttpResponse.BodyHandlers.ofString());
+            if (resp.statusCode() < 200 || resp.statusCode() >= 300) {
+                log.warning("ERROR: Capabilities endpoint returned HTTP " + resp.statusCode() +
+                        " for " + nodeEndpoint);
+                log.warning("Raw response: " + resp.body());
+                return buildNodeSummary(nodeName, nodeId, nodePid, nodeEndpoint,
+                        legalEntityName, legalEntityRor, 0, 0, mapper.createArrayNode(), reportJsonPath);
+            }
             capabilitiesBody = resp.body();
         } catch (Exception e) {
             log.warning("ERROR: Failed to fetch capabilities from " + nodeEndpoint + ": " + e.getMessage());
@@ -269,9 +282,20 @@ public class CheckNodeCapabilities {
         JsonNode capsRoot;
         try {
             capsRoot = mapper.readTree(capabilitiesBody);
+            log.info("capsRoot: " + capsRoot.toString().substring(0, Math.min(500, capsRoot.toString().length())));
         } catch (IOException e) {
             log.warning("ERROR: Capabilities response from " + nodeEndpoint + " is not valid JSON");
+            log.warning("Raw response: " + capabilitiesBody);
             
+            return buildNodeSummary(nodeName, nodeId, nodePid, nodeEndpoint,
+                    legalEntityName, legalEntityRor, 0, 0, mapper.createArrayNode(), reportJsonPath);
+        }
+
+        JsonNode capsArray = capsRoot.path("capabilities");
+        if (!capsArray.isArray()) {
+            log.warning("ERROR: Capabilities response from " + nodeEndpoint +
+                    " does not contain a capabilities array");
+            log.warning("Raw response: " + capabilitiesBody);
             return buildNodeSummary(nodeName, nodeId, nodePid, nodeEndpoint,
                     legalEntityName, legalEntityRor, 0, 0, mapper.createArrayNode(), reportJsonPath);
         }
@@ -295,43 +319,40 @@ public class CheckNodeCapabilities {
              int total = 0;
              int available = 0;
 
-             JsonNode capsArray = capsRoot.path("capabilities");
-             if (capsArray.isArray()) {
-                 for (JsonNode cap : capsArray) {
-                     String capType = cap.path("capability_type").asText();
-                     String endpoint = cap.path("endpoint").asText();
-                     String version = cap.path("version").asText();
+             for (JsonNode cap : capsArray) {
+                 String capType = cap.path("capability_type").asText();
+                 String endpoint = cap.path("endpoint").asText();
+                 String version = cap.path("version").asText();
 
-                     System.out.printf("  %-35s ", capType);
+                 System.out.printf("  %-35s ", capType);
 
-                     try {
-                         URI uri = new URI(endpoint);
-                         CapabilityStatus status = probeEndpoint(uri);
-                         total++;
-                         if (status.available()) {
-                             available++;
-                         }
-
-                         System.out.printf("%s (HTTP %s)%n", status.label(), status.httpCode());
-
-                         if (reportTxtPathWriter != null) {
-                             String capability = appendCapabilityToText(capType, endpoint, version, status);
-                             reportTxtPathWriter.write(capability);
-                         }
-
-                         ObjectNode capOut = mapper.createObjectNode();
-                         capOut.put("capability_type", capType);
-                         capOut.put("endpoint", endpoint);
-                         capOut.put("version", version);
-                         capOut.put("status", status.label());
-                         capOut.put("http_code", status.httpCode());
-                         capabilitiesOut.add(capOut);
-                     } catch (URISyntaxException e) {
-                         LogRecord logRecord = new LogRecord(Level.SEVERE, "URI {} is not a valid URI");
-                         logRecord.setParameters(new Object[]{endpoint});
-                         logRecord.setThrown(e);
-                         log.log(logRecord);
+                 try {
+                     URI uri = new URI(endpoint);
+                     CapabilityStatus status = probeEndpoint(uri);
+                     total++;
+                     if (status.available()) {
+                         available++;
                      }
+
+                     System.out.printf("%s (HTTP %s)%n", status.label(), status.httpCode());
+
+                     if (reportTxtPathWriter != null) {
+                         String capability = appendCapabilityToText(capType, endpoint, version, status);
+                         reportTxtPathWriter.write(capability);
+                     }
+
+                     ObjectNode capOut = mapper.createObjectNode();
+                     capOut.put("capability_type", capType);
+                     capOut.put("endpoint", endpoint);
+                     capOut.put("version", version);
+                     capOut.put("status", status.label());
+                     capOut.put("http_code", status.httpCode());
+                     capabilitiesOut.add(capOut);
+                 } catch (URISyntaxException e) {
+                     LogRecord logRecord = new LogRecord(Level.SEVERE, "URI {} is not a valid URI");
+                     logRecord.setParameters(new Object[]{endpoint});
+                     logRecord.setThrown(e);
+                     log.log(logRecord);
                  }
              }
 
