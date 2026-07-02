@@ -17,13 +17,6 @@
 
 package eu.cessda.pilotnode;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
-import com.fasterxml.jackson.databind.node.ObjectNode;
-import org.springframework.beans.factory.annotation.Value;
-import org.springframework.http.HttpStatus;
-import org.springframework.http.ResponseEntity;
-import org.springframework.web.bind.annotation.*;
-
 import java.nio.file.Path;
 import java.time.LocalDate;
 import java.util.ArrayList;
@@ -33,6 +26,21 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.logging.Logger;
+
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.http.HttpStatus;
+import org.springframework.http.ResponseEntity;
+import org.springframework.web.bind.annotation.ExceptionHandler;
+import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PathVariable;
+import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.RequestBody;
+import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.ResponseStatus;
+import org.springframework.web.bind.annotation.RestController;
+
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.node.ObjectNode;
 
 /**
  * REST controller that triggers the three data-collection checks
@@ -159,6 +167,7 @@ public class CheckRunnerController {
 
         String targetNode   = body.getOrDefault("node", nodeName).strip();
         String catalogueUrl = body.getOrDefault("catalogueUrl", "").strip();
+        String nodePid      = body.getOrDefault("nodePid", "").strip();
 
         if (targetNode.isBlank()) {
             throw new IllegalArgumentException("No node specified in request body and check.node-name is not configured");
@@ -173,8 +182,10 @@ public class CheckRunnerController {
         executor.submit(() -> {
             rec.markRunning();
             try {
-                // Arg order: NODE_NAME, api_base_url, [quantity], [dashboard_dir]
-                CheckCatalogueServices.run(dataDirPath, targetNode, catalogueUrl, 10);
+                // Arg order: NODE_NAME, node_pid, api_base_url, [quantity]
+                CheckCatalogueServices.run(dataDirPath, targetNode,
+                        nodePid.isBlank() ? null : nodePid,
+                        catalogueUrl, 10);
                 rec.markDone("catalogue_services_report.json written for " + targetNode);
             } catch (Exception e) {
                 log.warning("CheckCatalogueServices failed: " + e.getMessage());

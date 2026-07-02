@@ -17,24 +17,33 @@
 
 package eu.cessda.pilotnode;
 
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
-import com.fasterxml.jackson.databind.node.ArrayNode;
-import com.fasterxml.jackson.databind.node.ObjectNode;
-
 import java.io.IOException;
 import java.net.URI;
 import java.net.URISyntaxException;
+import java.net.URLEncoder;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.security.KeyManagementException;
+import java.security.NoSuchAlgorithmException;
+import java.security.cert.X509Certificate;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.logging.Logger;
+
+import javax.net.ssl.SSLContext;
+import javax.net.ssl.TrustManager;
+import javax.net.ssl.X509TrustManager;
+
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.node.ArrayNode;
+import com.fasterxml.jackson.databind.node.ObjectNode;
 
 /**
  * Service Catalogue Resource Checker
@@ -45,19 +54,27 @@ import java.util.logging.Logger;
  *   NODE_NAME:    Node name to use as keyword filter (required)
  *   api_base_url: Base URL of the node's Resource Catalogue API
  *                 (default: the CESSDA staging URL below)
- *                 Should be the endpoint value for capability_type "Resource Catalogue"
- *                 from that node's endpoint_report.json, with "/api/service/all" appended.
+ *                 Should be the endpoint value for capability_type
+ *                 "Resource Catalogue" from that node's
+ *                 endpoint_report.json. Any trailing "/api" or "/api/"
+ *                 is stripped before "/api/service/all" is appended.
  *   quantity:     Maximum number of services to retrieve (default: 10)
- *   dashboard_dir: Path to the dashboard data directory (default: ../dashboard/data)
- *                 Output is written to <dashboard_dir>/<NODE_NAME>/catalogue_services_report.json
+ *   dashboard_dir: Path to the dashboard data directory
+ *                 (default: ../dashboard/data)
+ *                 Output is written to
+ *                 <dashboard_dir>/<NODE_NAME>/catalogue_services_report.json
  */
 public class CheckCatalogueServices {
 
-    /** Fallback API base URL used when no api_base_url argument is supplied. */
-    private static final String DEFAULT_API_BASE_URL =
-            "https://service-catalogue-staging.beyond.cessda.eu/api/service/all";
+    /**
+     * Fallback API base URL used when no api_base_url argument is
+     * supplied or when the primary API returns HTTP 400 or above.
+     */
+    private static final String FALLBACK_BASE_URL =
+            "https://providers.sandbox.eosc-beyond.eu";
 
-    private static final Logger log = Logger.getLogger(CheckCatalogueServices.class.getName());
+    private static final Logger log =
+            Logger.getLogger(CheckCatalogueServices.class.getName());
 
     // ANSI colour codes
     private static final String RED    = "\033[0;31m";
@@ -68,46 +85,84 @@ public class CheckCatalogueServices {
 
     public static void main(String[] args) throws Exception {
 
-        // ── Argument parsing ──────────────────────────────────────────────────
+        // ── Argument parsing ──────────────────────────────────────────
         if (args.length < 1) {
             log.warning("Error: NODE_NAME is required");
-            log.warning("Usage: java CheckCatalogueServices <NODE_NAME> [<api_base_url>] [<quantity>] [<dashboard_dir>]");
-            throw new RuntimeException("Failed to fetch Catalogue Services data");
+            log.warning("Usage: java CheckCatalogueServices <NODE_NAME>"
+                    + " [<api_base_url>] [<quantity>] [<dashboard_dir>]");
+            throw new RuntimeException(
+                    "Failed to fetch Catalogue Services data");
         }
 
         String nodeName     = args[0];
-        // 2nd argument: the node's Resource Catalogue API base URL.
-        // The dashboard passes the "Resource Catalogue" endpoint from endpoint_report.json
-        // with "/api/service/all" appended. Falls back to the CESSDA staging URL.
+        // 2nd argument: the node's Resource Catalogue endpoint URL.
+        // Any trailing "/api" or "/api/" is stripped before
+        // "/api/service/all" is appended, so the raw endpoint value
+        // from endpoint_report.json can be passed directly.
         String apiBaseUrl   = args.length >= 2 && !args[1].isBlank()
                 ? args[1]
-                : DEFAULT_API_BASE_URL;
-        int    quantity     = args.length >= 3 ? Integer.parseInt(args[2]) : 10;
-        String dashboardDir = args.length >= 4 ? args[3] : "../dashboard/data";
+                : FALLBACK_BASE_URL;
+        int    quantity     = args.length >= 3
+                ? Integer.parseInt(args[2]) : 10;
+        String dashboardDir = args.length >= 4
+                ? args[3] : "../dashboard/data";
+        // 5th argument: node PID from endpoint_report.json, used as a
+        // fallback keyword if both primary and secondary URLs fail.
+        String nodePid      = args.length >= 5 && !args[4].isBlank()
+                ? args[4] : null;
 
         // Validate that nodeName contains no directory elements
         var nodeNamePath = Path.of(nodeName);
-        if (nodeNamePath.normalize().getNameCount() == 1 && !nodeNamePath.isAbsolute()) {
-            run(Path.of(dashboardDir), nodeName, apiBaseUrl, quantity);
+        if (nodeNamePath.normalize().getNameCount() == 1
+                && !nodeNamePath.isAbsolute()) {
+            run(Path.of(dashboardDir), nodeName, nodePid,
+                    apiBaseUrl, quantity);
         } else {
-            throw new IllegalArgumentException("nodeName must be a file name");
+            throw new IllegalArgumentException(
+                    "nodeName must be a file name");
         }
     }
 
-    public static void run(Path dashboardDir, String nodeName, String apiBaseUrl, int quantity) throws IOException, InterruptedException {
+    /**
+     * Strips a trailing {@code /api} or {@code /api/} from
+     * {@code url}, then appends {@code /api/service/all}, ensuring
+     * exactly one {@code /} between the base and the path.
+     */
+    static String buildApiServiceUrl(String url) {
+        String base = url;
+        if (base.endsWith("/api/")) {
+            base = base.substring(0, base.length() - 5);
+        } else if (base.endsWith("/api")) {
+            base = base.substring(0, base.length() - 4);
+        }
+        // Remove any remaining trailing slash before appending.
+        base = base.stripTrailing();
+        if (base.endsWith("/")) {
+            base = base.substring(0, base.length() - 1);
+        }
+        return base + "/api/service/all";
+    }
 
+    public static void run(
+            Path dashboardDir,
+            String nodeName,
+            String nodePid,
+            String apiBaseUrl,
+            int quantity)
+            throws IOException, InterruptedException {
 
-        // ── Output paths ──────────────────────────────────────────────────────
+        // ── Output paths ──────────────────────────────────────────────
         Path outputDir      = dashboardDir.resolve(nodeName);
         Files.createDirectories(outputDir);
-        Path reportFileJson = outputDir.resolve("catalogue_services_report.json");
+        Path reportFileJson =
+                outputDir.resolve("catalogue_services_report.json");
 
-        // ── Build API URL ─────────────────────────────────────────────────────
-        //TODO: String apiUrl = "%s?from=0&quantity=%d"
+        // ── Build primary API URL ─────────────────────────────────────
+        String serviceBase = buildApiServiceUrl(apiBaseUrl);
         String apiUrl = "%s?keyword=%s&from=0&quantity=%d&order=asc"
-                .formatted(apiBaseUrl, nodeName, quantity);
+                .formatted(serviceBase, nodeName, quantity);
 
-        // ── Header ────────────────────────────────────────────────────────────
+        // ── Header ────────────────────────────────────────────────────
         separator();
         log.info("Service Catalogue Resource Availability Report");
         separator();
@@ -116,79 +171,110 @@ public class CheckCatalogueServices {
         log.info("API Source: " + apiUrl);
         separator();
 
-        // ── Fetch data ────────────────────────────────────────────────────────
+        // ── Fetch data ────────────────────────────────────────────────
         log.info(BLUE + "Fetching service data from API..." + NC);
 
-        HttpClient httpClient = HttpClient.newBuilder()
-                .connectTimeout(Duration.ofSeconds(15))
-                .followRedirects(HttpClient.Redirect.NORMAL)
-                .build();
+        HttpClient httpClient = trustAllHttpClient();
 
-        HttpRequest apiRequest = HttpRequest.newBuilder()
-                .uri(URI.create(apiUrl))
-                .header("accept", "application/json")
-                .GET()
-                .build();
+        String jsonData = fetchData(httpClient, apiUrl);
 
-        HttpResponse<String> apiResponse;
-        try {
-            apiResponse = httpClient.send(apiRequest, HttpResponse.BodyHandlers.ofString());
-        } catch (IOException e) {
-            log.warning(RED + "ERROR: HTTP request failed: " + e.getMessage() + NC);
-            log.warning("Please check network connectivity and API endpoint accessibility.");
-            throw new RuntimeException("Failed to fetch Catalogue Services data");
+        // ── Fallback on HTTP 4xx / 5xx ────────────────────────────────
+        if (jsonData == null) {
+            String fallbackServiceBase =
+                    buildApiServiceUrl(FALLBACK_BASE_URL);
+            String fallbackUrl =
+                    "%s?keyword=%s&from=0&quantity=%d&order=asc"
+                    .formatted(fallbackServiceBase, nodeName, quantity);
+            log.warning(YELLOW
+                    + "Primary URL returned an error status."
+                    + " Retrying with fallback URL: "
+                    + fallbackUrl + NC);
+            jsonData = fetchData(httpClient, fallbackUrl);
+            if (jsonData != null) {
+                apiUrl = fallbackUrl;
+                log.info("Fallback data retrieved successfully.");
+            }
         }
 
-        String jsonData = apiResponse.body();
-
-        if (jsonData == null || jsonData.isBlank()) {
-            log.warning(RED + "ERROR: No data received from API (HTTP " + apiResponse.statusCode() + ")" + NC);
-            throw new RuntimeException("Failed to fetch Catalogue Services data");
+        // ── Second fallback: use node_pid as keyword ──────────────────
+        if (jsonData == null) {
+            if (nodePid == null || nodePid.isBlank()) {
+                throw new RuntimeException(
+                        "Failed to fetch Catalogue Services data from"
+                        + " both primary and fallback URLs, and no"
+                        + " node_pid is available for a further retry");
+            }
+            String encodedPid = URLEncoder.encode(
+                    nodePid, StandardCharsets.UTF_8);
+            String fallbackServiceBase =
+                    buildApiServiceUrl(FALLBACK_BASE_URL);
+            String pidUrl =
+                    "%s?keyword=%s&from=0&quantity=%d&order=asc"
+                    .formatted(fallbackServiceBase, encodedPid, quantity);
+            log.warning(YELLOW
+                    + "Fallback URL also returned an error status."
+                    + " Retrying with node_pid as keyword: "
+                    + pidUrl + NC);
+            jsonData = fetchData(httpClient, pidUrl);
+            if (jsonData == null) {
+                throw new RuntimeException(
+                        "Failed to fetch Catalogue Services data from"
+                        + " primary URL, fallback URL, and fallback URL"
+                        + " with node_pid keyword");
+            }
+            apiUrl = pidUrl;
+            log.info("Data retrieved successfully using node_pid"
+                    + " as keyword.");
         }
-
-        log.info("Data retrieved successfully! (HTTP " + apiResponse.statusCode() + ")");
 
         log.info("=== JSON RESPONSE (first 500 characters) ===");
         log.info(jsonData.substring(0, Math.min(500, jsonData.length())));
         log.info("============================================");
 
-
-        // ── Parse JSON ────────────────────────────────────────────────────────
+        // ── Parse JSON ────────────────────────────────────────────────
         ObjectMapper mapper = new ObjectMapper();
         JsonNode root;
         try {
             root = mapper.readTree(jsonData);
         } catch (IOException e) {
-            log.warning(RED + "ERROR: Response is not valid JSON: " + e.getMessage() + NC);
-            throw new RuntimeException("Failed to fetch Catalogue Services data");
+            log.warning(RED + "ERROR: Response is not valid JSON: "
+                    + e.getMessage() + NC);
+            throw new RuntimeException(
+                    "Failed to fetch Catalogue Services data");
         }
 
         if (root.has("error")) {
-            log.info(YELLOW + "WARNING: API response contains an 'error' field." + NC);
+            log.info(YELLOW
+                    + "WARNING: API response contains an 'error' field."
+                    + NC);
         }
 
         long total = root.path("total").asLong(0);
         log.info("Total services found: " + total);
 
-
-        // ── Check each service webpage ────────────────────────────────────────
+        // ── Check each service webpage ────────────────────────────────
         log.info("Checking service webpages...");
-
 
         JsonNode results = root.path("results");
         List<ObjectNode> serviceResults = new ArrayList<>();
 
         for (JsonNode service : results) {
-            String name         = service.path("name").asText();
-            String webpage      = service.path("webpage").isMissingNode() || service.path("webpage").isNull()
-                                      ? null : service.path("webpage").asText().trim();
-            String serviceId    = service.path("id").asText();
-            String abbreviation = service.path("abbreviation").isMissingNode() || service.path("abbreviation").isNull()
-                                      ? null : service.path("abbreviation").asText();
+            String name = service.path("name").asText();
+            String webpage =
+                    service.path("webpage").isMissingNode()
+                    || service.path("webpage").isNull()
+                    ? null
+                    : service.path("webpage").asText().trim();
+            String serviceId  = service.path("id").asText();
+            String abbreviation =
+                    service.path("abbreviation").isMissingNode()
+                    || service.path("abbreviation").isNull()
+                    ? null
+                    : service.path("abbreviation").asText();
 
-            String status;
+            String  status;
             Integer httpCode;
-            String colour;
+            String  colour;
 
             if (webpage == null || webpage.isEmpty()) {
                 status   = "No webpage defined";
@@ -210,31 +296,36 @@ public class CheckCatalogueServices {
                         colour = RED;
                     }
                 } catch (URISyntaxException e) {
-                    status = "Webpage has a invalid URL: " + e.getMessage();
+                    status = "Webpage has an invalid URL: "
+                            + e.getMessage();
                     httpCode = null;
-                    colour = YELLOW;
+                    colour   = YELLOW;
                 }
             }
 
             // Console output
-            System.out.printf("%-50s %s%s%s%n", name, colour, status, NC);
+            System.out.printf("%-50s %s%s%s%n",
+                    name, colour, status, NC);
 
             // Build JSON entry
             ObjectNode entry = mapper.createObjectNode();
             entry.put("name",         name);
-            entry.put("abbreviation", abbreviation != null ? abbreviation : "");
+            entry.put("abbreviation",
+                    abbreviation != null ? abbreviation : "");
             entry.put("service_id",   serviceId);
-            if (webpage != null) entry.put("webpage",   webpage);   else entry.putNull("webpage");
+            if (webpage != null) entry.put("webpage", webpage);
+            else                 entry.putNull("webpage");
             entry.put("status",       status);
-            if (httpCode != null)     entry.put("http_code", httpCode); else entry.putNull("http_code");
+            if (httpCode != null) entry.put("http_code", httpCode);
+            else                  entry.putNull("http_code");
 
             serviceResults.add(entry);
         }
 
-        // ── Write JSON report ─────────────────────────────────────────────────
+        // ── Write JSON report ─────────────────────────────────────────
         ObjectNode report = mapper.createObjectNode();
         report.put("generated",      Instant.now().toString());
-        report.put("node_name", nodeName);
+        report.put("node_name",      nodeName);
         report.put("api_source",     apiUrl);
         report.put("total_services", total);
 
@@ -242,10 +333,10 @@ public class CheckCatalogueServices {
         serviceResults.forEach(servicesArray::add);
         report.set("services", servicesArray);
 
-        mapper.writerWithDefaultPrettyPrinter().writeValue(reportFileJson.toFile(), report);
+        mapper.writerWithDefaultPrettyPrinter()
+              .writeValue(reportFileJson.toFile(), report);
 
-        // ── Footer ────────────────────────────────────────────────────────────
-
+        // ── Footer ────────────────────────────────────────────────────
         separator();
         log.info("Report generated:");
         log.info("  JSON: " + reportFileJson.toAbsolutePath());
@@ -253,17 +344,96 @@ public class CheckCatalogueServices {
     }
 
     /**
-     * Issues an HTTP HEAD request to the given URL and returns the HTTP status
-     * code as a string, or "000" if the request could not be completed.
+     * Builds an {@link HttpClient} that accepts all TLS certificates.
+     *
+     * <p>This is intentional: pilot node catalogue endpoints may be
+     * signed by CAs not present in the default JVM trust store (e.g.
+     * GEANT/IGTF CAs common in research infrastructure). This tool is
+     * a monitoring client, not a security-sensitive data processor, so
+     * bypassing certificate validation is an acceptable trade-off.</p>
      */
-    private static int checkWebpage(HttpClient client, URI url) throws IOException, InterruptedException {
+    private static HttpClient trustAllHttpClient() {
+        try {
+            TrustManager[] trustAll = new TrustManager[] {
+                new X509TrustManager() {
+                    public X509Certificate[] getAcceptedIssuers() {
+                        return new X509Certificate[0];
+                    }
+                    public void checkClientTrusted(
+                            X509Certificate[] chain, String authType) {}
+                    public void checkServerTrusted(
+                            X509Certificate[] chain, String authType) {}
+                }
+            };
+            SSLContext sslContext = SSLContext.getInstance("TLS");
+            sslContext.init(null, trustAll, null);
+            return HttpClient.newBuilder()
+                    .connectTimeout(Duration.ofSeconds(15))
+                    .followRedirects(HttpClient.Redirect.NORMAL)
+                    .sslContext(sslContext)
+                    .build();
+        } catch (NoSuchAlgorithmException | KeyManagementException e) {
+            // Should never happen with a standard JVM
+            throw new IllegalStateException(
+                    "Failed to create trust-all SSLContext", e);
+        }
+    }
+
+    /**
+     * Fetches JSON data from {@code url}. Returns the response body if
+     * the HTTP status is below 400, or {@code null} if the status is
+     * 400 or above or if the request fails with an I/O error.
+     */
+    private static String fetchData(HttpClient httpClient, String url)
+            throws InterruptedException {
+        HttpRequest apiRequest = HttpRequest.newBuilder()
+                .uri(URI.create(url))
+                .header("accept", "application/json")
+                .GET()
+                .build();
+
+        HttpResponse<String> apiResponse;
+        try {
+            apiResponse = httpClient.send(
+                    apiRequest,
+                    HttpResponse.BodyHandlers.ofString());
+        } catch (IOException e) {
+            log.warning(RED + "ERROR: HTTP request failed: "
+                    + e.getMessage() + NC);
+            return null;
+        }
+
+        int status = apiResponse.statusCode();
+        if (status >= 400) {
+            log.warning(RED + "ERROR: API returned HTTP " + status + NC);
+            return null;
+        }
+
+        String body = apiResponse.body();
+        if (body == null || body.isBlank()) {
+            log.warning(RED + "ERROR: No data received from API (HTTP "
+                    + status + ")" + NC);
+            return null;
+        }
+
+        log.info("Data retrieved successfully! (HTTP " + status + ")");
+        return body;
+    }
+
+    /**
+     * Issues an HTTP HEAD request to the given URL and returns the
+     * HTTP status code, or throws if the request cannot be completed.
+     */
+    private static int checkWebpage(HttpClient client, URI url)
+            throws IOException, InterruptedException {
         HttpRequest req = HttpRequest.newBuilder()
                 .uri(url)
                 .method("HEAD", HttpRequest.BodyPublishers.noBody())
                 .timeout(Duration.ofSeconds(10))
                 .build();
 
-        HttpResponse<Void> resp = client.send(req, HttpResponse.BodyHandlers.discarding());
+        HttpResponse<Void> resp =
+                client.send(req, HttpResponse.BodyHandlers.discarding());
         return resp.statusCode();
     }
 
