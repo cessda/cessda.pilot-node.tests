@@ -159,8 +159,12 @@ public class CheckCatalogueServices {
 
         // ── Build primary API URL ─────────────────────────────────────
         String serviceBase = buildApiServiceUrl(apiBaseUrl);
-        String apiUrl = "%s?keyword=%s&from=0&quantity=%d&order=asc"
-                .formatted(serviceBase, nodeName, quantity);
+        // When calling the node's own Resource Catalogue endpoint the
+        // API returns all services for that node without filtering.
+        // Filter arguments (keyword, quantity, order) are only needed
+        // when falling back to FALLBACK_BASE_URL, which aggregates
+        // services across multiple nodes.
+        String apiUrl = serviceBase;
 
         // ── Header ────────────────────────────────────────────────────
         separator();
