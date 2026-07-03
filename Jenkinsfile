@@ -57,6 +57,7 @@ pipeline {
             steps {
                 build job: 'cessda.pilot-node.deploy/main', parameters: [string(name: 'DASHBOARD_IMAGE_TAG', value: GIT_COMMIT)], wait: false
             }
+            when { branch 'main' }
         }
     }
 }
