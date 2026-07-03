@@ -17,11 +17,6 @@
 
 package eu.cessda.pilotnode;
 
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
-import com.fasterxml.jackson.databind.node.ArrayNode;
-import com.fasterxml.jackson.databind.node.ObjectNode;
-
 import java.io.BufferedWriter;
 import java.io.IOException;
 import java.io.InputStream;
@@ -42,6 +37,11 @@ import java.util.Set;
 import java.util.logging.Level;
 import java.util.logging.LogRecord;
 import java.util.logging.Logger;
+
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.node.ArrayNode;
+import com.fasterxml.jackson.databind.node.ObjectNode;
 
 /**
  * EOSC Beyond Node Registry Endpoint Capabilities Checker.
@@ -64,6 +64,9 @@ public class CheckNodeCapabilities {
             "https://node-devel.eosc.grnet.gr/federation-backend/tenants/eosc-beyond/nodes";
 
     private static final Duration CAPABILITY_CHECK_TIMEOUT = Duration.ofSeconds(10);
+    private static final String BROWSER_USER_AGENT =
+            "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 " +
+            "(KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36";
 
     private static final Logger log = Logger.getLogger(CheckNodeCapabilities.class.getName());
 
@@ -203,6 +206,7 @@ public class CheckNodeCapabilities {
         HttpRequest registryRequest = HttpRequest.newBuilder()
                 .uri(URI.create(NODE_REGISTRY_URL))
                 .header("X-Api-Key", apiKey)
+                .header("User-Agent", BROWSER_USER_AGENT)
                 .header("Accept", "application/json")
                 .GET()
                 .build();
@@ -331,7 +335,12 @@ public class CheckNodeCapabilities {
 
         JsonNode capsRoot;
 
-        HttpRequest req = HttpRequest.newBuilder().uri(nodeEndpoint).build();
+        HttpRequest req = HttpRequest.newBuilder()
+                .uri(nodeEndpoint)
+                .header("User-Agent", BROWSER_USER_AGENT)
+                .header("Accept", "application/json")
+                .GET()
+                .build();
         try {
             HttpResponse<InputStream> resp = http.send(req, HttpResponse.BodyHandlers.ofInputStream());
 
@@ -372,46 +381,44 @@ public class CheckNodeCapabilities {
              int available = 0;
 
              JsonNode capsArray = capsRoot.path("capabilities");
-             if (capsArray.isArray()) {
-                 for (JsonNode cap : capsArray) {
-                     String capType = cap.path("capability_type").asText();
-                     String endpoint = cap.path("endpoint").asText();
-                     String version = cap.path("version").asText();
+             for (JsonNode cap : capsArray) {
+                 String capType = cap.path("capability_type").asText();
+                 String endpoint = cap.path("endpoint").asText();
+                 String version = cap.path("version").asText();
 
-                     System.out.printf("  %-35s ", capType);
+                 System.out.printf("  %-35s ", capType);
 
-                     try {
-                         URI uri = new URI(endpoint);
-                         CapabilityStatus status = probeEndpoint(uri);
-                         total++;
-                         if (status.available()) {
-                             available++;
-                         }
+                 try {
+                     URI uri = new URI(endpoint);
+                     CapabilityStatus status = probeEndpoint(uri);
+                     total++;
+                     if (status.available()) {
+                         available++;
+                     }
 
-                         if (status.exception() == null) {
+                     if (status.exception() == null) {
                              System.out.printf("%s (HTTP %s)%n", status.label(), status.httpCode());
                          } else {
                              System.out.printf("%s (%s)%n", status.label(), status.exception());
                          }
 
-                         if (reportTxtPathWriter != null) {
-                             String capability = appendCapabilityToText(capType, endpoint, version, status);
-                             reportTxtPathWriter.write(capability);
-                         }
-
-                         ObjectNode capOut = mapper.createObjectNode();
-                         capOut.put("capability_type", capType);
-                         capOut.put("endpoint", endpoint);
-                         capOut.put("version", version);
-                         capOut.put("status", status.label());
-                         capOut.put("http_code", status.httpCode());
-                         capabilitiesOut.add(capOut);
-                     } catch (URISyntaxException e) {
-                         LogRecord logRecord = new LogRecord(Level.SEVERE, "URI {} is not a valid URI");
-                         logRecord.setParameters(new Object[]{endpoint});
-                         logRecord.setThrown(e);
-                         log.log(logRecord);
+                     if (reportTxtPathWriter != null) {
+                         String capability = appendCapabilityToText(capType, endpoint, version, status);
+                         reportTxtPathWriter.write(capability);
                      }
+
+                     ObjectNode capOut = mapper.createObjectNode();
+                     capOut.put("capability_type", capType);
+                     capOut.put("endpoint", endpoint);
+                     capOut.put("version", version);
+                     capOut.put("status", status.label());
+                     capOut.put("http_code", status.httpCode());
+                     capabilitiesOut.add(capOut);
+                 } catch (URISyntaxException e) {
+                     LogRecord logRecord = new LogRecord(Level.SEVERE, "URI {} is not a valid URI");
+                     logRecord.setParameters(new Object[]{endpoint});
+                     logRecord.setThrown(e);
+                     log.log(logRecord);
                  }
              }
 

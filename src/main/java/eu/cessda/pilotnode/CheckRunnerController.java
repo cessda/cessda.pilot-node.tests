@@ -174,6 +174,7 @@ public class CheckRunnerController {
 
         String targetNode   = body.getOrDefault("node", nodeName).strip();
         String catalogueUrlString = body.getOrDefault("catalogueUrl", "").strip();
+        String nodePid      = body.getOrDefault("nodePid", "").strip();
 
         if (targetNode.isBlank()) {
             throw new IllegalArgumentException("No node specified in request body and check.node-name is not configured");
@@ -190,8 +191,10 @@ public class CheckRunnerController {
         executor.submit(() -> {
             rec.markRunning();
             try {
-                // Arg order: NODE_NAME, api_base_url, [quantity], [dashboard_dir]
-                CheckCatalogueServices.run(dataDirPath, targetNode, catalogueUrl, 10, httpClient, mapper);
+                // Arg order: NODE_NAME, node_pid, api_base_url, [quantity]
+                CheckCatalogueServices.run(dataDirPath, targetNode,
+                        nodePid.isBlank() ? null : nodePid,
+                        catalogueUrl, 10, httpClient, mapper);
                 rec.markDone("catalogue_services_report.json written for " + targetNode);
             } catch (Exception e) {
                 log.warning("CheckCatalogueServices failed: " + e.getMessage());
