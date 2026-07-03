@@ -118,7 +118,7 @@ public class CheckNodeCapabilities {
         ObjectMapper mapper = new ObjectMapper();
 
         // Instance an HTTP client
-        HttpClient http = HttpUtils.trustAllHttpClient();
+        HttpClient http = HttpUtils.httpClient();
 
         run(apiKey, format, dashboardDir, http, mapper);
     }

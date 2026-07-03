@@ -102,7 +102,7 @@ public class CheckCatalogueServices {
         String nodePid      = args.length >= 5 && !args[4].isBlank()
                 ? args[4] : null;
 
-        HttpClient httpClient = HttpUtils.trustAllHttpClient();
+        HttpClient httpClient = HttpUtils.httpClient();
 
         ObjectMapper objectMapper = new ObjectMapper();
 

@@ -97,7 +97,7 @@ public class CheckServiceUptime {
 
         Path dashboardDir = Path.of(args.length >= 5 ? args[4] : "../dashboard/data");
 
-        HttpClient http = HttpUtils.trustAllHttpClient();
+        HttpClient http = HttpUtils.httpClient();
 
         var objectMapper = new ObjectMapper();
 
