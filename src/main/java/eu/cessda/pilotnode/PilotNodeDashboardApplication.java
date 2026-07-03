@@ -19,23 +19,10 @@ package eu.cessda.pilotnode;
 
 import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
-import org.springframework.context.annotation.Bean;
-
-import java.net.http.HttpClient;
-import java.time.Duration;
 
 @SpringBootApplication
 public class PilotNodeDashboardApplication {
-
     public static void main(String[] args) {
         SpringApplication.run(PilotNodeDashboardApplication.class, args);
-    }
-
-    @Bean
-    public HttpClient httpClient() {
-        return HttpClient.newBuilder()
-                .connectTimeout(Duration.ofSeconds(10))
-                .followRedirects(HttpClient.Redirect.NORMAL)
-                .build();
     }
 }

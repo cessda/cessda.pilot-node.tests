@@ -30,7 +30,6 @@ import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.time.Duration;
 import java.time.LocalDate;
 import java.time.OffsetDateTime;
 import java.time.format.DateTimeFormatter;
@@ -98,10 +97,7 @@ public class CheckServiceUptime {
 
         Path dashboardDir = Path.of(args.length >= 5 ? args[4] : "../dashboard/data");
 
-        var http = HttpClient.newBuilder()
-                .connectTimeout(Duration.ofSeconds(10))
-                .followRedirects(HttpClient.Redirect.NORMAL)
-                .build();
+        HttpClient http = HttpUtils.trustAllHttpClient();
 
         var objectMapper = new ObjectMapper();
 

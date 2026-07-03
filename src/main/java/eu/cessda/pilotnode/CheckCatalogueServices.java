@@ -17,6 +17,11 @@
 
 package eu.cessda.pilotnode;
 
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.node.ArrayNode;
+import com.fasterxml.jackson.databind.node.ObjectNode;
+
 import java.io.IOException;
 import java.io.InputStream;
 import java.net.URI;
@@ -28,22 +33,10 @@ import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.security.KeyManagementException;
-import java.security.NoSuchAlgorithmException;
-import java.security.cert.X509Certificate;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.logging.Level;
 import java.util.logging.Logger;
-
-import javax.net.ssl.SSLContext;
-import javax.net.ssl.TrustManager;
-import javax.net.ssl.X509TrustManager;
-
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
-import com.fasterxml.jackson.databind.node.ArrayNode;
-import com.fasterxml.jackson.databind.node.ObjectNode;
 
 /**
  * Service Catalogue Resource Checker
@@ -70,7 +63,7 @@ public class CheckCatalogueServices {
      * Fallback API base URL used when no api_base_url argument is
      * supplied or when the primary API returns HTTP 400 or above.
      */
-    private static final URI DEFAULT_API_BASE_URL =
+    private static final URI FALLBACK_BASE_URL =
             URI.create("https://providers.sandbox.eosc-beyond.eu");
 
     private static final Logger log =
@@ -82,7 +75,7 @@ public class CheckCatalogueServices {
     private static final String YELLOW = "\033[1;33m";
     private static final String NC     = "\033[0m";
 
-    public static void main(String[] args) throws IOException, URISyntaxException {
+    public static void main(String[] args) throws IOException, URISyntaxException, InterruptedException {
 
         // ── Argument parsing ──────────────────────────────────────────
         if (args.length < 1) {
@@ -109,20 +102,14 @@ public class CheckCatalogueServices {
         String nodePid      = args.length >= 5 && !args[4].isBlank()
                 ? args[4] : null;
 
-
-        HttpClient httpClient = HttpClient.newBuilder()
-                .connectTimeout(Duration.ofSeconds(10))
-                .followRedirects(HttpClient.Redirect.NORMAL)
-                .build();
+        HttpClient httpClient = HttpUtils.trustAllHttpClient();
 
         ObjectMapper objectMapper = new ObjectMapper();
 
         // Validate that nodeName contains no directory elements
         var nodeNamePath = Path.of(nodeName);
-        if (nodeNamePath.normalize().getNameCount() == 1
-                && !nodeNamePath.isAbsolute()) {
-            run(Path.of(dashboardDir), nodeName, nodePid,
-                    apiBaseUrl, quantity, httpClient, objectMapper);
+        if (nodeNamePath.normalize().getNameCount() == 1 && !nodeNamePath.isAbsolute()) {
+            run(Path.of(dashboardDir), nodeName, nodePid, apiBaseUrl, quantity, httpClient, objectMapper);
         } else {
             throw new IllegalArgumentException(
                     "nodeName must be a file name");
@@ -157,7 +144,7 @@ public class CheckCatalogueServices {
             int quantity,
             HttpClient httpClient,
             ObjectMapper mapper)
-            throws IOException, URISyntaxException {
+            throws IOException, URISyntaxException, InterruptedException {
 
         // ── Output paths ──────────────────────────────────────────────
         Path outputDir      = dashboardDir.resolve(nodeName);
@@ -166,13 +153,13 @@ public class CheckCatalogueServices {
                 outputDir.resolve("catalogue_services_report.json");
 
         // ── Build primary API URL ─────────────────────────────────────
-        URI serviceBase = buildApiServiceUrl(apiBaseUrl);
+
         // When calling the node's own Resource Catalogue endpoint the
         // API returns all services for that node without filtering.
         // Filter arguments (keyword, quantity, order) are only needed
         // when falling back to FALLBACK_BASE_URL, which aggregates
         // services across multiple nodes.
-        URI apiUrl = serviceBase;
+        URI apiUrl = buildApiServiceUrl(apiBaseUrl);
 
         // ── Header ────────────────────────────────────────────────────
         log.log(Level.INFO, """
@@ -186,73 +173,48 @@ public class CheckCatalogueServices {
         // ── Fetch data ────────────────────────────────────────────────────────
         log.info("Fetching service data from API");
 
-        HttpRequest apiRequest = HttpRequest.newBuilder()
-                .uri(apiUrl)
-                .header("accept", "application/json")
-                .GET()
-                .build();
-
-        HttpResponse<InputStream> apiResponse;
+        InputStream apiResponse;
         try {
-            apiResponse = httpClient.send(apiRequest, HttpResponse.BodyHandlers.ofInputStream());
-        } catch (InterruptedException e) {
-            Thread.currentThread().interrupt();
-            return;
-        }
+            apiResponse = fetchData(httpClient, apiUrl);
+        } catch (IOException e) {
 
-        if (apiResponse.statusCode() != 200) {
-            String fallbackServiceBase =
-                    buildApiServiceUrl(FALLBACK_BASE_URL);
-            String fallbackUrl =
-                    "%s?keyword=%s&from=0&quantity=%d&order=asc"
-                            .formatted(fallbackServiceBase, nodeName, quantity);
-            log.warning(YELLOW
-                    + "Primary URL returned an error status."
-                    + " Retrying with fallback URL: "
-                    + fallbackUrl + NC);
-            var jsonData = fetchData(httpClient, fallbackUrl);
-            if (jsonData != null) {
+            URI fallbackServiceBase = buildApiServiceUrl(FALLBACK_BASE_URL);
+            URI fallbackUrl = URI.create(fallbackServiceBase + "?keyword=" + nodeName + "&from=0&quantity=" + quantity + "&order=asc");
+
+            log.log(Level.WARNING, "Primary URL returned an error status. Retrying with fallback URL: {0}", fallbackUrl);
+
+            try {
+                apiResponse = fetchData(httpClient, fallbackUrl);
                 apiUrl = fallbackUrl;
-                log.info("Fallback data retrieved successfully.");
-            }
-
-            if (jsonData == null) {
+            } catch (IOException fallbackException) {
+                fallbackException.addSuppressed(e);
                 if (nodePid == null || nodePid.isBlank()) {
                     throw new IOException(
                             "Failed to fetch Catalogue Services data from"
                                     + " both primary and fallback URLs, and no"
-                                    + " node_pid is available for a further retry");
+                                    + " node_pid is available for a further retry", fallbackException);
                 }
-                String encodedPid = URLEncoder.encode(
-                        nodePid, StandardCharsets.UTF_8);
-                fallbackServiceBase =
-                        buildApiServiceUrl(FALLBACK_BASE_URL);
-                String pidUrl =
-                        "%s?keyword=%s&from=0&quantity=%d&order=asc"
-                                .formatted(fallbackServiceBase, encodedPid, quantity);
-                log.warning(YELLOW
-                        + "Fallback URL also returned an error status."
-                        + " Retrying with node_pid as keyword: "
-                        + pidUrl + NC);
-                jsonData = fetchData(httpClient, pidUrl);
-                if (jsonData == null) {
+
+                String encodedPid = URLEncoder.encode(nodePid, StandardCharsets.UTF_8);
+                URI pidUrl = URI.create(fallbackServiceBase + "?keyword=" + encodedPid + "&from=0&quantity=" + quantity + "&order=asc");
+                log.warning("Fallback URL also returned an error status. Retrying with node_pid as keyword: " + pidUrl);
+                try {
+                    apiResponse = fetchData(httpClient, pidUrl);
+                } catch (IOException nodePidException) {
+                    nodePidException.addSuppressed(fallbackException);
                     throw new IOException(
                             "Failed to fetch Catalogue Services data from"
                                     + " primary URL, fallback URL, and fallback URL"
-                                    + " with node_pid keyword");
+                                    + " with node_pid keyword", nodePidException);
                 }
                 apiUrl = pidUrl;
-                log.info("Data retrieved successfully using node_pid"
-                        + " as keyword.");
+                log.info("Data retrieved successfully using node_pid as keyword.");
             }
-
-
-            throw new IOException("Failed to fetch Catalogue Services data (HTTP " + apiResponse.statusCode() + ")");
         }
 
         // ── Parse JSON ────────────────────────────────────────────────────────
         JsonNode root;
-        try (InputStream jsonData = apiResponse.body()) {
+        try (InputStream jsonData = apiResponse) {
             root = mapper.readTree(jsonData);
         }
 
@@ -347,79 +309,28 @@ public class CheckCatalogueServices {
         log.log(Level.INFO, "Report generated: JSON: {0}", reportFileJson.toAbsolutePath());
     }
 
-    /**
-     * Builds an {@link HttpClient} that accepts all TLS certificates.
-     *
-     * <p>This is intentional: pilot node catalogue endpoints may be
-     * signed by CAs not present in the default JVM trust store (e.g.
-     * GEANT/IGTF CAs common in research infrastructure). This tool is
-     * a monitoring client, not a security-sensitive data processor, so
-     * bypassing certificate validation is an acceptable trade-off.</p>
-     */
-    private static HttpClient trustAllHttpClient() {
-        try {
-            TrustManager[] trustAll = new TrustManager[] {
-                    new X509TrustManager() {
-                        public X509Certificate[] getAcceptedIssuers() {
-                            return new X509Certificate[0];
-                        }
-                        public void checkClientTrusted(
-                                X509Certificate[] chain, String authType) {}
-                        public void checkServerTrusted(
-                                X509Certificate[] chain, String authType) {}
-                    }
-            };
-            SSLContext sslContext = SSLContext.getInstance("TLS");
-            sslContext.init(null, trustAll, null);
-            return HttpClient.newBuilder()
-                    .connectTimeout(Duration.ofSeconds(15))
-                    .followRedirects(HttpClient.Redirect.NORMAL)
-                    .sslContext(sslContext)
-                    .build();
-        } catch (NoSuchAlgorithmException | KeyManagementException e) {
-            // Should never happen with a standard JVM
-            throw new IllegalStateException(
-                    "Failed to create trust-all SSLContext", e);
-        }
-    }
+
 
     /**
      * Issues an HTTP HEAD request to the given URL and returns the HTTP status code
      */
-    private static String fetchData(HttpClient httpClient, String url)
-            throws InterruptedException {
+    private static InputStream fetchData(HttpClient httpClient, URI url) throws IOException, InterruptedException {
         HttpRequest apiRequest = HttpRequest.newBuilder()
-                .uri(URI.create(url))
+                .uri(url)
                 .header("accept", "application/json")
                 .GET()
                 .build();
 
-        HttpResponse<String> apiResponse;
-        try {
-            apiResponse = httpClient.send(
-                    apiRequest,
-                    HttpResponse.BodyHandlers.ofString());
-        } catch (IOException e) {
-            log.warning(RED + "ERROR: HTTP request failed: "
-                    + e.getMessage() + NC);
-            return null;
-        }
+        HttpResponse<InputStream> apiResponse = httpClient.send(
+                apiRequest,
+                HttpResponse.BodyHandlers.ofInputStream());
 
         int status = apiResponse.statusCode();
-        if (status >= 400) {
-            log.warning(RED + "ERROR: API returned HTTP " + status + NC);
-            return null;
+        if (status != 200) {
+            throw new IOException("HTTP " + apiResponse.statusCode());
         }
 
-        String body = apiResponse.body();
-        if (body == null || body.isBlank()) {
-            log.warning(RED + "ERROR: No data received from API (HTTP "
-                    + status + ")" + NC);
-            return null;
-        }
-
-        log.info("Data retrieved successfully! (HTTP " + status + ")");
-        return body;
+        return apiResponse.body();
     }
 
     /**
@@ -434,7 +345,6 @@ public class CheckCatalogueServices {
                 .timeout(Duration.ofSeconds(10))
                 .build();
 
-        return
-                client.send(req, HttpResponse.BodyHandlers.discarding()).statusCode();
+        return client.send(req, HttpResponse.BodyHandlers.discarding()).statusCode();
     }
 }
