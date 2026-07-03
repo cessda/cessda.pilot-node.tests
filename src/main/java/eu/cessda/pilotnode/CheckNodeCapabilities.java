@@ -24,6 +24,7 @@ import com.fasterxml.jackson.databind.node.ObjectNode;
 
 import java.io.BufferedWriter;
 import java.io.IOException;
+import java.io.InputStream;
 import java.net.URI;
 import java.net.URISyntaxException;
 import java.net.http.HttpClient;
@@ -35,7 +36,9 @@ import java.time.Duration;
 import java.time.OffsetDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
+import java.util.EnumSet;
 import java.util.List;
+import java.util.Set;
 import java.util.logging.Level;
 import java.util.logging.LogRecord;
 import java.util.logging.Logger;
@@ -64,65 +67,135 @@ public class CheckNodeCapabilities {
 
     private static final Logger log = Logger.getLogger(CheckNodeCapabilities.class.getName());
 
-    // ── Entry point ───────────────────────────────────────────────────────────
-
-    public static void main(String[] args) throws Exception {
-
-        if (args.length < 1 || args[0].isBlank()) {
-            log.warning("Error: API_KEY is required.");
-            log.warning("Usage: CheckNodeCapabilities API_KEY [text|json|both] [dashboard_dir]");
-            throw new RuntimeException("Failed to fetch data from Node Registry (HTTP 401)");
-        }
-
-        String apiKey = args[0];
-
-        OutputFormat format = OutputFormat.JSON;
-        if (args.length >= 2) {
-            format = switch (args[1].toLowerCase()) {
-                case "text", "txt" -> OutputFormat.TEXT;
-                case "json"        -> OutputFormat.JSON;
-                case "both"        -> OutputFormat.BOTH;
-                default -> {
-                    log.warning("Invalid format: " + args[1]);
-                    log.warning("Usage: CheckNodeCapabilities API_KEY [text|json|both] [dashboard_dir]");
-                    throw new RuntimeException("Failed to fetch data from Node Registry (HTTP 401)");
-                }
-            };
-        }
-
-        Path dashboardDir = Path.of(args.length >= 3 ? args[2] : "../dashboard/data");
-        Files.createDirectories(dashboardDir);
-
-        new CheckNodeCapabilities(apiKey, format, dashboardDir).run();
-    }
+    private final EnumSet<OutputFormat> format;
 
     // ── Fields ────────────────────────────────────────────────────────────────
 
-    private final String apiKey;
-    private final OutputFormat format;
+    private CheckNodeCapabilities(EnumSet<OutputFormat> format, Path dashboardDir, HttpClient http, ObjectMapper mapper) {
+        this.dashboardDir = dashboardDir;
+        this.http = http;
+        this.mapper = mapper;
+        this.format = format;
+    }
     private final Path dashboardDir;
     private final HttpClient http;
     private final ObjectMapper mapper;
 
     // ── Constructor ───────────────────────────────────────────────────────────
 
-    public CheckNodeCapabilities(String apiKey, OutputFormat format, Path dashboardDir) {
-        this.apiKey = apiKey;
-        this.format = format;
-        this.dashboardDir = dashboardDir;
-        this.http = HttpClient.newBuilder()
+    // ── Entry point ───────────────────────────────────────────────────────────
+    @SuppressWarnings("java:S106")
+    public static void main(String[] args) throws IOException {
+
+        if (args.length < 1 || args[0].isBlank()) {
+            System.err.println("Error: API_KEY is required.");
+            System.err.println("Usage: CheckNodeCapabilities API_KEY [text|json|both] [dashboard_dir]");
+            System.exit(-1);
+        }
+
+        String apiKey = args[0];
+
+        EnumSet<OutputFormat> format = EnumSet.of(OutputFormat.JSON);
+        if (args.length >= 2) {
+            format = switch (args[1].toLowerCase()) {
+                case "text", "txt" -> EnumSet.of(OutputFormat.TEXT);
+                case "json" -> EnumSet.of(OutputFormat.JSON);
+                case "both" -> EnumSet.of(OutputFormat.TEXT, OutputFormat.JSON);
+                default -> {
+                    System.err.println("Invalid format: " + args[1]);
+                    System.err.println("Usage: CheckNodeCapabilities API_KEY [text|json|both] [dashboard_dir]");
+                    System.exit(-1);
+                    yield EnumSet.noneOf(OutputFormat.class); // Needed to satisfy the compiler but will never be called
+                }
+            };
+        }
+
+        Path dashboardDir = Path.of(args.length >= 3 ? args[2] : "dashboard/data");
+
+        ObjectMapper mapper = new ObjectMapper();
+
+        // Instance an HTTP client
+        HttpClient http = HttpClient.newBuilder()
                 .connectTimeout(Duration.ofSeconds(10))
                 .followRedirects(HttpClient.Redirect.NORMAL)
                 .build();
-        this.mapper = new ObjectMapper();
+
+        run(apiKey, format, dashboardDir, http, mapper);
+    }
+
+    @SuppressWarnings("java:S6201")
+    public static void run(String apiKey, Set<OutputFormat> format, Path dashboardDir, HttpClient http, ObjectMapper mapper) throws IOException {
+
+        printBanner();
+
+        // Copy formats to an EnumSet if they are not already
+        EnumSet<OutputFormat> formatEnumSet;
+        if (format instanceof EnumSet<OutputFormat>) {
+            formatEnumSet = (EnumSet<OutputFormat>) format;
+        } else {
+            formatEnumSet = EnumSet.copyOf(format);
+        }
+
+        new CheckNodeCapabilities(formatEnumSet, dashboardDir, http, mapper).check(apiKey);
     }
 
     // ── Main logic ────────────────────────────────────────────────────────────
 
-    public void run() throws Exception {
+    private static ArrayNode extractNodesArray(JsonNode obj) throws IOException {
+        for (String key : new String[]{"nodes", "results", "data"}) {
+            JsonNode candidate = obj.get(key);
+            if (candidate != null && candidate.isArray()) return (ArrayNode) candidate;
+        }
+        throw new IOException("Registry returned a JSON object but no recognised array key (nodes/results/data) was found");
+    }
 
-        printBanner();
+    // ── Per-node processing ───────────────────────────────────────────────────
 
+    private static void printBanner() {
+        log.info("==========================================");
+        log.info("EOSC Beyond Node Registry");
+        log.info("Endpoint Availability Report");
+        log.info("==========================================");
+        log.info("Generated: " + nowIso());
+        log.info("Registry:  " + NODE_REGISTRY_URL);
+        log.info("==========================================");
+
+    }
+
+    // ── HTTP probe ────────────────────────────────────────────────────────────
+
+    private static void writeTextHeader(Path path) throws IOException {
+        String header = """
+                ==========================================
+                EOSC Beyond Node Registry
+                Endpoint Availability Summary
+                ==========================================
+                Generated: %s
+                Registry:  %s
+                ==========================================
+
+                """.formatted(nowIso(), NODE_REGISTRY_URL);
+        Files.writeString(path, header);
+    }
+
+    // ── JSON helpers ──────────────────────────────────────────────────────────
+
+    private static void appendTextSummaryEntry(Path path, ObjectNode nodeSummary) throws IOException {
+        String entry = """
+                Node: %s
+                  Endpoint:               %s
+                  Total Capabilities:     %d
+                  Available Capabilities: %d
+
+                """.formatted(
+                nodeSummary.path("node_name").asText(),
+                nodeSummary.path("node_endpoint").asText(),
+                nodeSummary.path("total_capabilities").asInt(),
+                nodeSummary.path("available_capabilities").asInt());
+        Files.writeString(path, entry, java.nio.file.StandardOpenOption.APPEND);
+    }
+
+    private void check(String apiKey) throws IOException {
         // ── Fetch node list ───────────────────────────────────────────────────
 
         log.info("Fetching node list from registry...");
@@ -134,43 +207,41 @@ public class CheckNodeCapabilities {
                 .GET()
                 .build();
 
-        HttpResponse<String> registryResponse =
-                http.send(registryRequest, HttpResponse.BodyHandlers.ofString());
+        HttpResponse<InputStream> registryResponse;
 
-        if (registryResponse.statusCode() != 200) {
-            log.warning("ERROR: Failed to fetch data from Node Registry" +
-                    " (HTTP " + registryResponse.statusCode() + ")");
-            throw new RuntimeException("Failed to fetch data from Node Registry (HTTP 401)");
+        try {
+            registryResponse = http.send(registryRequest, HttpResponse.BodyHandlers.ofInputStream());
+
+            if (registryResponse.statusCode() != 200) {
+                throw new IOException("Failed to fetch data from Node Registry" +
+                        " (HTTP " + registryResponse.statusCode() + ")");
+            }
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            return;
         }
 
         JsonNode root;
-        try {
-            root = mapper.readTree(registryResponse.body());
-        } catch (IOException e) {
-            log.warning("ERROR: Registry response is not valid JSON");
-            log.warning("Raw response: " + registryResponse.body());
-            throw new RuntimeException("Failed to fetch data from Node Registry (HTTP 401)");
+        try (InputStream body = registryResponse.body()) {
+            root = mapper.readTree(body);
         }
 
         // Handle bare array or wrapped object
         ArrayNode nodesArray = switch (root.getNodeType()) {
             case ARRAY  -> (ArrayNode) root;
             case OBJECT -> extractNodesArray(root);
-            default -> {
-                log.warning("ERROR: Unexpected JSON type from registry: " + root.getNodeType());
-                throw new RuntimeException("Failed to fetch data from Node Registry (HTTP 401)");
-            }
+            default -> throw new IOException("Unexpected JSON type from registry: " + root.getNodeType());
         };
 
         log.info("Node registry data retrieved successfully!");
-        
+
 
         // ── Initialise summary files ──────────────────────────────────────────
 
         Path summaryJsonPath = dashboardDir.resolve("node_registry_summary.json");
         Path summaryTxtPath  = dashboardDir.resolve("node_registry_summary.txt");
 
-        if (format.includesText()) {
+        if (format.contains(OutputFormat.TEXT)) {
             writeTextHeader(summaryTxtPath);
         }
 
@@ -178,34 +249,41 @@ public class CheckNodeCapabilities {
 
         // ── Process each node ─────────────────────────────────────────────────
 
-        log.info("==========================================");
         log.info("Processing nodes from registry...");
-        log.info("==========================================");
-        
 
         for (JsonNode nodeJson : nodesArray) {
-            String nodeName        = text(nodeJson, "name");
-            String nodeId          = text(nodeJson, "id");
-            String nodePid         = text(nodeJson, "pid");
-            String nodeEndpoint    = text(nodeJson, "node_endpoint");
-            String nodeLogo        = text(nodeJson, "logo");
+            String nodeName = text(nodeJson, "name");
+            String nodeId = text(nodeJson, "id");
+            String nodePid = text(nodeJson, "pid");
+            String nodeEndpointString = text(nodeJson, "node_endpoint");
+            String nodeLogo = text(nodeJson, "logo");
             String legalEntityName = nodeJson.path("legal_entity").path("name").asText();
-            String legalEntityRor  = nodeJson.path("legal_entity").path("ror_id").asText();
+            String legalEntityRor = nodeJson.path("legal_entity").path("ror_id").asText();
 
-            ObjectNode summary = checkNodeCapabilities(
-                    nodeName, nodeId, nodePid, nodeEndpoint,
-                    nodeLogo, legalEntityName, legalEntityRor);
+            try {
+                URI nodeEndpoint = new URI(nodeEndpointString);
 
-            nodeSummaries.add(summary);
 
-            if (format.includesText()) {
-                appendTextSummaryEntry(summaryTxtPath, summary);
+                ObjectNode summary = checkNodeCapabilities(
+                        nodeName, nodeId, nodePid, nodeEndpoint,
+                        nodeLogo, legalEntityName, legalEntityRor);
+
+                nodeSummaries.add(summary);
+
+                if (format.contains(OutputFormat.TEXT)) {
+                    appendTextSummaryEntry(summaryTxtPath, summary);
+                }
+            } catch (URISyntaxException e) {
+                log.log(Level.SEVERE, "Node {0} - node_endpoint is an invalid URI: {1}", new Object[]{nodeName, e.getMessage()});
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                return;
             }
         }
 
         // ── Write JSON summary ────────────────────────────────────────────────
 
-        if (format.includesJson()) {
+        if (format.contains(OutputFormat.JSON)) {
             ObjectNode summaryJson = mapper.createObjectNode();
             summaryJson.put("generated", nowIso());
             summaryJson.put("registry_source", NODE_REGISTRY_URL);
@@ -215,31 +293,32 @@ public class CheckNodeCapabilities {
         }
 
         // ── Final output ──────────────────────────────────────────────────────
-
-        log.info("==========================================");
-        log.info("All nodes processed!");
-        log.info("==========================================");
-        
-        log.info("Summary reports:");
-        if (format.includesText()) log.info("  Text: " + summaryTxtPath);
-        if (format.includesJson()) log.info("  JSON: " + summaryJsonPath);
-        log.info("==========================================");
+        String summaryMessage = "All nodes processed. Summary reports:";
+        if (format.contains(OutputFormat.TEXT)) {
+            summaryMessage += "\n  Text: " + summaryTxtPath;
+        }
+        if (format.contains(OutputFormat.JSON)) {
+            summaryMessage += "\n  JSON: " + summaryJsonPath;
+        }
+        log.info(summaryMessage);
     }
 
-    // ── Per-node processing ───────────────────────────────────────────────────
+    // ── Text report helpers ───────────────────────────────────────────────────
 
     private ObjectNode checkNodeCapabilities(
-            String nodeName, String nodeId, String nodePid, String nodeEndpoint,
-            String nodeLogo, String legalEntityName, String legalEntityRor) throws Exception {
+            String nodeName, String nodeId, String nodePid, URI nodeEndpoint,
+            String nodeLogo, String legalEntityName, String legalEntityRor) throws IOException, InterruptedException {
 
-        log.info("========================================");
-        log.info("Node: " + nodeName);
-        log.info("========================================");
-        log.info("ID:           " + nodeId);
-        log.info("PID:          " + nodePid);
-        log.info("Endpoint:     " + nodeEndpoint);
-        log.info("Legal Entity: " + legalEntityName);
-        
+        log.log(Level.INFO, """
+                        Node: {0}
+                        ========================================
+                        ID:           {1}
+                        PID:          {2}
+                        Endpoint:     {3}
+                        Legal Entity: {4}""",
+                new Object[]{nodeName, nodeId, nodePid, nodeEndpoint, legalEntityName}
+        );
+
 
         Path nodeDir = dashboardDir.resolve(nodeName);
         Files.createDirectories(nodeDir);
@@ -248,39 +327,36 @@ public class CheckNodeCapabilities {
 
         // ── Fetch capabilities ────────────────────────────────────────────────
 
-        log.info("Fetching capabilities for " + nodeName + "...");
+        log.log(Level.INFO, "Fetching capabilities for {0}...", nodeName);
 
-        String capabilitiesBody;
+        JsonNode capsRoot;
+
+        HttpRequest req = HttpRequest.newBuilder().uri(nodeEndpoint).build();
         try {
-            HttpRequest req = HttpRequest.newBuilder()
-                    .uri(URI.create(nodeEndpoint))
-                    .GET()
-                    .build();
-            HttpResponse<String> resp = http.send(req, HttpResponse.BodyHandlers.ofString());
-            capabilitiesBody = resp.body();
-        } catch (Exception e) {
-            log.warning("ERROR: Failed to fetch capabilities from " + nodeEndpoint + ": " + e.getMessage());
-            
+            HttpResponse<InputStream> resp = http.send(req, HttpResponse.BodyHandlers.ofInputStream());
+
+            if (resp.statusCode() != 200) {
+                log.log(Level.WARNING, "Failed to fetch capabilities from {0} (HTTP {1})", new Object[]{nodeEndpoint, resp.statusCode()});
+
+                // Return an empty summary for this node
+                return buildNodeSummary(nodeName, nodeId, nodePid, nodeEndpoint,
+                        legalEntityName, legalEntityRor, 0, 0, mapper.createArrayNode(), reportJsonPath);
+            }
+
+            try (InputStream capabilitiesBody = resp.body()) {
+                capsRoot = mapper.readTree(capabilitiesBody);
+            }
+        } catch (IOException e) {
+            log.log(Level.WARNING, "Failed to fetch capabilities from {0}: {1}", new Object[]{nodeEndpoint, e});
+
             // Return an empty summary for this node
             return buildNodeSummary(nodeName, nodeId, nodePid, nodeEndpoint,
                     legalEntityName, legalEntityRor, 0, 0, mapper.createArrayNode(), reportJsonPath);
         }
 
-        JsonNode capsRoot;
-        try {
-            capsRoot = mapper.readTree(capabilitiesBody);
-        } catch (IOException e) {
-            log.warning("ERROR: Capabilities response from " + nodeEndpoint + " is not valid JSON");
-            
-            return buildNodeSummary(nodeName, nodeId, nodePid, nodeEndpoint,
-                    legalEntityName, legalEntityRor, 0, 0, mapper.createArrayNode(), reportJsonPath);
-        }
-
-        log.info("Capabilities retrieved successfully!");
-        
         log.info("Checking capabilities...");
 
-        try (BufferedWriter reportTxtPathWriter = (format.includesText() ? Files.newBufferedWriter(reportTxtPath) : null)) {
+        try (BufferedWriter reportTxtPathWriter = (format.contains(OutputFormat.TEXT) ? Files.newBufferedWriter(reportTxtPath) : null)) {
 
             if (reportTxtPathWriter != null) {
                  var header = buildNodeTextHeader(nodeName, nodeId, nodePid,
@@ -312,7 +388,11 @@ public class CheckNodeCapabilities {
                              available++;
                          }
 
-                         System.out.printf("%s (HTTP %s)%n", status.label(), status.httpCode());
+                         if (status.exception() == null) {
+                             System.out.printf("%s (HTTP %s)%n", status.label(), status.httpCode());
+                         } else {
+                             System.out.printf("%s (%s)%n", status.label(), status.exception());
+                         }
 
                          if (reportTxtPathWriter != null) {
                              String capability = appendCapabilityToText(capType, endpoint, version, status);
@@ -342,21 +422,22 @@ public class CheckNodeCapabilities {
                      legalEntityName, legalEntityRor, total, available, capabilitiesOut, reportJsonPath);
 
 
-             if (format.includesJson()) {
+            if (format.contains(OutputFormat.JSON)) {
                  mapper.writerWithDefaultPrettyPrinter().writeValue(reportJsonPath.toFile(), nodeReport);
              }
 
+            String summaryMessage = "Node reports generated:";
+            if (format.contains(OutputFormat.TEXT)) {
+                summaryMessage += "\n  Text: " + reportTxtPath;
+            }
+            if (format.contains(OutputFormat.JSON)) {
+                summaryMessage += "\n  JSON: " + reportJsonPath;
+            }
+            log.info(summaryMessage);
 
-             log.info("Node reports generated:");
-             if (format.includesText()) log.info("  Text: " + reportTxtPath);
-             if (format.includesJson()) log.info("  JSON: " + reportJsonPath);
-
-
-             return nodeReport;
+            return nodeReport;
         }
     }
-
-    // ── HTTP probe ────────────────────────────────────────────────────────────
 
     private CapabilityStatus probeEndpoint(URI url) {
         try {
@@ -368,28 +449,15 @@ public class CheckNodeCapabilities {
             HttpResponse<Void> resp = http.send(req, HttpResponse.BodyHandlers.discarding());
             return CapabilityStatus.of(resp.statusCode());
         } catch (IOException e) {
-            return CapabilityStatus.of(-1);
+            return CapabilityStatus.exceptionally(e);
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
             return CapabilityStatus.of(-1);
         }
     }
 
-    // ── JSON helpers ──────────────────────────────────────────────────────────
-
-    private ArrayNode extractNodesArray(JsonNode obj) {
-        for (String key : List.of("nodes", "results", "data")) {
-            JsonNode candidate = obj.get(key);
-            if (candidate != null && candidate.isArray()) return (ArrayNode) candidate;
-        }
-        // Last resort: the object itself (shouldn't happen but mirrors the shell fallback)
-        log.warning("ERROR: Registry returned a JSON object but no recognised array key " +
-                "(nodes/results/data) was found");
-        throw new RuntimeException("Failed to fetch data from Node Registry (HTTP 401)");
-    }
-
     private ObjectNode buildNodeSummary(
-            String nodeName, String nodeId, String nodePid, String nodeEndpoint,
+            String nodeName, String nodeId, String nodePid, URI nodeEndpoint,
             String legalEntityName, String legalEntityRor,
             int total, int available, ArrayNode capabilities, Path reportPath) {
 
@@ -398,7 +466,7 @@ public class CheckNodeCapabilities {
         n.put("node_name", nodeName);
         n.put("node_id", nodeId);
         n.put("node_pid", nodePid);
-        n.put("node_endpoint", nodeEndpoint);
+        n.put("node_endpoint", nodeEndpoint.toString());
         ObjectNode le = n.putObject("legal_entity");
         le.put("name", legalEntityName);
         le.put("ror_id", legalEntityRor);
@@ -409,72 +477,26 @@ public class CheckNodeCapabilities {
         return n;
     }
 
-    // ── Text report helpers ───────────────────────────────────────────────────
-
-    private void printBanner() {
-        log.info("==========================================");
-        log.info("EOSC Beyond Node Registry");
-        log.info("Endpoint Availability Report");
-        log.info("==========================================");
-        log.info("Generated: " + nowIso());
-        log.info("Registry:  " + NODE_REGISTRY_URL);
-        log.info("==========================================");
-        
-    }
-
-    private void writeTextHeader(Path path) throws IOException {
-        String header = """
-                ==========================================
-                EOSC Beyond Node Registry
-                Endpoint Availability Summary
-                ==========================================
-                Generated: %s
-                Registry:  %s
-                ==========================================
-
-                """.formatted(nowIso(), NODE_REGISTRY_URL);
-        Files.writeString(path, header);
-    }
-
-    private String buildNodeTextHeader(
-            String nodeName, String nodeId, String nodePid, String nodeEndpoint,
-            String nodeLogo, String legalEntityName, String legalEntityRor) throws IOException {
-        return """
-                ==========================================
-                Node: %s
-                ==========================================
-                Generated:          %s
-                Node ID:            %s
-                Node PID:           %s
-                Node Endpoint:      %s
-                Legal Entity:       %s
-                Legal Entity ROR:   %s
-                Logo:               %s
-                ==========================================
-
-                """.formatted(nodeName, nowIso(), nodeId, nodePid, nodeEndpoint,
-                legalEntityName, legalEntityRor, nodeLogo);
-    }
-
     private String appendCapabilityToText(String capType, String endpoint,
             String version, CapabilityStatus status) {
         return "%-40s %s (HTTP %s)%n  └─ Endpoint: %s%n  └─ Version: %s%n%n"
                 .formatted(capType, status.label(), status.httpCode(), endpoint, version);
     }
 
-    private void appendTextSummaryEntry(Path path, ObjectNode nodeSummary) throws IOException {
-        String entry = """
-                Node: %s
-                  Endpoint:               %s
-                  Total Capabilities:     %d
-                  Available Capabilities: %d
-
-                """.formatted(
-                nodeSummary.path("node_name").asText(),
-                nodeSummary.path("node_endpoint").asText(),
-                nodeSummary.path("total_capabilities").asInt(),
-                nodeSummary.path("available_capabilities").asInt());
-        Files.writeString(path, entry, java.nio.file.StandardOpenOption.APPEND);
+    private String buildNodeTextHeader(
+            String nodeName, String nodeId, String nodePid, URI nodeEndpoint,
+            String nodeLogo, String legalEntityName, String legalEntityRor) {
+        return ("==========================================\n" +
+                "Node: " + nodeName + "\n" +
+                "==========================================\n" +
+                "Generated:          " + nowIso() + "\n" +
+                "Node ID:            " + nodeId + "\n" +
+                "Node PID:           " + nodePid + "\n" +
+                "Node Endpoint:      " + nodeEndpoint + "\n" +
+                "Legal Entity:       " + legalEntityName + "\n" +
+                "Legal Entity ROR:   " + legalEntityRor + "\n" +
+                "Logo:               " + nodeLogo + "\n" +
+                "==========================================\n\n");
     }
 
     // ── Utility ───────────────────────────────────────────────────────────────
@@ -489,29 +511,24 @@ public class CheckNodeCapabilities {
 
     // ── Supporting types ──────────────────────────────────────────────────────
 
-    enum OutputFormat {
-        TEXT, JSON, BOTH;
-
-        boolean includesText() { return this == TEXT || this == BOTH; }
-        boolean includesJson() { return this == JSON || this == BOTH; }
-    }
+    public enum OutputFormat {TEXT, JSON}
 
     /**
      * Represents the HTTP-probed status of a single capability endpoint.
      */
-    record CapabilityStatus(int httpCode, boolean available) {
+    record CapabilityStatus(int httpCode, boolean available, IOException exception) {
+        static CapabilityStatus exceptionally(IOException exception) {
+            return new CapabilityStatus(-1, false, exception);
+        }
+
         static CapabilityStatus of(int code) {
-            return switch (code) {
-                case 0  -> new CapabilityStatus(-1, true);
-                case 404  -> new CapabilityStatus(404, false);
-                default -> {
-                    if (code >= 200 && code < 400) {
-                        yield new CapabilityStatus(code, true);
-                    } else {
-                        yield new CapabilityStatus(code, false);
-                    }
-                }
-            };
+            if (code == 404) {
+                return new CapabilityStatus(404, false, null);
+            } else if (code >= 200 && code < 400) {
+                return new CapabilityStatus(code, true, null);
+            } else {
+                return new CapabilityStatus(code, false, null);
+            }
         }
 
         String label() {

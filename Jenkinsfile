@@ -45,6 +45,7 @@ pipeline {
                     sh "./mvnw spring-boot:build-image-no-fork -Dspring-boot.build-image.imageName=${DOCKER_IMAGE}"
                 }
             }
+            when { branch 'main' }
         }
         stage('Push Docker Image') {
             steps {
