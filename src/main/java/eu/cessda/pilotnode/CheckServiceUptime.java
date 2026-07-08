@@ -17,23 +17,24 @@
 
 package eu.cessda.pilotnode;
 
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.node.ArrayNode;
+import com.fasterxml.jackson.databind.node.ObjectNode;
+
 import java.io.IOException;
+import java.io.InputStream;
 import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.time.Duration;
 import java.time.LocalDate;
 import java.time.OffsetDateTime;
 import java.time.format.DateTimeFormatter;
+import java.util.logging.Level;
 import java.util.logging.Logger;
-
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
-import com.fasterxml.jackson.databind.node.ArrayNode;
-import com.fasterxml.jackson.databind.node.ObjectNode;
 
 /**
  * ARGO Uptime Monitor.
@@ -59,14 +60,15 @@ public class CheckServiceUptime {
 
     // ── Constants ─────────────────────────────────────────────────────────────
 
-    private static final String API_BASE =
-            "https://api.devel.mon.argo.grnet.gr/api/v2/results/CORE/SERVICEGROUPS";
+    private static final URI API_BASE =
+            URI.create("https://api.devel.mon.argo.grnet.gr/api/v2/results/CORE/SERVICEGROUPS");
 
 
     private static final Logger log = Logger.getLogger(CheckServiceUptime.class.getName());
     // ── Entry point ───────────────────────────────────────────────────────────
 
-    public static void main(String[] args) throws Exception {
+    @SuppressWarnings({"java:S106", "java:S8688"})
+    public static void main(String[] args) throws IOException, InterruptedException {
 
         if (args.length < 1 || args[0].isBlank()) {
             printUsage();
@@ -89,45 +91,24 @@ public class CheckServiceUptime {
                 : LocalDate.now();
 
         if (!startDate.isBefore(endDate)) {
-            log.warning("Error: Start date (" + startDate +
-                    ") must be before end date (" + endDate + ")");
-            throw new RuntimeException("Failed to fetch Service Uptime data");
+            System.err.println("Error: Start date (" + startDate + ") must be before end date (" + endDate + ")");
+            System.exit(-1);
         }
 
         Path dashboardDir = Path.of(args.length >= 5 ? args[4] : "../dashboard/data");
 
-        new CheckServiceUptime(nodeName, apiKey, startDate, endDate, dashboardDir).run();
-    }
+        HttpClient http = HttpUtils.httpClient();
 
-    // ── Fields ────────────────────────────────────────────────────────────────
+        var objectMapper = new ObjectMapper();
 
-    private final String    nodeName;
-    private final String    apiKey;
-    private final LocalDate startDate;
-    private final LocalDate endDate;
-    private final Path      dashboardDir;
-    private final HttpClient http;
-    private final ObjectMapper mapper;
-
-    // ── Constructor ───────────────────────────────────────────────────────────
-
-    public CheckServiceUptime(String nodeName, String apiKey,
-                              LocalDate startDate, LocalDate endDate, Path dashboardDir) {
-        this.nodeName     = nodeName;
-        this.apiKey       = apiKey;
-        this.startDate    = startDate;
-        this.endDate      = endDate;
-        this.dashboardDir = dashboardDir;
-        this.http = HttpClient.newBuilder()
-                .connectTimeout(Duration.ofSeconds(10))
-                .followRedirects(HttpClient.Redirect.NORMAL)
-                .build();
-        this.mapper = new ObjectMapper();
+        run(nodeName, apiKey, startDate, endDate, dashboardDir, http, objectMapper);
     }
 
     // ── Main logic ────────────────────────────────────────────────────────────
-
-    public void run() throws Exception {
+    @SuppressWarnings("java:S8688")
+    public static void run(String nodeName, String apiKey,
+                           LocalDate startDate, LocalDate endDate, Path dashboardDir,
+                           HttpClient http, ObjectMapper mapper) throws IOException, InterruptedException {
 
         // ── Resolve output path ───────────────────────────────────────────────
 
@@ -139,38 +120,37 @@ public class CheckServiceUptime {
 
         String startTime = startDate + "T00:00:00Z";
         String endTime   = endDate   + "T23:59:59Z";
-        String apiUrl    = API_BASE +
-                "?start_time=" + startTime +
-                "&end_time="   + endTime;
+        URI apiUrl = URI.create(API_BASE + "?start_time=" + startTime + "&end_time=" + endTime);
 
         // ── Banner ────────────────────────────────────────────────────────────
 
-        log.info("==========================================");
-        log.info("ARGO Service Monitoring - Uptime Report");
-        log.info("==========================================");
-        
-        log.info("Node:   " + nodeName);
-        log.info("Period: " + startTime + " to " + endTime);
-        
+        log.log(Level.INFO, """
+                        ARGO Service Monitoring - Uptime Report
+                        Node:   {0}
+                        Period: {1} to {2}""",
+                new Object[]{nodeName, startTime, endTime}
+        );
+
         log.info("Fetching data from API...");
 
         // ── Fetch data ────────────────────────────────────────────────────────
 
         HttpRequest request = HttpRequest.newBuilder()
-                .uri(URI.create(apiUrl))
+                .uri(apiUrl)
                 .header("Accept",    "application/json")
                 .header("x-api-key", apiKey)
                 .GET()
                 .build();
 
-        HttpResponse<String> response =
-                http.send(request, HttpResponse.BodyHandlers.ofString());
-
-        if (response.statusCode() != 200) {
-            log.warning("Error: API request failed with HTTP status code " +
-                    response.statusCode());
-            log.warning(response.body());
-            throw new RuntimeException("Failed to fetch Service Uptime data");
+        HttpResponse<InputStream> response;
+        try {
+            response = http.send(request, HttpResponse.BodyHandlers.ofInputStream());
+            if (response.statusCode() != 200) {
+                throw new IOException("Failed to fetch Service Uptime data (HTTP " + response.statusCode() + ")");
+            }
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            return;
         }
 
         log.info("Data retrieved successfully!");
@@ -179,20 +159,14 @@ public class CheckServiceUptime {
         // ── Parse response ────────────────────────────────────────────────────
 
         JsonNode root;
-        try {
-            root = mapper.readTree(response.body());
-        } catch (IOException e) {
-            log.warning("Error: API response is not valid JSON");
-            log.warning(response.body());
-            throw new RuntimeException("Failed to fetch Service Uptime data");
+        try (InputStream body = response.body()) {
+            root = mapper.readTree(body);
         }
 
         JsonNode firstResult = root.path("results").path(0);
         String projectName = firstResult.path("name").asText();
 
-        log.info("Results:");
-        log.info("==========================================");
-        log.info("Project: " + projectName);
+        log.log(Level.INFO, "Project: {0}", projectName);
         
 
         // ── Process endpoints ─────────────────────────────────────────────────
@@ -232,19 +206,22 @@ public class CheckServiceUptime {
                     avgRel    = totalReliability  / totalDays;
                 }
 
-                log.info("Endpoint: " + endpointName);
-                System.out.printf("  Uptime:           %.2f%%%n", uptimePct);
-                System.out.printf("  Availability:     %.2f%%%n", avgAvail);
-                System.out.printf("  Reliability:      %.2f%%%n", avgRel);
-                log.info("  Days monitored:   " + totalDays);
+                log.log(Level.INFO, """
+                                Endpoint:         {0}
+                                Uptime:           {1}
+                                Availability:     {2}
+                                Reliability:      {3}
+                                Days monitored:   {4}""",
+                        new Object[]{endpointName, round2(uptimePct), round2(avgAvail), round2(avgRel), totalDays}
+                );
                 
 
                 ObjectNode endpointOut = mapper.createObjectNode();
                 endpointOut.put("name",                 endpointName);
                 endpointOut.put("type",                 endpointType);
-                endpointOut.put("uptime_percentage",    round2(uptimePct));
-                endpointOut.put("average_availability", round2(avgAvail));
-                endpointOut.put("average_reliability",  round2(avgRel));
+                endpointOut.put("uptime_percentage", uptimePct);
+                endpointOut.put("average_availability", avgAvail);
+                endpointOut.put("average_reliability", avgRel);
                 endpointOut.put("days_monitored",       totalDays);
                 endpointsOut.add(endpointOut);
             }
@@ -254,23 +231,18 @@ public class CheckServiceUptime {
 
         ObjectNode report = mapper.createObjectNode();
         report.put("generated", OffsetDateTime.now().format(DateTimeFormatter.ISO_OFFSET_DATE_TIME));
-        report.put("api_source", apiUrl);
+        report.put("api_source", apiUrl.toString());
         ObjectNode period = report.putObject("period");
         period.put("start", startTime);
         period.put("end",   endTime);
         report.put("project",   projectName);
         report.set("endpoints", endpointsOut);
 
-        Files.writeString(reportFile,
-                mapper.writerWithDefaultPrettyPrinter().writeValueAsString(report));
+        mapper.writerWithDefaultPrettyPrinter().writeValue(reportFile.toFile(), report);
 
         // ── Footer ────────────────────────────────────────────────────────────
 
-        log.info("==========================================");
-        log.info("Report complete");
-        
-        log.info("  JSON: " + reportFile);
-        log.info("==========================================");
+        log.log(Level.INFO, "Report complete - JSON: {0}", reportFile);
     }
 
     // ── Utility ───────────────────────────────────────────────────────────────
@@ -283,20 +255,22 @@ public class CheckServiceUptime {
         return Math.round(v * 100.0) / 100.0;
     }
 
+    @SuppressWarnings("java:S106")
     private static void printUsage() {
-        System.err.println("usage: CheckServiceUptime <node-name> <api-key> [<start-date>] [<end-date>] [<dashboard-dir>]");
-        System.err.println("======================================");
-        System.err.println("Arguments:");
-        System.err.println("  node-name     - Node name used for the output directory (required)");
-        System.err.println("  api-key       - API key for ARGO authentication (required)");
-        System.err.println("  start-date    - Start date in YYYY-MM-DD format (optional, defaults to 30 days ago)");
-        System.err.println("  end-date      - End date in YYYY-MM-DD format (optional, defaults to today)");
-        System.err.println("  dashboard-dir - Path to dashboard data directory (optional, defaults to ../dashboard/data)");
-        System.err.println("======================================");
-        System.err.println("Examples:");
-        System.err.println("  CheckServiceUptime CESSDA my-api-key");
-        System.err.println("  CheckServiceUptime CESSDA my-api-key 2026-02-01");
-        System.err.println("  CheckServiceUptime CESSDA my-api-key 2026-02-01 2026-03-17");
-        System.err.println("  CheckServiceUptime CESSDA my-api-key 2026-02-01 2026-03-17 /path/to/dashboard/data");
+        System.err.println("""
+                usage: CheckServiceUptime <node-name> <api-key> [<start-date>] [<end-date>] [<dashboard-dir>]
+                ======================================
+                Arguments:
+                  node-name     - Node name used for the output directory (required)
+                  api-key       - API key for ARGO authentication (required)
+                  start-date    - Start date in YYYY-MM-DD format (optional, defaults to 30 days ago)
+                  end-date      - End date in YYYY-MM-DD format (optional, defaults to today)
+                  dashboard-dir - Path to dashboard data directory (optional, defaults to ../dashboard/data)
+                ======================================
+                Examples:
+                  CheckServiceUptime CESSDA my-api-key
+                  CheckServiceUptime CESSDA my-api-key 2026-02-01
+                  CheckServiceUptime CESSDA my-api-key 2026-02-01 2026-03-17
+                  CheckServiceUptime CESSDA my-api-key 2026-02-01 2026-03-17 /path/to/dashboard/data""");
     }
 }

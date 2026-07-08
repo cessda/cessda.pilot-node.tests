@@ -17,30 +17,25 @@
 
 package eu.cessda.pilotnode;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.http.HttpStatus;
+import org.springframework.http.ResponseEntity;
+import org.springframework.web.bind.annotation.*;
+
+import java.net.URI;
+import java.net.URISyntaxException;
+import java.net.http.HttpClient;
 import java.nio.file.Path;
 import java.time.LocalDate;
 import java.util.ArrayList;
+import java.util.EnumSet;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.logging.Logger;
-
-import org.springframework.beans.factory.annotation.Value;
-import org.springframework.http.HttpStatus;
-import org.springframework.http.ResponseEntity;
-import org.springframework.web.bind.annotation.ExceptionHandler;
-import org.springframework.web.bind.annotation.GetMapping;
-import org.springframework.web.bind.annotation.PathVariable;
-import org.springframework.web.bind.annotation.PostMapping;
-import org.springframework.web.bind.annotation.RequestBody;
-import org.springframework.web.bind.annotation.RequestMapping;
-import org.springframework.web.bind.annotation.ResponseStatus;
-import org.springframework.web.bind.annotation.RestController;
-
-import com.fasterxml.jackson.databind.ObjectMapper;
-import com.fasterxml.jackson.databind.node.ObjectNode;
 
 /**
  * REST controller that triggers the three data-collection checks
@@ -75,13 +70,20 @@ public class CheckRunnerController {
 
     private static final Logger log = Logger.getLogger(CheckRunnerController.class.getName());
 
+    // ── Constants ─────────────────────────────────────────────────────────────
+
+    private static final String ERROR_KEY = "error";
+    private static final String HINT_KEY = "hint";
+
+
     // ── Config ────────────────────────────────────────────────────────────────
 
     private final Path dataDirPath;
     private final String nodeName;
     private final String argoApiKey;
     private final String nodeApiKey;
-    private final ObjectMapper mapper = new ObjectMapper();
+    private final HttpClient httpClient;
+    private final ObjectMapper mapper;
 
     // ── State ─────────────────────────────────────────────────────────────────
 
@@ -100,11 +102,15 @@ public class CheckRunnerController {
             @Value("${dashboard.data-dir}")   Path dataDirPath,
             @Value("${check.node-name:}")     String nodeName,
             @Value("${check.api-key-argo:}")  String argoApiKey,
-            @Value("${check.api-key-node:}")  String nodeApiKey) {
+            @Value("${check.api-key-node:}") String nodeApiKey,
+            HttpClient httpClient,
+            ObjectMapper mapper) {
         this.dataDirPath = dataDirPath;
         this.nodeName    = nodeName;
         this.argoApiKey  = argoApiKey;
         this.nodeApiKey  = nodeApiKey;
+        this.httpClient = httpClient;
+        this.mapper = mapper;
     }
 
     // ── Trigger endpoints ─────────────────────────────────────────────────────
@@ -134,11 +140,12 @@ public class CheckRunnerController {
         executor.submit(() -> {
             rec.markRunning();
             try {
-                CheckNodeCapabilities checker = new CheckNodeCapabilities(
+                CheckNodeCapabilities.run(
                         nodeApiKey,
-                        CheckNodeCapabilities.OutputFormat.JSON,
-                        dataDirPath);
-                checker.run();
+                        EnumSet.of(CheckNodeCapabilities.OutputFormat.JSON),
+                        dataDirPath,
+                        httpClient,
+                        mapper);
                 rec.markDone("node_registry_summary.json written");
             } catch (Exception e) {
                 log.warning("CheckNodeCapabilities failed: " + e.getMessage());
@@ -163,18 +170,20 @@ public class CheckRunnerController {
     @PostMapping("/catalogue-services")
     @ResponseStatus(HttpStatus.ACCEPTED)
     public JobRecord runCatalogueServices(
-            @RequestBody Map<String, String> body) {
+            @RequestBody Map<String, String> body) throws URISyntaxException {
 
         String targetNode   = body.getOrDefault("node", nodeName).strip();
-        String catalogueUrl = body.getOrDefault("catalogueUrl", "").strip();
+        String catalogueUrlString = body.getOrDefault("catalogueUrl", "").strip();
         String nodePid      = body.getOrDefault("nodePid", "").strip();
 
         if (targetNode.isBlank()) {
             throw new IllegalArgumentException("No node specified in request body and check.node-name is not configured");
         }
-        if (catalogueUrl.isBlank()) {
+        if (catalogueUrlString.isBlank()) {
             throw new IllegalArgumentException("catalogueUrl is required — it must be the Resource Catalogue endpoint for this node");
         }
+
+        URI catalogueUrl = new URI(catalogueUrlString);
 
         JobRecord rec = new JobRecord("catalogue-services");
         jobs.put(rec.getJobId(), rec);
@@ -185,7 +194,7 @@ public class CheckRunnerController {
                 // Arg order: NODE_NAME, node_pid, api_base_url, [quantity]
                 CheckCatalogueServices.run(dataDirPath, targetNode,
                         nodePid.isBlank() ? null : nodePid,
-                        catalogueUrl, 10);
+                        catalogueUrl, 10, httpClient, mapper);
                 rec.markDone("catalogue_services_report.json written for " + targetNode);
             } catch (Exception e) {
                 log.warning("CheckCatalogueServices failed: " + e.getMessage());
@@ -232,8 +241,7 @@ public class CheckRunnerController {
             try {
                 LocalDate start = LocalDate.now().minusDays(30);
                 LocalDate end = LocalDate.now();
-                CheckServiceUptime checker = new CheckServiceUptime(targetNode, targetArgoApiKey, start, end, dataDirPath);
-                checker.run();
+                CheckServiceUptime.run(targetNode, targetArgoApiKey, start, end, dataDirPath, httpClient, mapper);
                 rec.markDone("argo_uptime_report.json written for " + targetNode);
             } catch (Exception e) {
                 log.warning("CheckServiceUptime failed: " + e.getMessage());
@@ -264,14 +272,32 @@ public class CheckRunnerController {
         return list;
     }
 
-    // ── Helpers ───────────────────────────────────────────────────────────────
-
+    // ── Exception handlers ────────────────────────────────────────────────────
     @ExceptionHandler
     @ResponseStatus(HttpStatus.BAD_REQUEST)
-    private ObjectNode configError(IllegalArgumentException ex) {
-        ObjectNode err = mapper.createObjectNode();
-        err.put("error", ex.getMessage());
-        err.put("hint",  "Set the missing property in application.properties");
-        return err;
+    private Map<String, String> configError(IllegalArgumentException ex) {
+        return Map.of(
+                ERROR_KEY, ex.getMessage(),
+                HINT_KEY, "Add the missing argument to the request"
+        );
+    }
+
+    // ── Exception handlers ────────────────────────────────────────────────────
+    @ExceptionHandler
+    @ResponseStatus(HttpStatus.BAD_REQUEST)
+    private Map<String, String> configError(URISyntaxException ex) {
+        return Map.of(
+                ERROR_KEY, ex.getMessage(),
+                HINT_KEY, "Correct the URI"
+        );
+    }
+
+    @ExceptionHandler
+    @ResponseStatus(HttpStatus.INTERNAL_SERVER_ERROR)
+    private Map<String, String> configError(IllegalStateException ex) {
+        return Map.of(
+                ERROR_KEY, ex.getMessage(),
+                HINT_KEY, "Set the missing property in application.properties"
+        );
     }
 }
