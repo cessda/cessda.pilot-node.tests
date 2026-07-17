@@ -79,12 +79,12 @@ See the following for details of what each check does and how to run it:
 
 Application configuration is in `src/main/resources/application.properties`:
 
-| Property             | Description |
-| -------------------- | ----------- |
+| Property             | Description                                                        |
+|----------------------|--------------------------------------------------------------------|
 | `dashboard.data-dir` | Path to the data directory (e.g. `src/main/resources/static/data`) |
-| `check.node-name`    | Default node name used by `CheckNodeCapabilities` |
-| `check.api-key-node` | API key for `CheckNodeCapabilities` |
-| `check.api-key-argo` | Fallback ARGO API key for `CheckServiceUptime` |
+| `check.node-name`    | Default node name used by `CheckNodeCapabilities`                  |
+| `check.api-key-node` | API key for `CheckNodeCapabilities`                                |
+| `check.api-key-argo` | Fallback ARGO API key for `CheckServiceUptime`                     |
 
 ---
 
@@ -109,18 +109,16 @@ the various checks should write output to a PersistentVolumeClaim mounted
 by the dashboard pod:
 
 ```text
-PersistentVolumeClaim (ReadWriteMany)
-    ├── mounted at /data/dashboard in the Spring Boot pod  (reads)
-    └── mounted at /data/dashboard output fromm Run Checks  (writes)
+ReadWrite Volume
+    └── mounted at /data/dashboard output from Run Checks (read+write)
 ```
 
-Set `dashboard.data-dir=/data/dashboard` (or the environment variable
-`DASHBOARD_DATA_DIR=/data/dashboard`) accordingly.
+Set `dashboard.data-dir=/data/dashboard` (or the environment variable `DASHBOARD_DATA_DIR=/data/dashboard`) accordingly.
 
-| Approach          | JSON file location                  | `dashboard.data-dir` value        |
-| ----------------- | ----------------------------------- | --------------------------------- |
-| Local development | `src/main/resources/static/data/`   | `src/main/resources/static/data`  |
-| Kubernetes + PVC  | `/data/dashboard/` in pod           | `/data/dashboard`                 |
+| Approach          | JSON file location                | `dashboard.data-dir` value       |
+|-------------------|-----------------------------------|----------------------------------|
+| Local development | `src/main/resources/static/data/` | `src/main/resources/static/data` |
+| Kubernetes + PVC  | `/data/dashboard/` in pod         | `/data/dashboard`                |
 
 ---
 
