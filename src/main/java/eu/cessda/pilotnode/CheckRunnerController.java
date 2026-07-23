@@ -33,8 +33,6 @@ import java.util.EnumSet;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
 import java.util.logging.Logger;
 
 /**
@@ -82,16 +80,11 @@ public class CheckRunnerController {
     private final String nodeName;
     private final String argoApiKey;
     private final String nodeApiKey;
+    private final JobRunner jobRunner;
     private final HttpClient httpClient;
     private final ObjectMapper mapper;
 
     // ── State ─────────────────────────────────────────────────────────────────
-
-    /**
-     * One executor per check type keeps jobs serialised per type while allowing
-     * different check types to run concurrently.
-     */
-    private final ExecutorService executor = Executors.newFixedThreadPool(3);
 
     /** Live and recent job records, keyed by jobId. */
     private final Map<String, JobRecord> jobs = new ConcurrentHashMap<>();
@@ -103,12 +96,14 @@ public class CheckRunnerController {
             @Value("${check.node-name:}")     String nodeName,
             @Value("${check.api-key-argo:}")  String argoApiKey,
             @Value("${check.api-key-node:}") String nodeApiKey,
+            JobRunner jobRunner,
             HttpClient httpClient,
             ObjectMapper mapper) {
         this.dataDirPath = dataDirPath;
         this.nodeName    = nodeName;
         this.argoApiKey  = argoApiKey;
         this.nodeApiKey  = nodeApiKey;
+        this.jobRunner = jobRunner;
         this.httpClient = httpClient;
         this.mapper = mapper;
     }
@@ -134,24 +129,17 @@ public class CheckRunnerController {
             throw new IllegalStateException("check.node-name is not configured");
         }
 
-        JobRecord rec = new JobRecord("node-capabilities");
-        jobs.put(rec.getJobId(), rec);
-
-        executor.submit(() -> {
-            rec.markRunning();
-            try {
-                CheckNodeCapabilities.run(
-                        nodeApiKey,
-                        EnumSet.of(CheckNodeCapabilities.OutputFormat.JSON),
-                        dataDirPath,
-                        httpClient,
-                        mapper);
-                rec.markDone("node_registry_summary.json written");
-            } catch (Exception e) {
-                log.warning("CheckNodeCapabilities failed: " + e.getMessage());
-                rec.markError(e.getMessage());
-            }
+        JobRecord rec = jobRunner.start("node-capabilities", record -> {
+            CheckNodeCapabilities.run(
+                    nodeApiKey,
+                    EnumSet.of(CheckNodeCapabilities.OutputFormat.JSON),
+                    dataDirPath,
+                    httpClient,
+                    mapper);
+            record.markDone("node_registry_summary.json written");
         });
+
+        jobs.put(rec.getJobId(), rec);
 
         return rec;
     }
@@ -185,22 +173,16 @@ public class CheckRunnerController {
 
         URI catalogueUrl = new URI(catalogueUrlString);
 
-        JobRecord rec = new JobRecord("catalogue-services");
-        jobs.put(rec.getJobId(), rec);
-
-        executor.submit(() -> {
-            rec.markRunning();
-            try {
+        JobRecord rec = jobRunner.start("catalogue-services", record -> {
                 // Arg order: NODE_NAME, node_pid, api_base_url, [quantity]
                 CheckCatalogueServices.run(dataDirPath, targetNode,
                         nodePid.isBlank() ? null : nodePid,
                         catalogueUrl, 10, httpClient, mapper);
-                rec.markDone("catalogue_services_report.json written for " + targetNode);
-            } catch (Exception e) {
-                log.warning("CheckCatalogueServices failed: " + e.getMessage());
-                rec.markError(e.getMessage());
+                record.markDone("catalogue_services_report.json written for " + targetNode);
             }
-        });
+        );
+
+        jobs.put(rec.getJobId(), rec);
 
         return rec;
     }
@@ -231,23 +213,14 @@ public class CheckRunnerController {
             throw new IllegalArgumentException("No ARGO API key provided in request body and check.api-key-argo is not configured");
         }
 
-        JobRecord rec = new JobRecord("service-uptime");
-        jobs.put(rec.getJobId(), rec);
-
-        // final for lambda capture; goes out of scope after submit
-
-        executor.submit(() -> {
-            rec.markRunning();
-            try {
-                LocalDate start = LocalDate.now().minusDays(30);
-                LocalDate end = LocalDate.now();
-                CheckServiceUptime.run(targetNode, targetArgoApiKey, start, end, dataDirPath, httpClient, mapper);
-                rec.markDone("argo_uptime_report.json written for " + targetNode);
-            } catch (Exception e) {
-                log.warning("CheckServiceUptime failed: " + e.getMessage());
-                rec.markError(e.getMessage());
-            }
+        JobRecord rec = jobRunner.start("service-uptime", record -> {
+            LocalDate start = LocalDate.now().minusDays(30);
+            LocalDate end = LocalDate.now();
+            CheckServiceUptime.run(targetNode, targetArgoApiKey, start, end, dataDirPath, httpClient, mapper);
+            record.markDone("argo_uptime_report.json written for " + targetNode);
         });
+
+        jobs.put(rec.getJobId(), rec);
 
         return rec;
     }
