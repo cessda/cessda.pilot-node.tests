@@ -17,12 +17,6 @@
 
 package eu.cessda.pilotnode;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
-import org.springframework.beans.factory.annotation.Value;
-import org.springframework.http.HttpStatus;
-import org.springframework.http.ResponseEntity;
-import org.springframework.web.bind.annotation.*;
-
 import java.net.URI;
 import java.net.URISyntaxException;
 import java.net.http.HttpClient;
@@ -34,6 +28,20 @@ import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.logging.Logger;
+
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.http.HttpStatus;
+import org.springframework.http.ResponseEntity;
+import org.springframework.web.bind.annotation.ExceptionHandler;
+import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PathVariable;
+import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.RequestBody;
+import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.ResponseStatus;
+import org.springframework.web.bind.annotation.RestController;
+
+import com.fasterxml.jackson.databind.ObjectMapper;
 
 /**
  * REST controller that triggers the three data-collection checks
@@ -214,7 +222,7 @@ public class CheckRunnerController {
         }
 
         JobRecord rec = jobRunner.start("service-uptime", record -> {
-            LocalDate start = LocalDate.now().minusDays(30);
+            LocalDate start = LocalDate.now().minusDays(6);
             LocalDate end = LocalDate.now();
             CheckServiceUptime.run(targetNode, targetArgoApiKey, start, end, dataDirPath, httpClient, mapper);
             record.markDone("argo_uptime_report.json written for " + targetNode);

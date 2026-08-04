@@ -63,4 +63,5 @@ nbdist/
 bin/
 
 ### Data files ###
-dashboard/
+dashboard/data/**/*.json
+src/main/resources/static/data/**/*.json

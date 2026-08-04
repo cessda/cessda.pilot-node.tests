@@ -17,11 +17,6 @@
 
 package eu.cessda.pilotnode;
 
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
-import com.fasterxml.jackson.databind.node.ArrayNode;
-import com.fasterxml.jackson.databind.node.ObjectNode;
-
 import java.io.IOException;
 import java.io.InputStream;
 import java.net.URI;
@@ -37,6 +32,11 @@ import java.time.Duration;
 import java.time.Instant;
 import java.util.logging.Level;
 import java.util.logging.Logger;
+
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.node.ArrayNode;
+import com.fasterxml.jackson.databind.node.ObjectNode;
 
 /**
  * Service Catalogue Resource Checker
@@ -179,7 +179,7 @@ public class CheckCatalogueServices {
         } catch (IOException e) {
 
             URI fallbackServiceBase = buildApiServiceUrl(FALLBACK_BASE_URL);
-            URI fallbackUrl = URI.create(fallbackServiceBase + "?keyword=" + nodeName + "&from=0&quantity=" + quantity + "&order=asc");
+            URI fallbackUrl = buildFallbackUrl(fallbackServiceBase, nodeName, quantity);
 
             log.log(Level.WARNING, "Primary URL returned an error status. Retrying with fallback URL: {0}", fallbackUrl);
 
@@ -195,8 +195,7 @@ public class CheckCatalogueServices {
                                     + " node_pid is available for a further retry", fallbackException);
                 }
 
-                String encodedPid = URLEncoder.encode(nodePid, StandardCharsets.UTF_8);
-                URI pidUrl = URI.create(fallbackServiceBase + "?keyword=" + encodedPid + "&from=0&quantity=" + quantity + "&order=asc");
+                URI pidUrl = buildFallbackUrl(fallbackServiceBase, nodePid, quantity);
                 log.warning("Fallback URL also returned an error status. Retrying with node_pid as keyword: " + pidUrl);
                 try {
                     apiResponse = fetchData(httpClient, pidUrl);
@@ -331,6 +330,12 @@ public class CheckCatalogueServices {
         }
 
         return apiResponse.body();
+    }
+
+    private static URI buildFallbackUrl(URI fallbackServiceBase, String keyword, int quantity) {
+        String encodedKeyword = URLEncoder.encode(keyword, StandardCharsets.UTF_8);
+        return URI.create(fallbackServiceBase + "?keyword=" + encodedKeyword
+                + "&from=0&quantity=" + quantity + "&order=asc");
     }
 
     /**

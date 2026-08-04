@@ -121,9 +121,9 @@ collection for the currently selected node. The available checks are:
 - **Catalogue Services** — runs `CheckCatalogueServices` and
   refreshes `catalogue_services_report.json` for this node.
 - **Service Uptime** — runs `CheckServiceUptime` and refreshes
-  `argo_uptime_report.json` for this node. An API key is required
-  and must be entered in the prompt that appears; it is used only
-  for that single request and is never stored.
+  `argo_uptime_report.json` for this node. The prompt accepts an ARGO
+  API key for fallback use when needed; it is used only for that
+  single request and is never stored.
 
 The page must be served from an HTTP server with an active backend
 for the Run checks menu to work; it will not function when the file

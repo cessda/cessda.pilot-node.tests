@@ -7,7 +7,8 @@ the Node's Service Catalogue and generates a JSON report.
 
 - Fetches service data from the Node's Service Catalogue API
 - Checks HTTP availability of each service's webpage
-- Writes `catalogue_services_report.json` directly to the dashboard data directory
+- Writes `catalogue_services_report.json` directly to the dashboard data
+  directory
 - Colour-coded terminal output
 - Handles services without defined webpages
 - Verbose debugging output for troubleshooting
@@ -151,7 +152,8 @@ https://service-catalogue-staging.beyond.cessda.eu/api/service/all?keyword=NODE_
 
 Query parameters:
 
-- `keyword=NODE_NAME`: Filter by node name keyword
+- `keyword=NODE_NAME`: Filter by node name keyword (URL-encoded internally;
+  multi-word names are supported)
 - `from=0`: Start from the first result
 - `quantity=QUANTITY`: Maximum number of results to return
 - `order=asc`: Ascending order
