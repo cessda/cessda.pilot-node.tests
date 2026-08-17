@@ -840,13 +840,22 @@ function renderArgoPanel(data) {
   const reportStart = data.period?.start || data.start_date || data.start_time || data.period_start || data.from || null;
   const reportEnd   = data.period?.end   || data.end_date   || data.end_time   || data.period_end   || data.to   || null;
 
+  // Extract only the date portion (YYYY-MM-DD) from ISO string timestamps before parsing
   function fmtDate(d) {
-    if (!d) return null;
-    // Already a nice string? Return as-is; otherwise try to parse
-    const parsed = new Date(d);
-    if (isNaN(parsed)) return String(d);
+  if (!d) return null;
+
+  // Extract the YYYY-MM-DD portion if it starts with an ISO date pattern
+  const dateOnlyMatch = String(d).match(/^(\d{4}-\d{2}-\d{2})/);
+  if (dateOnlyMatch) {
+    const [year, month, day] = dateOnlyMatch[1].split('-').map(Number);
+    const parsed = new Date(year, month - 1, day); // Parsed as local midnight (prevents UTC shift)
     return parsed.toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' });
   }
+
+  const parsed = new Date(d);
+  if (isNaN(parsed)) return String(d);
+  return parsed.toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' });
+}
 
   const dateRange = (reportStart || reportEnd)
     ? `<span class="argo-meta" style="display:inline-flex;align-items:center;gap:0.3rem;">
