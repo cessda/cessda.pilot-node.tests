@@ -1,4 +1,4 @@
-# CESSDA-PIlot-Node-Tests
+# CESSDA-Pilot-Node-Tests
 
 ## Contributors
 
