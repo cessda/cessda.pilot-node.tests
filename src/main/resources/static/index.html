@@ -434,8 +434,8 @@
   <div class="footer-left">
     <a href="https://cessda.eu" class="footer-link"
        target="_blank" rel="noopener">Powered by CESSDA ERIC</a>
-    <a href="https://github.com/cessda/cessda.pilot-node.tests/releases/tag/1.3.0"
-       class="footer-link" target="_blank" rel="noopener">Version 1.3.0</a>
+    <a href="https://github.com/cessda/cessda.pilot-node.tests/releases/tag/1.3.1"
+       class="footer-link" target="_blank" rel="noopener">Version 1.3.1</a>
   </div>
   <nav class="footer-centre" aria-label="Footer links">
     <a href="https://www.cessda.eu/Privacy-Policy"
@@ -458,7 +458,7 @@ const REPORT_TYPES = [
   { key: 'endpoint',    file: 'endpoint_report.json',              label: 'Endpoints'    },
   { key: 'catalogue',   file: 'catalogue_services_report.json',     label: 'Catalogue'    },
   { key: 'argo',        file: 'argo_uptime_report.json',            label: 'ARGO Uptime'  },
-  { key: 'frontOffice', file: 'front_office_metrics_report.json',   label: 'Front Office' },
+  { key: 'frontOffice', file: 'front_office_metrics_report.json',   label: 'Exchange Service Visibility' },
 ];
 
 // ── Fetch helpers ─────────────────────────────────────────────────────────────
@@ -571,7 +571,7 @@ function dotColour(pct) {
 }
 
 // Same green/amber/red intent as dotColour, but for an X-of-Y count
-// (e.g. Front Office metrics visible) rather than a percentage.
+// (e.g. Exchange Service Visibility metrics) rather than a percentage.
 function fractionColour(visible, total) {
   if (total === 0) return 'grey';
   if (visible === total) return 'green';
@@ -706,19 +706,23 @@ function renderNodeCard(node, reports) {
          }
        </div>`;
 
-  // Front Office visibility row (Metrics 4, 5, 6, 10, 11 — Exchange
-  // maturity evidence, distinct from the Core compliance tiers above)
+  // Exchange service visibility row (Metrics 4, 5, 6, 9, 10, 11 —
+  // Exchange maturity evidence, distinct from the Core compliance tiers
+  // above). Row label kept short ("Exchange") to fit the fixed-width
+  // .rr-label column alongside the other row labels; the fuller name
+  // "Exchange Service Visibility" is used on the node detail page and in
+  // the stat card below, which both have more room.
   const fom = summariseFrontOffice(reports.frontOffice);
   const fomRow = fom
     ? `<div class="report-row">
          <span class="rr-icon">🔗</span>
-         <span class="rr-label">Front Office</span>
+         <span class="rr-label">Exchange</span>
          <span class="rr-dot ${fractionColour(fom.visible, fom.total)}"></span>
          <span class="rr-val">${fom.visible} / ${fom.total} metrics visible</span>
        </div>`
     : `<div class="report-row">
          <span class="rr-icon">🔗</span>
-         <span class="rr-label">Front Office</span>
+         <span class="rr-label">Exchange</span>
          <span class="rr-dot grey"></span>
          <span class="rr-val missing">No report</span>
        </div>`;
@@ -779,7 +783,7 @@ function renderSummaryStats(registry, allReports) {
     </div>
     <div class="stat-card">
       <div class="stat-value ${fomTotal > 0 ? pctColour(fomPct) : ''}" style="${fomTotal === 0 ? 'color:var(--grey-400)' : ''}">${fomTotal > 0 ? fomPct + '%' : '—'}</div>
-      <div class="stat-label">Front Office visibility</div>
+      <div class="stat-label">Exchange visibility</div>
     </div>
     <div class="stat-card">
       <div class="stat-value ${mvpNodes === totalNodes ? 'green' : mvpNodes > 0 ? 'amber' : 'red'}">${mvpNodes}<span style="font-size:1.25rem;color:var(--grey-400)">/${totalNodes}</span></div>

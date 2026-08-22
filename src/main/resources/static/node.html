@@ -484,7 +484,7 @@
         </div>
         <div class="run-item" role="menuitem">
           <div class="run-item-info">
-            <div class="run-item-label">Front Office Metrics</div>
+            <div class="run-item-label">Exchange Service Visibility</div>
             <div class="run-item-desc">CheckOtherMetrics · front_office_metrics_report.json</div>
           </div>
           <button class="run-btn" id="btn-other-metrics" onclick="runOtherMetricsCheck()">Run</button>
@@ -980,7 +980,7 @@ function renderArgoPanel(data) {
     </div>`;
 }
 
-// ── Front Office Metrics panel ────────────────────────────────────────────────
+// ── Exchange Service Visibility panel ─────────────────────────────────────────
 // Renders front_office_metrics_report.json (CheckOtherMetrics), covering
 // Metrics 4, 5, 6, 10 and 11 from the Proposed Validation Metrics doc.
 // Metric 10 is reported as an alias of Metric 4 (see CheckOtherMetrics
@@ -1254,7 +1254,7 @@ document.addEventListener('keydown', e => {
 const NODE_CHECK_LABELS = {
   'catalogue-services': 'Catalogue Services',
   'service-uptime':     'Service Uptime',
-  'other-metrics':      'Front Office Metrics',
+  'other-metrics':      'Exchange Service Visibility',
 };
 
 function toggleRunMenu() {
@@ -1413,17 +1413,18 @@ async function runCatalogueCheck() {
   resetBtn(btn);
 }
 
-// ── Front Office Metrics check (no API key needed) ───────────────────────────
-// Resolves everything it needs (PIDs, Front Office endpoints, including the
-// Sandbox's) server-side from node_registry_summary.json and each node's
-// endpoint_report.json — the caller only needs to name the node.
+// ── Exchange Service Visibility check (no API key needed) ────────────────────
+// Runs CheckOtherMetrics. Resolves everything it needs (PIDs, Front Office
+// endpoints, including the Sandbox's) server-side from
+// node_registry_summary.json and each node's endpoint_report.json — the
+// caller only needs to name the node.
 
 async function runOtherMetricsCheck() {
   document.getElementById('run-menu').setAttribute('aria-expanded', 'false');
   const btn      = document.getElementById('btn-other-metrics');
   const nodeName = decodeURIComponent(window.location.hash.substring(1));
   if (btn) { btn.disabled = true; btn.textContent = '…'; }
-  showToast('info', 'Front Office Metrics', `Starting for ${nodeName}…`);
+  showToast('info', 'Exchange Service Visibility', `Starting for ${nodeName}…`);
 
   let jobId;
   try {
@@ -1433,17 +1434,17 @@ async function runOtherMetricsCheck() {
       body: JSON.stringify({ node: nodeName }),
     });
     const data = await res.json();
-    if (!res.ok) { showToast('err', 'Front Office Metrics', data.error || 'HTTP ' + res.status); resetBtn(btn); return; }
+    if (!res.ok) { showToast('err', 'Exchange Service Visibility', data.error || 'HTTP ' + res.status); resetBtn(btn); return; }
     jobId = data.jobId;
   } catch (e) {
-    showToast('err', 'Front Office Metrics', 'Request failed: ' + e.message);
+    showToast('err', 'Exchange Service Visibility', 'Request failed: ' + e.message);
     resetBtn(btn); return;
   }
 
-  showToast('info', 'Front Office Metrics', 'Running… (job ' + jobId + ')');
+  showToast('info', 'Exchange Service Visibility', 'Running… (job ' + jobId + ')');
   const result = await pollJobStatus(jobId);
-  if (result.status === 'DONE') { showToast('ok', 'Front Office Metrics', result.message || 'Completed'); init(); }
-  else                          { showToast('err', 'Front Office Metrics', result.message || 'Check failed'); }
+  if (result.status === 'DONE') { showToast('ok', 'Exchange Service Visibility', result.message || 'Completed'); init(); }
+  else                          { showToast('err', 'Exchange Service Visibility', result.message || 'Check failed'); }
   resetBtn(btn);
 }
 
@@ -1556,8 +1557,8 @@ loadSwitcher();
   <div class="footer-left">
     <a href="https://cessda.eu" class="footer-link"
        target="_blank" rel="noopener">Powered by CESSDA ERIC</a>
-    <a href="https://github.com/cessda/cessda.pilot-node.tests/releases/tag/1.3.0"
-       class="footer-link" target="_blank" rel="noopener">Version 1.3.0</a>
+    <a href="https://github.com/cessda/cessda.pilot-node.tests/releases/tag/1.3.1"
+       class="footer-link" target="_blank" rel="noopener">Version 1.3.1</a>
   </div>
   <nav class="footer-centre" aria-label="Footer links">
     <a href="https://www.cessda.eu/Privacy-Policy"

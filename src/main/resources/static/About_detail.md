@@ -4,13 +4,25 @@
 
 The Node Detail page shows all collected monitoring data for a
 single pilot node. It presents four panels — endpoint connectivity,
-catalogue services, ARGO uptime, and node metadata — together with
-an overview strip summarising key metrics.
+catalogue services, ARGO uptime, and Exchange service visibility —
+together with an overview strip summarising key metrics and a page
+header carrying the node's registry status and contact metadata.
 
 The page is addressed by appending the node name as a URL fragment,
 for example `node.html#My-Node-Name`. The node switcher in the top
 bar allows navigation between nodes without returning to the
 dashboard.
+
+## Header
+
+The page header shows the selected node's name alongside:
+
+- **Registry** — a chip confirming the node's presence in the Node
+  Registry (evidence for the Core compliance dimension's C1
+  indicator "Present in Node Registry"), shown as Registered,
+  Not registered, or Registered — checking… while registry data is
+  still loading.
+- **Provider**, **Endpoint**, and **PID**, where reported.
 
 ## Overview Strip
 
@@ -27,6 +39,9 @@ the selected node.
   services in the ARGO report.
 - **Compliance tier** — the highest compliance tier fully satisfied
   by this node (see Compliance Tiers below).
+
+The strip does not currently summarise Exchange service visibility;
+that panel carries its own summary badge instead (see below).
 
 ## Compliance Tiers
 
@@ -80,8 +95,29 @@ The data comes from:
 ## Catalogue Services Report
 
 This panel lists the services published in the node's Resource
-Catalogue. Each row in the table shows the service name, its status,
-and a link to its catalogue entry or landing page where available.
+Catalogue. Each row shows the service name, a link to its catalogue
+entry or landing page, and — where the service has a webpage —
+the results of an automated health check against it (Metric 13 in
+the Proposed Validation Metrics document):
+
+- **Response** — the time taken to fetch the webpage, in
+  milliseconds.
+- **Content** — the response's content type, with a ✓ or ✕
+  indicating whether the body passed validation (a non-empty,
+  parseable JSON body for API-style content types; a non-empty body
+  otherwise).
+- **Status** — Available for a full pass; a qualified
+  Available (…) status such as Available (content check failed) or
+  Available (slow: …ms) for a service that responds but doesn't
+  fully pass; Not found or No webpage defined where nothing was
+  checked; otherwise Not available.
+
+The panel header shows a healthy/total count (for example, 7/9
+healthy), coloured green, amber, or red, plus the average response
+time across all checked services. Reports written before this
+enhancement — with no per-service response time or content data —
+still display correctly: the header falls back to a plain service
+count, and each row shows an em dash in place of the missing detail.
 
 The Resource Catalogue endpoint URL is read from the node's
 `endpoint_report.json` and then queried directly. If the endpoint
@@ -107,11 +143,43 @@ The data comes from:
 /api/data/{node_name}/argo_uptime_report.json
 ```
 
-## Node Metadata
+## Exchange Service Visibility Report
 
-This panel displays descriptive information about the node sourced
-from the node registry, including its country, organisation,
-contact details, and endpoint URL.
+This panel covers the cross-node visibility metrics from the
+Proposed Validation Metrics document — Metrics 4, 5, 6, 9, 10 and
+11 — which together evidence the Exchange (E) maturity dimension,
+distinct from the Core compliance tiers above.
+
+Each metric renders as its own card, in numerical order:
+
+- **Metric 4** — this node's own resources appear in its own Front
+  Office.
+- **Metric 5** — an Exchange service from another networked Pilot
+  Node is visible in this node's Front Office. Shown as a visible
+  peers / total peers summary behind an expandable detail list,
+  since the result is per peer node.
+- **Metric 6** — one or more of this node's Exchange services are
+  visible and accessible from the Sandbox Front Office.
+- **Metric 9** — at least one of this node's Research Outputs is
+  visible in the Sandbox Discovery Hub.
+- **Metric 10** — rendered as an alias of Metric 4 rather than
+  queried separately: the two metrics were only distinct while
+  services were onboarded centrally and propagated out to each
+  node's Front Office; now that onboarding is local to each node,
+  they are mechanically identical.
+- **Metric 11** — this node's own Exchange service is visible in
+  another networked Pilot Node's Front Office. Shown the same way
+  as Metric 5, per peer node.
+
+The panel header shows a count of visible metrics out of the total
+that are actually queried (Metric 10's alias is excluded from this
+count, since it isn't a separate check).
+
+The data comes from:
+
+```text
+/api/data/{node_name}/front_office_metrics_report.json
+```
 
 ## Running Checks
 
@@ -124,6 +192,12 @@ collection for the currently selected node. The available checks are:
   `argo_uptime_report.json` for this node. The prompt accepts an ARGO
   API key for fallback use when needed; it is used only for that
   single request and is never stored.
+- **Exchange Service Visibility** — runs `CheckOtherMetrics` and
+  refreshes `front_office_metrics_report.json` for this node. No
+  credentials or additional input are required: the check resolves
+  every PID and Front Office endpoint it needs, including the
+  Sandbox's, from data already collected by Catalogue Services and
+  Endpoint Connectivity.
 
 The page must be served from an HTTP server with an active backend
 for the Run checks menu to work; it will not function when the file
