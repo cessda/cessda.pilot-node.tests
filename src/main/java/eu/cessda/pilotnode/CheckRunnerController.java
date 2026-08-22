@@ -53,6 +53,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
  *   POST /api/run/node-capabilities   – run CheckNodeCapabilities
  *   POST /api/run/catalogue-services  – run CheckCatalogueServices
  *   POST /api/run/service-uptime      – run CheckServiceUptime
+ *   POST /api/run/other-metrics       – run CheckOtherMetrics
  *   GET  /api/run/{jobId}/status      – poll the status of any job
  *   GET  /api/run/status              – list all recent job statuses
  * </pre>
@@ -145,6 +146,44 @@ public class CheckRunnerController {
                     httpClient,
                     mapper);
             record.markDone("node_registry_summary.json written");
+        });
+
+        jobs.put(rec.getJobId(), rec);
+
+        return rec;
+    }
+
+    /**
+     * Triggers {@link CheckOtherMetrics}.
+     *
+     * <p>Accepts an optional JSON body: {@code { "node": "..." } }.
+     * {@code node} is the target node name (overrides {@code check.node-name}).</p>
+     *
+     * <p>Unlike {@code CheckCatalogueServices} and {@code CheckServiceUptime},
+     * no endpoint URL needs to be supplied by the caller: this check resolves
+     * every Front Office endpoint and Node PID it needs (including the
+     * Sandbox's) from {@code node_registry_summary.json} and the per-Node
+     * {@code endpoint_report.json} files already written by
+     * {@code CheckNodeCapabilities}. Run {@code /api/run/node-capabilities}
+     * first — or whenever the registry may have changed — so those PIDs and
+     * endpoints are current before triggering this check.</p>
+     *
+     * @param body optional JSON body containing {@code node}
+     */
+    @PostMapping("/other-metrics")
+    @ResponseStatus(HttpStatus.ACCEPTED)
+    public JobRecord runOtherMetrics(
+            @RequestBody(required = false) Map<String, String> body) {
+
+        String targetNode = (body != null ? body.getOrDefault("node", nodeName) : nodeName).strip();
+
+        if (targetNode.isBlank()) {
+            throw new IllegalArgumentException("No node specified in request body and check.node-name is not configured");
+        }
+
+        JobRecord rec = jobRunner.start("other-metrics", record -> {
+            CheckOtherMetrics.run(dataDirPath, targetNode, httpClient, mapper);
+            record.markDone("front_office_metrics_report.json written for " + targetNode);
         });
 
         jobs.put(rec.getJobId(), rec);

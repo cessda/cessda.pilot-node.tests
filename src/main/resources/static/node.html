@@ -150,7 +150,7 @@
   .cat-table tr:hover td { background: var(--grey-100); }
   .cat-name { font-weight: 600; }
   .cat-url  { font-family: var(--mono); font-size: 0.65rem; color: var(--grey-600); word-break: break-all; }
-  .cat-url a { color: var(--orange); text-decoration: none; }
+  .cat-url a { color: var(--blue); text-decoration: none; }
   .cat-url a:hover { text-decoration: underline; }
 
   /* ── ARGO services ── */
@@ -168,6 +168,23 @@
   .argo-pct.medium { color: var(--amber); }
   .argo-pct.low    { color: var(--red); }
   .argo-meta { font-family: var(--mono); font-size: 0.6rem; color: var(--grey-400); margin-top: 0.4rem; }
+
+  /* ── Front Office metrics ── */
+  .fom-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 1rem; }
+  .fom-card { border: 1px solid var(--grey-200); padding: 1rem; }
+  .fom-card-head { display: flex; align-items: baseline; justify-content: space-between; gap: 0.6rem; margin-bottom: 0.4rem; }
+  .fom-metric-num { font-family: var(--mono); font-size: 0.62rem; font-weight: 700; color: var(--grey-400); text-transform: uppercase; letter-spacing: 0.05em; }
+  .fom-desc { font-size: 0.8rem; line-height: 1.45; margin-bottom: 0.6rem; }
+  .fom-target { font-family: var(--mono); font-size: 0.62rem; color: var(--grey-600); margin-bottom: 0.5rem; word-break: break-all; }
+  .fom-target a { color: var(--blue); text-decoration: none; }
+  .fom-target a:hover { text-decoration: underline; }
+  .fom-alias-note { font-family: var(--mono); font-size: 0.6rem; color: var(--grey-400); margin-top: 0.5rem; line-height: 1.5; }
+  .fom-peer-summary { cursor: pointer; font-family: var(--mono); font-size: 0.68rem; color: var(--grey-600); margin-top: 0.4rem; }
+  .fom-peer-summary:hover { color: var(--orange); }
+  .fom-peer-table { width: 100%; border-collapse: collapse; font-size: 0.75rem; margin-top: 0.6rem; }
+  .fom-peer-table th { font-family: var(--mono); font-size: 0.56rem; text-transform: uppercase; letter-spacing: 0.06em; color: var(--grey-400); text-align: left; padding: 0.3rem 0.5rem; border-bottom: 2px solid var(--grey-200); }
+  .fom-peer-table td { padding: 0.4rem 0.5rem; border-bottom: 1px solid var(--grey-200); }
+  .fom-peer-table tr:last-child td { border-bottom: none; }
 
   /* ── JSON raw fallback ── */
   .raw-panel { background: var(--grey-100); border: 1px solid var(--grey-200); padding: 1rem 1.25rem; font-family: var(--mono); font-size: 0.68rem; color: var(--grey-600); overflow-x: auto; white-space: pre; max-height: 400px; overflow-y: auto; }
@@ -464,6 +481,13 @@
             <div class="run-item-desc">CheckServiceUptime · argo_uptime_report.json</div>
           </div>
           <button class="run-btn" id="btn-service-uptime" onclick="promptAndRun()">Run</button>
+        </div>
+        <div class="run-item" role="menuitem">
+          <div class="run-item-info">
+            <div class="run-item-label">Front Office Metrics</div>
+            <div class="run-item-desc">CheckOtherMetrics · front_office_metrics_report.json</div>
+          </div>
+          <button class="run-btn" id="btn-other-metrics" onclick="runOtherMetricsCheck()">Run</button>
         </div>
       </div>
     </div>
@@ -773,32 +797,70 @@ function renderCataloguePanel(data) {
   }
 
   const activeVals = new Set(['active','Active','ACTIVE','available','Available','ok','OK','published','Published']);
+
+  // Metric 13 (Proposed Validation Metrics doc): status now distinguishes
+  // a full pass ("Available") from reachable-but-degraded results
+  // ("Available (content check failed)", "Available (slow: …)") rather
+  // than a flat active/inactive split, so badge colour is derived from
+  // the actual status text rather than a fixed set of "active" strings.
+  function catalogueBadgeClass(status) {
+    if (!status) return 'badge-missing';
+    if (status === 'Available') return 'badge-ok';
+    if (status.startsWith('Available (')) return 'badge-warn';
+    if (status === 'Not found' || status === 'No webpage defined') return 'badge-missing';
+    if (activeVals.has(status)) return 'badge-ok'; // legacy/alternate report sources
+    return 'badge-error';
+  }
+
   const rows = services.map(s => {
     const name   = s.name || s.title || s.id || '(unnamed)';
     const abbr   = s.abbreviation || null;
     const url    = s.url || s.webpage || s.endpoint || s.landing_page || null;
     const status = s.status ?? (s.active === true ? 'active' : s.active === false ? 'inactive' : null);
-    const isActive = status !== null ? activeVals.has(status) : null;
     const statusBadge = status
-      ? `<span class="badge ${isActive ? 'badge-ok' : 'badge-missing'}">${status}</span>`
+      ? `<span class="badge ${catalogueBadgeClass(status)}">${status}</span>`
       : '';
+
+    // Metric 13 detail — only present once CheckCatalogueServices has been
+    // re-run with the version that captures it; older reports simply omit
+    // these fields, so each renders as '—' rather than a blank cell.
+    const responseTime = s.response_time_ms != null
+      ? `${s.response_time_ms}&nbsp;ms`
+      : '—';
+    const contentCell = s.content_type
+      ? `${s.content_type.split(';')[0]} ${s.content_valid === true ? '✓' : s.content_valid === false ? '✕' : ''}`
+      : '—';
+
     return `
       <tr>
         <td><div class="cat-name">${name}${abbr ? ` <span style="font-family:var(--mono);font-size:0.65rem;color:var(--grey-400);font-weight:400;">(${abbr})</span>` : ''}</div></td>
         <td><div class="cat-url">${url ? `<a href="${url}" target="_blank" rel="noreferrer">${url}</a>` : '—'}</div></td>
+        <td><div class="cat-url">${responseTime}</div></td>
+        <td><div class="cat-url">${contentCell}</div></td>
         <td>${statusBadge}</td>
       </tr>`;
   }).join('');
+
+  // Header summary — only shown once healthy_services/pct_healthy are
+  // present (i.e. the report was written by the Metric-13-aware version
+  // of CheckCatalogueServices); older reports fall back to a plain count.
+  const hasMetric13 = typeof data.pct_healthy === 'number';
+  const headerBadge = hasMetric13
+    ? `<span class="badge ${data.pct_healthy === 100 ? 'badge-ok' : data.pct_healthy > 0 ? 'badge-warn' : 'badge-error'}">${data.healthy_services}/${services.length} healthy</span>`
+    : `<span class="badge badge-ok">${services.length} services</span>`;
+  const avgResponse = hasMetric13 && data.avg_response_time_ms != null
+    ? `<span style="font-family:var(--mono);font-size:0.65rem;color:var(--grey-400);">avg ${data.avg_response_time_ms}&nbsp;ms</span>`
+    : '';
 
   return `
     <div class="panel">
       <div class="panel-header">
         <div class="panel-header-left"><span class="panel-icon">📚</span> Catalogue Services Report</div>
-        <span class="badge badge-ok">${services.length} services</span>
+        <div style="display:flex;align-items:center;gap:0.6rem;">${avgResponse}${headerBadge}</div>
       </div>
       <div class="panel-body">
         <table class="cat-table">
-          <thead><tr><th>Name</th><th>URL</th><th>Status</th></tr></thead>
+          <thead><tr><th>Name</th><th>URL</th><th>Response</th><th>Content</th><th>Status</th></tr></thead>
           <tbody>${rows}</tbody>
         </table>
       </div>
@@ -918,7 +980,147 @@ function renderArgoPanel(data) {
     </div>`;
 }
 
+// ── Front Office Metrics panel ────────────────────────────────────────────────
+// Renders front_office_metrics_report.json (CheckOtherMetrics), covering
+// Metrics 4, 5, 6, 10 and 11 from the Proposed Validation Metrics doc.
+// Metric 10 is reported as an alias of Metric 4 (see CheckOtherMetrics
+// Javadoc) rather than a separately-run check, so it isn't counted
+// towards the "actionable" total in the header badge.
+
+function fomStatusTag(m) {
+  const cls = m.visible ? 'status-available' : 'status-error';
+  const label = m.status || 'Undefined';
+  return `<span class="status-tag ${cls}">${label}${m.http_code != null ? ` (${m.http_code})` : ''}</span>`;
+}
+
+// Metrics 5 & 11 have no single m.status (only an aggregate "visible"
+// flag across their peer_results), so their header badge is a peer
+// visible-count instead of a status tag.
+function fomHeaderBadge(m) {
+  if (Array.isArray(m.peer_results)) {
+    const total   = m.peer_results.length;
+    const visible = m.peer_results.filter(p => p.visible).length;
+    const cls = total === 0 ? 'badge-missing'
+              : visible === total ? 'badge-ok'
+              : visible > 0 ? 'badge-warn' : 'badge-error';
+    return `<span class="badge ${cls}">${visible}/${total} peers</span>`;
+  }
+  return fomStatusTag(m);
+}
+
+function renderFomPeerTable(peers) {
+  const rows = peers.map(p => `
+    <tr>
+      <td>${p.peer_node}</td>
+      <td>${fomStatusTag(p)}</td>
+      <td>${p.result_count ?? '—'}</td>
+    </tr>`).join('');
+  return `
+    <table class="fom-peer-table">
+      <thead><tr><th>Peer Node</th><th>Status</th><th>Results</th></tr></thead>
+      <tbody>${rows}</tbody>
+    </table>`;
+}
+
+function renderFomCard(m) {
+  const header = `
+    <div class="fom-card-head">
+      <span class="fom-metric-num">Metric ${m.metric}</span>
+      ${fomHeaderBadge(m)}
+    </div>`;
+
+  // Metric 10: alias of Metric 4, not queried separately
+  if (m.alias_of_metric) {
+    return `
+      <div class="fom-card">
+        ${header}
+        <div class="fom-desc">${m.description || ''}</div>
+        <div class="fom-alias-note">${m.alias_note || `Alias of Metric ${m.alias_of_metric} — not queried separately.`}</div>
+      </div>`;
+  }
+
+  // Metrics 5 & 11: peer_results array with an aggregate visible flag
+  if (Array.isArray(m.peer_results)) {
+    const total   = m.peer_results.length;
+    const visible = m.peer_results.filter(p => p.visible).length;
+    const detailsId = `fom-peers-${m.metric}`;
+    return `
+      <div class="fom-card">
+        ${header}
+        <div class="fom-desc">${m.description || ''}</div>
+        <details id="${detailsId}">
+          <summary class="fom-peer-summary">${visible}/${total} peer Node(s) &mdash; show detail</summary>
+          ${total > 0 ? renderFomPeerTable(m.peer_results) : '<div class="fom-alias-note">No peer Nodes with a PID were available to check.</div>'}
+        </details>
+      </div>`;
+  }
+
+  // Metrics 4 & 6: single query result
+  return `
+    <div class="fom-card">
+      ${header}
+      <div class="fom-desc">${m.description || ''}</div>
+      <div class="fom-target">
+        ${m.front_office_owner ? `Front Office: ${m.front_office_owner}<br>` : ''}
+        ${m.query_url ? `<a href="${m.query_url}" target="_blank" rel="noreferrer">${m.query_url}</a>` : '—'}
+      </div>
+      ${m.result_count != null ? `<div class="fom-alias-note">${m.result_count} result(s)</div>` : ''}
+    </div>`;
+}
+
+function renderFrontOfficeMetricsPanel(data) {
+  if (!data) {
+    return `<div class="panel">
+      <div class="panel-header"><div class="panel-header-left"><span class="panel-icon">🔗</span> Exchange Service Visibility</div>
+        <span class="badge badge-missing">Not available</span></div>
+      <div class="panel-missing">front_office_metrics_report.json was not found for this node.</div>
+    </div>`;
+  }
+
+  const metrics = Array.isArray(data.metrics) ? data.metrics : [];
+  if (metrics.length === 0) {
+    return `<div class="panel">
+      <div class="panel-header"><div class="panel-header-left"><span class="panel-icon">🔗</span> Exchange Service Visibility</div></div>
+      <div class="panel-missing">No metrics listed in this report.</div>
+    </div>`;
+  }
+
+  // Header badge counts "actionable" metrics only — the Metric 10 alias
+  // entry shares its result with Metric 4 and isn't a distinct check.
+  const actionable = metrics.filter(m => !m.alias_of_metric);
+  const visibleCount = actionable.filter(m => m.visible).length;
+  const bCls = visibleCount === actionable.length ? 'badge-ok'
+             : visibleCount > 0 ? 'badge-warn' : 'badge-error';
+
+  const cards = metrics.map(renderFomCard).join('');
+
+  return `
+    <div class="panel">
+      <div class="panel-header">
+        <div class="panel-header-left"><span class="panel-icon">🔗</span> Exchange Service Visibility</div>
+        <span class="badge ${bCls}">${visibleCount}/${actionable.length} visible</span>
+      </div>
+      <div class="panel-body"><div class="fom-grid">${cards}</div></div>
+    </div>`;
+}
+
 // ── Header meta block ─────────────────────────────────────────────────────────
+
+// "Registered" evidences C1's "Present in Node Registry" indicator directly:
+// endpoint_report.json's node_id/node_pid are only ever written by
+// CheckNodeCapabilities for a node it found in the live Node Registry
+// response, so their presence is itself confirmation. Falls back to a
+// cross-check against node_registry_summary.json (loaded separately by
+// loadSwitcher) so a stale report directory for a since-deregistered node
+// doesn't read as "Registered".
+// Returns true / false / null (registry data not yet available to decide).
+function isRegistered(ep, nodeName) {
+  if (ep && (ep.node_id || ep.node_pid)) return true;
+  if (Array.isArray(window._allNodes)) {
+    return window._allNodes.some(n => (n.node_name || n.name) === nodeName);
+  }
+  return null;
+}
 
 function buildMeta(ep, cat, argo, nodeName) {
   const source   = ep || cat || argo || {};
@@ -930,7 +1132,21 @@ function buildMeta(ep, cat, argo, nodeName) {
   document.getElementById('display-node-name').textContent = name;
   document.title = `${name} — EOSC Beyond Node Dashboard`;
 
+  // Cache the inputs so the Registered chip can be re-evaluated once
+  // node_registry_summary.json (fetched separately by loadSwitcher) has
+  // loaded — the two fetches race, and buildMeta may run first.
+  window._lastMeta = { ep, cat, argo, nodeName };
+
+  const registered  = isRegistered(ep, nodeName);
+  const checkedTime = ep?.generated ? ` as of ${ep.generated}` : '';
+  const regChip = registered === true
+    ? `<span class="badge badge-ok" title="Present in the Node Registry${checkedTime}">✓ Registered</span>`
+    : registered === false
+      ? `<span class="badge badge-error" title="Not found in node_registry_summary.json">✕ Not registered</span>`
+      : `<span class="badge badge-missing" title="Registry data not yet loaded">Registered — checking…</span>`;
+
   const lines = [];
+  lines.push(`<div><strong>Registry:</strong> ${regChip}</div>`);
   if (provider) lines.push(`<div><strong>Provider:</strong> ${provider}</div>`);
   if (endpoint) lines.push(`<div><strong>Endpoint:</strong> <a href="${endpoint}" target="_blank" rel="noreferrer">${endpoint}</a></div>`);
   if (pid)      lines.push(`<div><strong>PID:</strong> ${pid}</div>`);
@@ -953,13 +1169,14 @@ async function init() {
 
   const base = `/api/data/${encodeURIComponent(nodeName)}`;
 
-  const [ep, cat, argo] = await Promise.all([
+  const [ep, cat, argo, fom] = await Promise.all([
     tryFetchJSON(`${base}/endpoint_report.json`),
     tryFetchJSON(`${base}/catalogue_services_report.json`),
     tryFetchJSON(`${base}/argo_uptime_report.json`),
+    tryFetchJSON(`${base}/front_office_metrics_report.json`),
   ]);
 
-  if (!ep && !cat && !argo) {
+  if (!ep && !cat && !argo && !fom) {
     main.innerHTML = `
       <div class="state-msg">
         No report files found for <strong>${nodeName}</strong>.<br>
@@ -975,6 +1192,7 @@ async function init() {
     ${renderEndpointPanel(ep)}
     ${renderCataloguePanel(cat)}
     ${renderArgoPanel(argo)}
+    ${renderFrontOfficeMetricsPanel(fom)}
   `;
 
   // Highlight current node in the switcher now that we know which one is active
@@ -991,6 +1209,14 @@ async function loadSwitcher() {
   }
   window._allNodes = data.nodes;
   refreshSwitcher();
+
+  // Re-evaluate the Registered chip now that registry data has loaded, in
+  // case buildMeta() ran first — init() and loadSwitcher() race and are
+  // not guaranteed to resolve in order.
+  if (window._lastMeta) {
+    const { ep, cat, argo, nodeName } = window._lastMeta;
+    buildMeta(ep, cat, argo, nodeName);
+  }
 }
 
 function refreshSwitcher() {
@@ -1028,6 +1254,7 @@ document.addEventListener('keydown', e => {
 const NODE_CHECK_LABELS = {
   'catalogue-services': 'Catalogue Services',
   'service-uptime':     'Service Uptime',
+  'other-metrics':      'Front Office Metrics',
 };
 
 function toggleRunMenu() {
@@ -1186,6 +1413,40 @@ async function runCatalogueCheck() {
   resetBtn(btn);
 }
 
+// ── Front Office Metrics check (no API key needed) ───────────────────────────
+// Resolves everything it needs (PIDs, Front Office endpoints, including the
+// Sandbox's) server-side from node_registry_summary.json and each node's
+// endpoint_report.json — the caller only needs to name the node.
+
+async function runOtherMetricsCheck() {
+  document.getElementById('run-menu').setAttribute('aria-expanded', 'false');
+  const btn      = document.getElementById('btn-other-metrics');
+  const nodeName = decodeURIComponent(window.location.hash.substring(1));
+  if (btn) { btn.disabled = true; btn.textContent = '…'; }
+  showToast('info', 'Front Office Metrics', `Starting for ${nodeName}…`);
+
+  let jobId;
+  try {
+    const res  = await fetch('/api/run/other-metrics', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ node: nodeName }),
+    });
+    const data = await res.json();
+    if (!res.ok) { showToast('err', 'Front Office Metrics', data.error || 'HTTP ' + res.status); resetBtn(btn); return; }
+    jobId = data.jobId;
+  } catch (e) {
+    showToast('err', 'Front Office Metrics', 'Request failed: ' + e.message);
+    resetBtn(btn); return;
+  }
+
+  showToast('info', 'Front Office Metrics', 'Running… (job ' + jobId + ')');
+  const result = await pollJobStatus(jobId);
+  if (result.status === 'DONE') { showToast('ok', 'Front Office Metrics', result.message || 'Completed'); init(); }
+  else                          { showToast('err', 'Front Office Metrics', result.message || 'Check failed'); }
+  resetBtn(btn);
+}
+
 // ── Service Uptime check (ARGO API key required) ──────────────────────────────
 
 function promptAndRun() {
@@ -1295,8 +1556,8 @@ loadSwitcher();
   <div class="footer-left">
     <a href="https://cessda.eu" class="footer-link"
        target="_blank" rel="noopener">Powered by CESSDA ERIC</a>
-    <a href="https://github.com/cessda/cessda.pilot-node.tests/releases/tag/1.2.0"
-       class="footer-link" target="_blank" rel="noopener">Version 1.2.0</a>
+    <a href="https://github.com/cessda/cessda.pilot-node.tests/releases/tag/1.3.0"
+       class="footer-link" target="_blank" rel="noopener">Version 1.3.0</a>
   </div>
   <nav class="footer-centre" aria-label="Footer links">
     <a href="https://www.cessda.eu/Privacy-Policy"

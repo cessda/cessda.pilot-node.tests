@@ -66,6 +66,15 @@ public class CheckCatalogueServices {
     private static final URI FALLBACK_BASE_URL =
             URI.create("https://providers.sandbox.eosc-beyond.eu");
 
+    // ── Metric 13 thresholds ─────────────────────────────────────────────
+    // From the Proposed Validation Metrics doc's Test Methodology /
+    // Success Criteria for Exchange Services - Machine Actionable Tests.
+    // A service exceeding RESPONSE_TIME_THRESHOLD_MS fails its own check;
+    // RESPONSE_TIME_TARGET_MS is the doc's target for the *average* across
+    // all services, reported but not itself pass/fail per service.
+    private static final long RESPONSE_TIME_THRESHOLD_MS = 30_000L;
+    private static final long RESPONSE_TIME_TARGET_MS    = 5_000L;
+
     private static final Logger log =
             Logger.getLogger(CheckCatalogueServices.class.getName());
 
@@ -224,9 +233,16 @@ public class CheckCatalogueServices {
         long total = root.path("total").asLong(0);
         log.log(Level.INFO, "Total services found: {0}", total);
         // ── Check each service webpage ────────────────────────────────
+        // Metric 13 (Proposed Validation Metrics doc): automated
+        // validation of each Exchange Service — HTTP status, response
+        // content-type/validity appropriate to the service, and response
+        // time against the doc's 30s per-service / 5s average targets.
         log.info("Checking service webpages...");
 
         ArrayNode servicesArray = mapper.createArrayNode();
+        long   healthyCount        = 0;
+        long   responseTimeSampleN = 0;
+        double responseTimeSumMs   = 0;
 
         JsonNode results = root.path("results");
         for (JsonNode service : results) {
@@ -238,6 +254,9 @@ public class CheckCatalogueServices {
             String  status;
             Integer httpCode;
             String  colour;
+            String  contentType   = null;
+            Boolean contentValid  = null;
+            Long    responseTimeMs = null;
 
             if (webpage.isEmpty()) {
                 status   = "No webpage defined";
@@ -246,14 +265,32 @@ public class CheckCatalogueServices {
             } else {
                 try {
                     var url = new URI(webpage);
-                    httpCode = checkWebpage(httpClient, url);
+                    WebpageCheckResult check = checkWebpage(httpClient, url);
+                    httpCode       = check.httpCode();
+                    contentType    = check.contentType();
+                    contentValid   = check.contentValid();
+                    responseTimeMs = check.responseTimeMs();
+
+                    if (responseTimeMs != null) {
+                        responseTimeSumMs += responseTimeMs;
+                        responseTimeSampleN++;
+                    }
 
                     if (httpCode == 404) {
                         status = "Not found";
                         colour = YELLOW;
                     } else if (httpCode >= 200 && httpCode < 400) {
-                        status = "Available";
-                        colour = GREEN;
+                        if (Boolean.FALSE.equals(contentValid)) {
+                            status = "Available (content check failed)";
+                            colour = YELLOW;
+                        } else if (responseTimeMs != null && responseTimeMs > RESPONSE_TIME_THRESHOLD_MS) {
+                            status = "Available (slow: " + responseTimeMs + "ms)";
+                            colour = YELLOW;
+                        } else {
+                            status = "Available";
+                            colour = GREEN;
+                            healthyCount++;
+                        }
                     } else {
                         status = "Not available";
                         colour = RED;
@@ -263,6 +300,10 @@ public class CheckCatalogueServices {
                             + e.getMessage();
                     httpCode = null;
                     colour   = YELLOW;
+                } catch (IOException e) {
+                    status   = "Not available: " + e.getMessage();
+                    httpCode = null;
+                    colour   = RED;
                 } catch (InterruptedException e) {
                     Thread.currentThread().interrupt();
                     return;
@@ -289,16 +330,46 @@ public class CheckCatalogueServices {
             } else                  {
                 entry.putNull("http_code");
             }
+            if (contentType != null) {
+                entry.put("content_type", contentType);
+            } else {
+                entry.putNull("content_type");
+            }
+            if (contentValid != null) {
+                entry.put("content_valid", contentValid);
+            } else {
+                entry.putNull("content_valid");
+            }
+            if (responseTimeMs != null) {
+                entry.put("response_time_ms", responseTimeMs);
+            } else {
+                entry.putNull("response_time_ms");
+            }
 
             servicesArray.add(entry);
         }
 
         // ── Write JSON report ─────────────────────────────────────────
+        long   checkedServices    = servicesArray.size();
+        long   pctHealthy         = checkedServices > 0
+                ? Math.round(healthyCount * 100.0 / checkedServices) : 0;
+        Long   avgResponseTimeMs  = responseTimeSampleN > 0
+                ? Math.round(responseTimeSumMs / responseTimeSampleN) : null;
+
         ObjectNode report = mapper.createObjectNode();
         report.put("generated", Instant.now().toString());
         report.put("node_name",      nodeName);
         report.put("api_source", apiUrl.toString());
         report.put("total_services", total);
+        report.put("healthy_services", healthyCount);
+        report.put("pct_healthy", pctHealthy);
+        if (avgResponseTimeMs != null) {
+            report.put("avg_response_time_ms", avgResponseTimeMs);
+        } else {
+            report.putNull("avg_response_time_ms");
+        }
+        report.put("response_time_target_ms", RESPONSE_TIME_TARGET_MS);
+        report.put("response_time_threshold_ms", RESPONSE_TIME_THRESHOLD_MS);
         report.set("services", servicesArray);
 
         mapper.writerWithDefaultPrettyPrinter()
@@ -339,17 +410,68 @@ public class CheckCatalogueServices {
     }
 
     /**
-     * Issues an HTTP HEAD request to the given URL and returns the
-     * HTTP status code, or throws if the request cannot be completed.
+     * Result of a single Metric 13 webpage/endpoint check.
      */
-    private static int checkWebpage(HttpClient client, URI url)
+    private record WebpageCheckResult(
+            int httpCode, String contentType, boolean contentValid, long responseTimeMs) {
+    }
+
+    /**
+     * Issues an HTTP GET request to {@code url} and evaluates it against
+     * Metric 13's per-service success criteria: HTTP status, response
+     * content-type, and content validity appropriate to that type.
+     *
+     * <p>The doc's test methodology distinguishes REST API Services
+     * (validate content-type is JSON and the body is non-empty/parses)
+     * from Web Services (detect service-specific keywords in HTML). This
+     * class has no per-service "expected keyword" metadata to check
+     * against — the Resource Catalogue's service listing doesn't carry
+     * one — so the Web Service branch is a non-empty-body check rather
+     * than a keyword match. If the Catalogue starts exposing expected
+     * keywords per service, tighten {@code isContentValid} accordingly.</p>
+     *
+     * <p>A response exceeding {@link #RESPONSE_TIME_THRESHOLD_MS} throws
+     * {@link IOException} via the client's request timeout, which the
+     * caller treats as "Not available".</p>
+     */
+    private static WebpageCheckResult checkWebpage(HttpClient client, URI url)
             throws IOException, InterruptedException {
         HttpRequest req = HttpRequest.newBuilder()
                 .uri(url)
-                .method("HEAD", HttpRequest.BodyPublishers.noBody())
-                .timeout(Duration.ofSeconds(10))
+                .GET()
+                .timeout(Duration.ofMillis(RESPONSE_TIME_THRESHOLD_MS))
                 .build();
 
-        return client.send(req, HttpResponse.BodyHandlers.discarding()).statusCode();
+        Instant start = Instant.now();
+        HttpResponse<String> response = client.send(req, HttpResponse.BodyHandlers.ofString());
+        long responseTimeMs = Duration.between(start, Instant.now()).toMillis();
+
+        int httpCode = response.statusCode();
+        String contentType = response.headers().firstValue("content-type").orElse("");
+        boolean contentValid = isContentValid(contentType, response.body());
+
+        return new WebpageCheckResult(httpCode, contentType, contentValid, responseTimeMs);
+    }
+
+    /**
+     * REST API Services: content-type must indicate JSON and the body
+     * must parse to a non-empty JSON value. Web Services (anything else):
+     * body must simply be non-blank. See {@link #checkWebpage} Javadoc
+     * for why this doesn't do per-service keyword matching.
+     */
+    private static boolean isContentValid(String contentType, String body) {
+        if (body == null || body.isBlank()) {
+            return false;
+        }
+        String lowerType = contentType == null ? "" : contentType.toLowerCase(java.util.Locale.ROOT);
+        if (lowerType.contains("json")) {
+            try {
+                JsonNode parsed = new ObjectMapper().readTree(body);
+                return !(parsed.isContainerNode() && parsed.isEmpty());
+            } catch (IOException e) {
+                return false;
+            }
+        }
+        return true;
     }
 }

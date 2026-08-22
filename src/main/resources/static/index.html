@@ -434,8 +434,8 @@
   <div class="footer-left">
     <a href="https://cessda.eu" class="footer-link"
        target="_blank" rel="noopener">Powered by CESSDA ERIC</a>
-    <a href="https://github.com/cessda/cessda.pilot-node.tests/releases/tag/1.2.0"
-       class="footer-link" target="_blank" rel="noopener">Version 1.2.0</a>
+    <a href="https://github.com/cessda/cessda.pilot-node.tests/releases/tag/1.3.0"
+       class="footer-link" target="_blank" rel="noopener">Version 1.3.0</a>
   </div>
   <nav class="footer-centre" aria-label="Footer links">
     <a href="https://www.cessda.eu/Privacy-Policy"
@@ -455,9 +455,10 @@
 // ── Constants ─────────────────────────────────────────────────────────────────
 
 const REPORT_TYPES = [
-  { key: 'endpoint',  file: 'endpoint_report.json',          label: 'Endpoints'   },
-  { key: 'catalogue', file: 'catalogue_services_report.json', label: 'Catalogue'   },
-  { key: 'argo',      file: 'argo_uptime_report.json',        label: 'ARGO Uptime' },
+  { key: 'endpoint',    file: 'endpoint_report.json',              label: 'Endpoints'    },
+  { key: 'catalogue',   file: 'catalogue_services_report.json',     label: 'Catalogue'    },
+  { key: 'argo',        file: 'argo_uptime_report.json',            label: 'ARGO Uptime'  },
+  { key: 'frontOffice', file: 'front_office_metrics_report.json',   label: 'Front Office' },
 ];
 
 // ── Fetch helpers ─────────────────────────────────────────────────────────────
@@ -475,14 +476,21 @@ async function loadRegistry() {
   return data;
 }
 
-// Fetch all three report files for one node, return { endpoint, catalogue, argo }
-// Each value is the parsed JSON object, or null if the file was absent / errored.
+// Fetch all report files for one node, return an object keyed by
+// REPORT_TYPES[].key (e.g. { endpoint, catalogue, argo, frontOffice }).
+// Each value is the parsed JSON object, or null if the file was absent /
+// errored. Built generically off REPORT_TYPES so adding a new report type
+// only needs a single entry there, not a matching positional destructure
+// here — a fixed-position destructure previously meant a new REPORT_TYPES
+// entry would silently drop its own fetched data.
 async function fetchNodeReports(nodeName) {
   const base = `/api/data/${encodeURIComponent(nodeName)}`;
-  const [endpoint, catalogue, argo] = await Promise.all(
+  const values = await Promise.all(
     REPORT_TYPES.map(rt => tryFetchJSON(`${base}/${rt.file}`))
   );
-  return { endpoint, catalogue, argo };
+  const result = {};
+  REPORT_TYPES.forEach((rt, i) => { result[rt.key] = values[i]; });
+  return result;
 }
 
 // ── Report summarisers ────────────────────────────────────────────────────────
@@ -541,12 +549,33 @@ function summariseArgo(data) {
   return null;
 }
 
+// front_office_metrics_report.json (CheckOtherMetrics): Metrics 4, 5, 6, 10
+// and 11. Metric 10 is reported as an alias of Metric 4 (see
+// CheckOtherMetrics Javadoc) and is excluded from the "actionable" count
+// here, same as on the node detail page, so it isn't double-counted.
+function summariseFrontOffice(data) {
+  if (!data) return null;
+  const metrics    = Array.isArray(data.metrics) ? data.metrics : [];
+  const actionable = metrics.filter(m => !m.alias_of_metric);
+  const visible     = actionable.filter(m => m.visible).length;
+  return { visible, total: actionable.length };
+}
+
 // ── Colour / status helpers ───────────────────────────────────────────────────
 
 function dotColour(pct) {
   if (pct === null || pct === undefined) return 'grey';
   if (pct >= 90) return 'green';
   if (pct >= 60) return 'amber';
+  return 'red';
+}
+
+// Same green/amber/red intent as dotColour, but for an X-of-Y count
+// (e.g. Front Office metrics visible) rather than a percentage.
+function fractionColour(visible, total) {
+  if (total === 0) return 'grey';
+  if (visible === total) return 'green';
+  if (visible > 0) return 'amber';
   return 'red';
 }
 
@@ -677,6 +706,23 @@ function renderNodeCard(node, reports) {
          }
        </div>`;
 
+  // Front Office visibility row (Metrics 4, 5, 6, 10, 11 — Exchange
+  // maturity evidence, distinct from the Core compliance tiers above)
+  const fom = summariseFrontOffice(reports.frontOffice);
+  const fomRow = fom
+    ? `<div class="report-row">
+         <span class="rr-icon">🔗</span>
+         <span class="rr-label">Front Office</span>
+         <span class="rr-dot ${fractionColour(fom.visible, fom.total)}"></span>
+         <span class="rr-val">${fom.visible} / ${fom.total} metrics visible</span>
+       </div>`
+    : `<div class="report-row">
+         <span class="rr-icon">🔗</span>
+         <span class="rr-label">Front Office</span>
+         <span class="rr-dot grey"></span>
+         <span class="rr-val missing">No report</span>
+       </div>`;
+
   return `
   <a class="node-card ${statusClass === 'ok' ? '' : statusClass}"
      href="node.html#${encodeURIComponent(node.node_name)}">
@@ -687,7 +733,7 @@ function renderNodeCard(node, reports) {
       </div>
       <span class="status-badge status-${statusClass}">${statusText}</span>
     </div>
-    <div class="report-rows">${epRow}${catRow}${arRow}${tierRow}</div>
+    <div class="report-rows">${epRow}${catRow}${arRow}${tierRow}${fomRow}</div>
     <div class="report-chips">${chips}</div>
     <div class="node-footer">
       <span>View node detail</span>
@@ -703,6 +749,7 @@ function renderSummaryStats(registry, allReports) {
   let okNodes = 0, totalCaps = 0, availCaps = 0;
 
   let mvpNodes = 0, standardNodes = 0, advancedNodes = 0;
+  let fomVisible = 0, fomTotal = 0;
   allReports.forEach(r => {
     const ep = summariseEndpoint(r.endpoint);
     const ar = summariseArgo(r.argo);
@@ -713,10 +760,13 @@ function renderSummaryStats(registry, allReports) {
     if (highest && highest.level >= 1) mvpNodes++;
     if (highest && highest.level >= 2) standardNodes++;
     if (highest && highest.level >= 3) advancedNodes++;
+    const fom = summariseFrontOffice(r.frontOffice);
+    if (fom) { fomVisible += fom.visible; fomTotal += fom.total; }
   });
 
   const degraded = totalNodes - okNodes;
   const upPct    = totalCaps > 0 ? Math.round(availCaps / totalCaps * 100) : 0;
+  const fomPct   = fomTotal > 0 ? Math.round(fomVisible / fomTotal * 100) : 0;
 
   document.getElementById('summary-stats').innerHTML = `
     <div class="stat-card"><div class="stat-value orange">${totalNodes}</div><div class="stat-label">Total nodes</div></div>
@@ -726,6 +776,10 @@ function renderSummaryStats(registry, allReports) {
     <div class="stat-card">
       <div class="stat-value ${pctColour(upPct)}">${availCaps}<span style="font-size:1.25rem;color:var(--grey-400)">/${totalCaps}</span></div>
       <div class="stat-label">Available caps</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-value ${fomTotal > 0 ? pctColour(fomPct) : ''}" style="${fomTotal === 0 ? 'color:var(--grey-400)' : ''}">${fomTotal > 0 ? fomPct + '%' : '—'}</div>
+      <div class="stat-label">Front Office visibility</div>
     </div>
     <div class="stat-card">
       <div class="stat-value ${mvpNodes === totalNodes ? 'green' : mvpNodes > 0 ? 'amber' : 'red'}">${mvpNodes}<span style="font-size:1.25rem;color:var(--grey-400)">/${totalNodes}</span></div>
