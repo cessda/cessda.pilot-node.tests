@@ -120,6 +120,36 @@ public class CheckOtherMetrics {
      */
     static final String FEDERATION_PATH_SEGMENT = "/federation";
 
+    /**
+     * Base URL of the Sandbox's public Discovery Hub search application,
+     * used only for Metric 9.
+     *
+     * <p>This is deliberately <em>not</em> derived from the Sandbox's
+     * {@code Front Office} / {@code Order Management} {@code
+     * capability_type} endpoint recorded in {@code endpoint_report.json}
+     * ({@code https://userspace.sandbox.eosc-beyond.eu/}), even though
+     * the hostname looks related. The two are different applications:
+     * querying {@code {front_office}/services} for Research Outputs (as
+     * an earlier version of this metric did, via the {@code
+     * research_activities} filter flag) reliably returns a 504 Gateway
+     * Time-out from the Sandbox, whereas this host's search API responds
+     * normally in well under a second. Confirmed by hand on 2026-09-07.</p>
+     */
+    static final String SANDBOX_DISCOVERY_HUB_SEARCH_BASE_URL =
+            "https://search.userspace.sandbox.eosc-beyond.eu";
+
+    /**
+     * The Discovery Hub search collections that together make up a
+     * Node's "Research Output" for Metric 9. Confirmed against the
+     * Sandbox's search API on 2026-09-07: a single combined query across
+     * all Research Output types times out, but each of these three
+     * collections queried individually responds normally, so Metric 9
+     * queries them separately and reports visibility if any one of them
+     * has a match.
+     */
+    private static final List<String> RESEARCH_OUTPUT_COLLECTIONS =
+            List.of("dataset", "publication", "software");
+
     private static final Logger log = Logger.getLogger(CheckOtherMetrics.class.getName());
 
     // ANSI colour codes
@@ -216,7 +246,9 @@ public class CheckOtherMetrics {
         URI sandboxFrontOfficeUrl = readFrontOfficeEndpoint(dashboardDir, SANDBOX_NODE_NAME, mapper);
         if (sandboxFrontOfficeUrl == null) {
             log.log(Level.WARNING, "No Front Office endpoint found for Sandbox Node '{0}' "
-                    + "— Metrics 6 and 9 will be reported as Not reported.", SANDBOX_NODE_NAME);
+                    + "— Metric 6 will be reported as Not reported. Metric 9 is unaffected: "
+                    + "it queries the Sandbox Discovery Hub search application directly, "
+                    + "independent of the Front Office endpoint.", SANDBOX_NODE_NAME);
         }
 
         ArrayNode metricsOut = mapper.createArrayNode();
@@ -264,14 +296,18 @@ public class CheckOtherMetrics {
                 "sandbox", SANDBOX_NODE_NAME, ownPid, metric6, null);
 
         // ── Metric 9: own Research Output visible in Sandbox Discovery Hub
-        MetricResult metric9 = sandboxFrontOfficeUrl == null
-                ? MetricResult.notReported()
-                : queryResearchOutputVisibility(httpClient, sandboxFrontOfficeUrl, ownPid);
+        ArrayNode metric9Collections = mapper.createArrayNode();
+        MetricResult metric9 = queryResearchOutputVisibility(httpClient, nodeName, metric9Collections, mapper);
         printLine(9, "Own Research Output in Sandbox Discovery Hub", metric9);
         ObjectNode metric9Entry = buildMetricEntry(mapper, 9,
                 withNodeName("At least one <NODE_NAME> Research Output is visible "
                         + "in the Sandbox Discovery Hub.", nodeName),
-                "sandbox", SANDBOX_NODE_NAME, ownPid, metric9, null);
+                "sandbox", SANDBOX_NODE_NAME, null, metric9, null);
+        // Metric 9 filters the Discovery Hub search by node name, not PID
+        // (see queryResearchOutputVisibility) — record that explicitly
+        // instead of the (inapplicable) target_pid field.
+        metric9Entry.put("target_node_name", nodeName);
+        metric9Entry.set("collection_results", metric9Collections);
 
         // ── Metric 10: alias of Metric 4 ────────────────────────────────
         ObjectNode metric10Entry = buildMetricEntry(mapper, 10,
@@ -412,28 +448,36 @@ public class CheckOtherMetrics {
     }
 
     /**
-     * Metric 9: builds the Research Product query URL for a Discovery Hub
-     * — used against the Sandbox to check whether a Node's Research Output
-     * is visible there. Unlike {@link #buildFrontOfficeQueryUrl}, there is
-     * no {@link #FEDERATION_PATH_SEGMENT} in this path, and it adds a
-     * {@code research_activities} filter flag alongside the same
-     * {@code nodes[]} PID filter used everywhere else:
-     * <pre>{@code {base}/services?sort=_score&research_activities&nodes%5B%5D={url-encoded pid}}</pre>
+     * Metric 9: builds the Discovery Hub search query URL for one
+     * Research Output collection (one of {@link #RESEARCH_OUTPUT_COLLECTIONS})
+     * filtered to {@code nodeName}, against
+     * {@link #SANDBOX_DISCOVERY_HUB_SEARCH_BASE_URL}:
+     * <pre>{@code {base}/api/web/search-results?rows=0&collection={collection}&q=*&sort_ui=default&fq=node:(%22{url-encoded node name}%22)&cursor=*&standard=true&exact=false&qf={url-encoded qf}}</pre>
      *
-     * <p>Confirmed against two live examples
-     * ({@code enes-discovery-hub.pilot.eosc-beyond.eu} and
-     * {@code marketplace-staging.cessda.eu}) — {@code research_activities}
-     * takes no value; it's a bare filter flag, not
-     * {@code research_activities[]=<id>} as in an earlier draft of this
-     * metric.</p>
+     * <p>This replaces an earlier, since-removed
+     * {@code buildResearchOutputQueryUrl(URI, String)} that queried
+     * {@code {front_office}/services?sort=_score&research_activities&nodes%5B%5D={pid}}
+     * — that combined, all-types-at-once query reliably times out (HTTP
+     * 504) against the Sandbox. Note the filter here is by node
+     * <em>name</em> (e.g. {@code CESSDA}), not by PID as elsewhere in
+     * this class — confirmed against the live search API on
+     * 2026-09-07.</p>
+     *
+     * <p>{@code rows=0} is used because only the result count ({@code
+     * numFound} in the response) is needed, not the matched documents.
+     * {@code qf} is a required parameter for this endpoint (a 422 is
+     * returned without it); its value is copied verbatim from the
+     * Discovery Hub's own search UI.</p>
      */
-    static URI buildResearchOutputQueryUrl(URI discoveryHubBase, String pid) {
-        String base = discoveryHubBase.toString();
-        if (base.endsWith("/")) {
-            base = base.substring(0, base.length() - 1);
-        }
-        String encodedPid = URLEncoder.encode(pid, StandardCharsets.UTF_8);
-        return URI.create(base + "/services?sort=_score&research_activities&nodes%5B%5D=" + encodedPid);
+    static URI buildResearchOutputQueryUrl(String collection, String nodeName) {
+        String encodedNode = URLEncoder.encode(nodeName, StandardCharsets.UTF_8);
+        String encodedQf = URLEncoder.encode(
+                "title^100 author_names_tg^120 description^10 keywords_tg^10",
+                StandardCharsets.UTF_8);
+        return URI.create(SANDBOX_DISCOVERY_HUB_SEARCH_BASE_URL
+                + "/api/web/search-results?rows=0&collection=" + collection
+                + "&q=*&sort_ui=default&fq=node:(%22" + encodedNode + "%22)"
+                + "&cursor=*&standard=true&exact=false&qf=" + encodedQf);
     }
 
     /**
@@ -445,15 +489,119 @@ public class CheckOtherMetrics {
     }
 
     /**
-     * Queries a Discovery Hub for Research Outputs filtered to
-     * {@code targetPid} (Metric 9) and returns whether any results were
-     * found. Shares {@link #executeVisibilityQuery} with
-     * {@link #queryFrontOffice} — the two report shapes
-     * ({@code total}/{@code results}) are identical, only the query URL
-     * differs.
+     * Queries the Sandbox Discovery Hub search API for Research Outputs
+     * (Metric 9) belonging to {@code nodeName}, across every collection
+     * in {@link #RESEARCH_OUTPUT_COLLECTIONS}, and returns whether any of
+     * them had a match. Unlike {@link #queryFrontOffice} this issues
+     * multiple requests — one per collection, since a single combined
+     * query times out — so it cannot share {@link #executeVisibilityQuery}
+     * (which is also GET-based against a {@code total}/{@code results}
+     * shaped response, whereas this API is POST-based and returns
+     * {@code numFound}); see {@link #executeDiscoveryHubSearch}.
+     *
+     * <p>Per-collection detail is appended to {@code collectionResultsOut}
+     * (one object per collection: {@code collection}, {@code query_url},
+     * {@code result_count}, {@code visible}, {@code status}, {@code
+     * http_code}) so the report shows exactly which Research Output
+     * types were and weren't found, not just the aggregate.</p>
+     *
+     * @return an aggregate {@link MetricResult} whose {@code resultCount}
+     *         is the sum across all collections, {@code visible} is true
+     *         if any collection had a match, {@code queryUrl} is the
+     *         first collection's query URL (for reference — the full set
+     *         is in {@code collectionResultsOut}), and {@code status} is
+     *         {@code "Error"} only if no collection was visible and at
+     *         least one query itself failed.
      */
-    private static MetricResult queryResearchOutputVisibility(HttpClient httpClient, URI discoveryHubBase, String targetPid) {
-        return executeVisibilityQuery(httpClient, buildResearchOutputQueryUrl(discoveryHubBase, targetPid));
+    private static MetricResult queryResearchOutputVisibility(
+            HttpClient httpClient, String nodeName, ArrayNode collectionResultsOut, ObjectMapper mapper) {
+
+        long totalCount = 0;
+        boolean anyVisible = false;
+        URI firstQueryUrl = null;
+        Integer lastHttpCode = null;
+        String error = null;
+
+        for (String collection : RESEARCH_OUTPUT_COLLECTIONS) {
+            URI queryUrl = buildResearchOutputQueryUrl(collection, nodeName);
+            if (firstQueryUrl == null) {
+                firstQueryUrl = queryUrl;
+            }
+
+            MetricResult result = executeDiscoveryHubSearch(httpClient, queryUrl);
+            lastHttpCode = result.httpCode();
+            if ("Error".equals(result.status())) {
+                error = result.error();
+            }
+            totalCount += Math.max(result.resultCount(), 0);
+            anyVisible |= result.visible();
+
+            ObjectNode collectionEntry = mapper.createObjectNode();
+            collectionEntry.put("collection", collection);
+            collectionEntry.put("query_url", queryUrl.toString());
+            collectionEntry.put("result_count", result.resultCount());
+            collectionEntry.put("visible", result.visible());
+            collectionEntry.put("status", result.status());
+            if (result.httpCode() != null) {
+                collectionEntry.put("http_code", result.httpCode());
+            } else {
+                collectionEntry.putNull("http_code");
+            }
+            collectionResultsOut.add(collectionEntry);
+        }
+
+        String status = anyVisible ? "Available" : (error != null ? "Error" : "Not visible");
+        return new MetricResult(firstQueryUrl, lastHttpCode, totalCount, anyVisible, status, error);
+    }
+
+    /**
+     * Executes a single Discovery Hub search query (Metric 9) and returns
+     * whether it found any results. Unlike {@link #executeVisibilityQuery},
+     * this is a {@code POST} (an empty JSON object {@code {}} body is
+     * required — the endpoint returns 422 without one) and the result
+     * count is read from the response's {@code numFound} field rather
+     * than {@code total}.
+     */
+    private static MetricResult executeDiscoveryHubSearch(HttpClient httpClient, URI queryUrl) {
+        HttpRequest request = HttpRequest.newBuilder()
+                .uri(queryUrl)
+                .header("accept", "application/json")
+                .header("content-type", "application/json")
+                .POST(HttpRequest.BodyPublishers.ofString("{}"))
+                .build();
+
+        try {
+            HttpResponse<InputStream> response = httpClient.send(
+                    request, HttpResponse.BodyHandlers.ofInputStream());
+
+            int httpCode = response.statusCode();
+            if (httpCode != 200) {
+                try (InputStream ignored = response.body()) {
+                    // drain
+                }
+                return MetricResult.error(queryUrl, httpCode, "HTTP " + httpCode);
+            }
+
+            JsonNode root;
+            try (InputStream body = response.body()) {
+                root = new ObjectMapper().readTree(body);
+            }
+
+            long resultCount = root.path("numFound").asLong(-1);
+            if (resultCount < 0) {
+                resultCount = root.path("results").size();
+            }
+            boolean visible = resultCount > 0;
+
+            return new MetricResult(queryUrl, httpCode, resultCount, visible,
+                    visible ? "Available" : "Not visible", null);
+
+        } catch (IOException e) {
+            return MetricResult.error(queryUrl, null, e.getMessage());
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            return MetricResult.error(queryUrl, null, "Interrupted");
+        }
     }
 
     private static MetricResult executeVisibilityQuery(HttpClient httpClient, URI queryUrl) {
