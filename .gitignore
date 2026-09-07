@@ -64,4 +64,3 @@ bin/
 
 ### Data files ###
 dashboard/data/**/*.json
-src/main/resources/static/data/**/*.json

@@ -470,21 +470,21 @@
         <div class="run-dropdown-header">Node-specific checks</div>
         <div class="run-item" role="menuitem">
           <div class="run-item-info">
-            <div class="run-item-label">Catalogue Services</div>
+            <div class="run-item-label">Exchange Services</div>
             <div class="run-item-desc">CheckCatalogueServices · catalogue_services_report.json</div>
           </div>
           <button class="run-btn" id="btn-catalogue-services" onclick="runCatalogueCheck()">Run</button>
         </div>
         <div class="run-item" role="menuitem">
           <div class="run-item-info">
-            <div class="run-item-label">Service Uptime</div>
+            <div class="run-item-label">Service Monitoring</div>
             <div class="run-item-desc">CheckServiceUptime · argo_uptime_report.json</div>
           </div>
           <button class="run-btn" id="btn-service-uptime" onclick="promptAndRun()">Run</button>
         </div>
         <div class="run-item" role="menuitem">
           <div class="run-item-info">
-            <div class="run-item-label">Exchange Service Visibility</div>
+            <div class="run-item-label">Federated Search</div>
             <div class="run-item-desc">CheckOtherMetrics · front_office_metrics_report.json</div>
           </div>
           <button class="run-btn" id="btn-other-metrics" onclick="runOtherMetricsCheck()">Run</button>
@@ -622,7 +622,7 @@ function buildOverview(ep, cat, argo) {
     cards.push(`<div class="ov-card"><div class="ov-value" style="color:var(--grey-400)">—</div><div class="ov-label">Endpoints available</div></div>`);
   }
 
-  // Catalogue services
+  // Exchange services
   if (cat) {
     const total = typeof cat.total_services === 'number' ? cat.total_services
                 : Array.isArray(cat.services) ? cat.services.length : '—';
@@ -645,7 +645,7 @@ function buildOverview(ep, cat, argo) {
         <div class="ov-label">${active !== null ? 'Active catalogue services' : 'Catalogue services'}</div>
       </div>`);
   } else {
-    cards.push(`<div class="ov-card"><div class="ov-value" style="color:var(--grey-400)">—</div><div class="ov-label">Catalogue services</div></div>`);
+    cards.push(`<div class="ov-card"><div class="ov-value" style="color:var(--grey-400)">—</div><div class="ov-label">Exchange services</div></div>`);
   }
 
   // ARGO uptime
@@ -687,7 +687,7 @@ function buildOverview(ep, cat, argo) {
 function renderEndpointPanel(data) {
   if (!data) {
     return `<div class="panel">
-      <div class="panel-header"><div class="panel-header-left"><span class="panel-icon">🔌</span> Endpoint Connectivity Report</div>
+      <div class="panel-header"><div class="panel-header-left"><span class="panel-icon">🔌</span> Core Services Integration Report</div>
         <span class="badge badge-missing">Not available</span></div>
       <div class="panel-missing">endpoint_report.json was not found for this node.</div>
     </div>`;
@@ -696,7 +696,7 @@ function renderEndpointPanel(data) {
   const caps = Array.isArray(data.capabilities) ? data.capabilities : [];
   if (caps.length === 0) {
     return `<div class="panel">
-      <div class="panel-header"><div class="panel-header-left"><span class="panel-icon">🔌</span> Endpoint Connectivity Report</div></div>
+      <div class="panel-header"><div class="panel-header-left"><span class="panel-icon">🔌</span> Core Services Integration Report</div></div>
       <div class="panel-missing">No capabilities listed in this report.</div>
     </div>`;
   }
@@ -754,19 +754,19 @@ function renderEndpointPanel(data) {
   return `
     <div class="panel">
       <div class="panel-header">
-        <div class="panel-header-left"><span class="panel-icon">🔌</span> Endpoint Connectivity Report</div>
+        <div class="panel-header-left"><span class="panel-icon">🔌</span> Core Services Integration Report</div>
         <span class="badge ${bCls}">${avail}/${caps.length} available</span>
       </div>
       <div class="panel-body">${tierSections}${otherSection}</div>
     </div>`;
 }
 
-// ── Catalogue Services panel ──────────────────────────────────────────────────
+// ── Exchange Services panel ──────────────────────────────────────────────────
 
 function renderCataloguePanel(data) {
   if (!data) {
     return `<div class="panel">
-      <div class="panel-header"><div class="panel-header-left"><span class="panel-icon">📚</span> Catalogue Services Report</div>
+      <div class="panel-header"><div class="panel-header-left"><span class="panel-icon">📚</span> Exchange Services Report</div>
         <span class="badge badge-missing">Not available</span></div>
       <div class="panel-missing">catalogue_services_report.json was not found for this node.</div>
     </div>`;
@@ -779,7 +779,7 @@ function renderCataloguePanel(data) {
     return `
       <div class="panel">
         <div class="panel-header">
-          <div class="panel-header-left"><span class="panel-icon">📚</span> Catalogue Services Report</div>
+          <div class="panel-header-left"><span class="panel-icon">📚</span> Exchange Services Report</div>
           <span class="badge badge-ok">${data.total_services} services</span>
         </div>
         <div class="panel-body">
@@ -791,7 +791,7 @@ function renderCataloguePanel(data) {
 
   if (services.length === 0) {
     return `<div class="panel">
-      <div class="panel-header"><div class="panel-header-left"><span class="panel-icon">📚</span> Catalogue Services Report</div></div>
+      <div class="panel-header"><div class="panel-header-left"><span class="panel-icon">📚</span> Exchange Services Report</div></div>
       <div class="panel-missing">No services listed in this report.</div>
     </div>`;
   }
@@ -855,7 +855,7 @@ function renderCataloguePanel(data) {
   return `
     <div class="panel">
       <div class="panel-header">
-        <div class="panel-header-left"><span class="panel-icon">📚</span> Catalogue Services Report</div>
+        <div class="panel-header-left"><span class="panel-icon">📚</span> Exchange Services Report</div>
         <div style="display:flex;align-items:center;gap:0.6rem;">${avgResponse}${headerBadge}</div>
       </div>
       <div class="panel-body">
@@ -872,7 +872,7 @@ function renderCataloguePanel(data) {
 function renderArgoPanel(data) {
   if (!data) {
     return `<div class="panel">
-      <div class="panel-header"><div class="panel-header-left"><span class="panel-icon">📡</span> ARGO Uptime Report</div>
+      <div class="panel-header"><div class="panel-header-left"><span class="panel-icon">📡</span> ARGO Uptime Report (Metric 12)</div>
         <span class="badge badge-missing">Not available</span></div>
       <div class="panel-missing">argo_uptime_report.json was not found for this node.</div>
     </div>`;
@@ -929,7 +929,7 @@ function renderArgoPanel(data) {
     return `
       <div class="panel">
         <div class="panel-header">
-          <div class="panel-header-left"><span class="panel-icon">📡</span> ARGO Uptime Report</div>
+          <div class="panel-header-left"><span class="panel-icon">📡</span> ARGO Uptime Report (Metric 12)</div>
           <div style="display:flex;align-items:center;gap:0.75rem;flex-wrap:wrap;">${dateRange}${headerBadge}</div>
         </div>
         <div class="panel-body">
@@ -970,7 +970,7 @@ function renderArgoPanel(data) {
   return `
     <div class="panel">
       <div class="panel-header">
-        <div class="panel-header-left"><span class="panel-icon">📡</span> ARGO Uptime Report</div>
+        <div class="panel-header-left"><span class="panel-icon">📡</span> ARGO Uptime Report (Metric 12)</div>
         <div style="display:flex;align-items:center;gap:0.75rem;flex-wrap:wrap;">
           ${dateRange}
           ${headerBadge}
@@ -980,7 +980,7 @@ function renderArgoPanel(data) {
     </div>`;
 }
 
-// ── Exchange Service Visibility panel ─────────────────────────────────────────
+// ── Federated Search panel ─────────────────────────────────────────
 // Renders front_office_metrics_report.json (CheckOtherMetrics), covering
 // Metrics 4, 5, 6, 10 and 11 from the Proposed Validation Metrics doc.
 // Metric 10 is reported as an alias of Metric 4 (see CheckOtherMetrics
@@ -1071,7 +1071,7 @@ function renderFomCard(m) {
 function renderFrontOfficeMetricsPanel(data) {
   if (!data) {
     return `<div class="panel">
-      <div class="panel-header"><div class="panel-header-left"><span class="panel-icon">🔗</span> Exchange Service Visibility</div>
+      <div class="panel-header"><div class="panel-header-left"><span class="panel-icon">🔗</span> Federated Search</div>
         <span class="badge badge-missing">Not available</span></div>
       <div class="panel-missing">front_office_metrics_report.json was not found for this node.</div>
     </div>`;
@@ -1080,7 +1080,7 @@ function renderFrontOfficeMetricsPanel(data) {
   const metrics = Array.isArray(data.metrics) ? data.metrics : [];
   if (metrics.length === 0) {
     return `<div class="panel">
-      <div class="panel-header"><div class="panel-header-left"><span class="panel-icon">🔗</span> Exchange Service Visibility</div></div>
+      <div class="panel-header"><div class="panel-header-left"><span class="panel-icon">🔗</span> Federated Search</div></div>
       <div class="panel-missing">No metrics listed in this report.</div>
     </div>`;
   }
@@ -1097,7 +1097,7 @@ function renderFrontOfficeMetricsPanel(data) {
   return `
     <div class="panel">
       <div class="panel-header">
-        <div class="panel-header-left"><span class="panel-icon">🔗</span> Exchange Service Visibility</div>
+        <div class="panel-header-left"><span class="panel-icon">🔗</span> Federated Search</div>
         <span class="badge ${bCls}">${visibleCount}/${actionable.length} visible</span>
       </div>
       <div class="panel-body"><div class="fom-grid">${cards}</div></div>
@@ -1252,9 +1252,9 @@ document.addEventListener('keydown', e => {
 // ── Run-checks menu ───────────────────────────────────────────────────────────
 
 const NODE_CHECK_LABELS = {
-  'catalogue-services': 'Catalogue Services',
+  'catalogue-services': 'Exchange Services',
   'service-uptime':     'Service Uptime',
-  'other-metrics':      'Exchange Service Visibility',
+  'other-metrics':      'Federated Search',
 };
 
 function toggleRunMenu() {
@@ -1363,7 +1363,7 @@ function handleAboutOverlayClick(e) {
   if (e.target === document.getElementById('about-overlay')) closeAbout();
 }
 
-// ── Catalogue Services check (no API key needed) ─────────────────────────────
+// ── Exchange Services check (no API key needed) ─────────────────────────────
 // Reads the Resource Catalogue endpoint from this node's endpoint_report.json,
 // then POSTs { node, catalogueUrl } to the backend. No credentials required.
 
@@ -1372,7 +1372,7 @@ async function runCatalogueCheck() {
   const btn      = document.getElementById('btn-catalogue-services');
   const nodeName = decodeURIComponent(window.location.hash.substring(1));
   if (btn) { btn.disabled = true; btn.textContent = '…'; }
-  showToast('info', 'Catalogue Services', `Starting for ${nodeName}…`);
+  showToast('info', 'Exchange Services', `Starting for ${nodeName}…`);
 
   // Fetch the endpoint report for the current node and find the
   // Resource Catalogue URL. Pass the raw endpoint value; the Java
@@ -1385,7 +1385,7 @@ async function runCatalogueCheck() {
   const nodePid = epData?.node_pid || null;
 
   if (!catalogueUrl) {
-    showToast('err', 'Catalogue Services',
+    showToast('err', 'Exchange Services',
       'No Resource Catalogue endpoint found in endpoint_report.json for this node.');
     resetBtn(btn);
     return;
@@ -1399,21 +1399,21 @@ async function runCatalogueCheck() {
       body: JSON.stringify({ node: nodeName, catalogueUrl, nodePid }),
     });
     const data = await res.json();
-    if (!res.ok) { showToast('err', 'Catalogue Services', data.error || 'HTTP ' + res.status); resetBtn(btn); return; }
+    if (!res.ok) { showToast('err', 'Exchange Services', data.error || 'HTTP ' + res.status); resetBtn(btn); return; }
     jobId = data.jobId;
   } catch (e) {
-    showToast('err', 'Catalogue Services', 'Request failed: ' + e.message);
+    showToast('err', 'Exchange Services', 'Request failed: ' + e.message);
     resetBtn(btn); return;
   }
 
-  showToast('info', 'Catalogue Services', 'Running… (job ' + jobId + ')');
+  showToast('info', 'Exchange Services', 'Running… (job ' + jobId + ')');
   const result = await pollJobStatus(jobId);
-  if (result.status === 'DONE') { showToast('ok', 'Catalogue Services', result.message || 'Completed'); init(); }
-  else                          { showToast('err', 'Catalogue Services', result.message || 'Check failed'); }
+  if (result.status === 'DONE') { showToast('ok', 'Exchange Services', result.message || 'Completed'); init(); }
+  else                          { showToast('err', 'Exchange Services', result.message || 'Check failed'); }
   resetBtn(btn);
 }
 
-// ── Exchange Service Visibility check (no API key needed) ────────────────────
+// ── Federated Search check (no API key needed) ────────────────────
 // Runs CheckOtherMetrics. Resolves everything it needs (PIDs, Front Office
 // endpoints, including the Sandbox's) server-side from
 // node_registry_summary.json and each node's endpoint_report.json — the
@@ -1424,7 +1424,7 @@ async function runOtherMetricsCheck() {
   const btn      = document.getElementById('btn-other-metrics');
   const nodeName = decodeURIComponent(window.location.hash.substring(1));
   if (btn) { btn.disabled = true; btn.textContent = '…'; }
-  showToast('info', 'Exchange Service Visibility', `Starting for ${nodeName}…`);
+  showToast('info', 'Federated Search', `Starting for ${nodeName}…`);
 
   let jobId;
   try {
@@ -1434,17 +1434,17 @@ async function runOtherMetricsCheck() {
       body: JSON.stringify({ node: nodeName }),
     });
     const data = await res.json();
-    if (!res.ok) { showToast('err', 'Exchange Service Visibility', data.error || 'HTTP ' + res.status); resetBtn(btn); return; }
+    if (!res.ok) { showToast('err', 'Federated Search', data.error || 'HTTP ' + res.status); resetBtn(btn); return; }
     jobId = data.jobId;
   } catch (e) {
-    showToast('err', 'Exchange Service Visibility', 'Request failed: ' + e.message);
+    showToast('err', 'Federated Search', 'Request failed: ' + e.message);
     resetBtn(btn); return;
   }
 
-  showToast('info', 'Exchange Service Visibility', 'Running… (job ' + jobId + ')');
+  showToast('info', 'Federated Search', 'Running… (job ' + jobId + ')');
   const result = await pollJobStatus(jobId);
-  if (result.status === 'DONE') { showToast('ok', 'Exchange Service Visibility', result.message || 'Completed'); init(); }
-  else                          { showToast('err', 'Exchange Service Visibility', result.message || 'Check failed'); }
+  if (result.status === 'DONE') { showToast('ok', 'Federated Search', result.message || 'Completed'); init(); }
+  else                          { showToast('err', 'Federated Search', result.message || 'Check failed'); }
   resetBtn(btn);
 }
 
