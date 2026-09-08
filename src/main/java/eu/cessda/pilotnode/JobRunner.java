@@ -17,7 +17,24 @@ public class JobRunner {
         this.executor = executor;
     }
 
-    public JobRecord start(String type, ThrowableRunnable runnable) {
+    private static void run(JobRecord jobRecord, ThrowableRunnable<?> callable) {
+        assert jobRecord.getStatus() == JobRecord.Status.QUEUED;
+
+        // Mark task as running
+        jobRecord.markRunning();
+
+        try {
+            callable.call(jobRecord);
+            if (jobRecord.getStatus() == JobRecord.Status.RUNNING) {
+                jobRecord.markDone("");
+            }
+        } catch (Exception e) {
+            log.warning(jobRecord.getType() + " failed: " + e.getMessage());
+            jobRecord.markError(e.getMessage());
+        }
+    }
+
+    public JobRecord start(String type, ThrowableRunnable<?> runnable) {
         // Create job record object
         JobRecord rec = new JobRecord(type);
 
@@ -28,30 +45,13 @@ public class JobRunner {
         return rec;
     }
 
-    private static void run(JobRecord record, ThrowableRunnable callable) {
-        assert record.getStatus() == JobRecord.Status.QUEUED;
-
-        // Mark task as running
-        record.markRunning();
-
-        try {
-            callable.call(record);
-            if (record.getStatus() == JobRecord.Status.RUNNING) {
-                record.markDone("");
-            }
-        } catch (Exception e) {
-            log.warning(record.getType() + " failed: " + e.getMessage());
-            record.markError(e.getMessage());
-        }
-    }
-
     @FunctionalInterface
-    public interface ThrowableRunnable {
+    public interface ThrowableRunnable<T extends Exception> {
         /**
          * Runs this operation, or throws an exception if unable to do so.
          *
-         * @throws Exception if unable to compute a result
+         * @throws T if unable to compute a result
          */
-        void call(JobRecord record) throws Exception;
+        void call(JobRecord jobRecord) throws T;
     }
 }

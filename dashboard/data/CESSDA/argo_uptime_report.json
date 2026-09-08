@@ -1,31 +1,13 @@
 {
-  "generated" : "2026-05-12T14:33:46.64195+02:00",
-  "api_source" : "https://api.devel.mon.argo.grnet.gr/api/v2/results/CORE/SERVICEGROUPS?start_time=2026-04-12T00:00:00Z&end_time=2026-05-12T23:59:59Z",
+  "generated" : "2026-09-08T14:32:04.1381882+02:00",
+  "api_source" : "https://status.devel.mon.argo.grnet.gr/public/tenants/CESSDA/dashboard",
+  "resolved_data_endpoint" : null,
+  "data_source" : "unavailable",
   "period" : {
-    "start" : "2026-04-12T00:00:00Z",
-    "end" : "2026-05-12T23:59:59Z"
+    "start" : "2026-09-02T00:00:00Z",
+    "end" : "2026-09-08T23:59:59Z"
   },
   "project" : "CESSDA",
-  "endpoints" : [ {
-    "name" : "Data Catalogue",
-    "type" : "SERVICEGROUPS",
-    "uptime_percentage" : 100.0,
-    "average_availability" : 100.0,
-    "average_reliability" : 100.0,
-    "days_monitored" : 30
-  }, {
-    "name" : "Metadata Validator",
-    "type" : "SERVICEGROUPS",
-    "uptime_percentage" : 100.0,
-    "average_availability" : 100.0,
-    "average_reliability" : 100.0,
-    "days_monitored" : 30
-  }, {
-    "name" : "Vocabulary Service",
-    "type" : "SERVICEGROUPS",
-    "uptime_percentage" : 100.0,
-    "average_availability" : 100.0,
-    "average_reliability" : 100.0,
-    "days_monitored" : 30
-  } ]
+  "endpoints" : [ ],
+  "warning" : "No uptime data source was available. public-dashboard: public results not found for tenant 'CESSDA | legacy-argo-api: https://api.devel.mon.argo.grnet.gr/api/v2/results/CORE/SERVICEGROUPS?start_time=2026-09-02T00:00Z&end_time=2026-09-08T23:59:59Z: Server returned 401"
 }

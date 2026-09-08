@@ -17,9 +17,14 @@
 
 package eu.cessda.pilotnode;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.http.HttpStatus;
+import org.springframework.http.ResponseEntity;
+import org.springframework.web.bind.annotation.*;
+
 import java.net.URI;
 import java.net.URISyntaxException;
-import java.net.http.HttpClient;
 import java.nio.file.Path;
 import java.time.LocalDate;
 import java.util.ArrayList;
@@ -27,21 +32,6 @@ import java.util.EnumSet;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
-import java.util.logging.Logger;
-
-import org.springframework.beans.factory.annotation.Value;
-import org.springframework.http.HttpStatus;
-import org.springframework.http.ResponseEntity;
-import org.springframework.web.bind.annotation.ExceptionHandler;
-import org.springframework.web.bind.annotation.GetMapping;
-import org.springframework.web.bind.annotation.PathVariable;
-import org.springframework.web.bind.annotation.PostMapping;
-import org.springframework.web.bind.annotation.RequestBody;
-import org.springframework.web.bind.annotation.RequestMapping;
-import org.springframework.web.bind.annotation.ResponseStatus;
-import org.springframework.web.bind.annotation.RestController;
-
-import com.fasterxml.jackson.databind.ObjectMapper;
 
 /**
  * REST controller that triggers the three data-collection checks
@@ -75,8 +65,6 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 @RequestMapping("/api/run")
 public class CheckRunnerController {
 
-    private static final Logger log = Logger.getLogger(CheckRunnerController.class.getName());
-
     // ── Constants ─────────────────────────────────────────────────────────────
 
     private static final String ERROR_KEY = "error";
@@ -90,7 +78,7 @@ public class CheckRunnerController {
     private final String argoApiKey;
     private final String nodeApiKey;
     private final JobRunner jobRunner;
-    private final HttpClient httpClient;
+    private final HttpUtils httpUtils;
     private final ObjectMapper mapper;
 
     // ── State ─────────────────────────────────────────────────────────────────
@@ -106,14 +94,14 @@ public class CheckRunnerController {
             @Value("${check.api-key-argo:}")  String argoApiKey,
             @Value("${check.api-key-node:}") String nodeApiKey,
             JobRunner jobRunner,
-            HttpClient httpClient,
+            HttpUtils httpUtils,
             ObjectMapper mapper) {
         this.dataDirPath = dataDirPath;
         this.nodeName    = nodeName;
         this.argoApiKey  = argoApiKey;
         this.nodeApiKey  = nodeApiKey;
         this.jobRunner = jobRunner;
-        this.httpClient = httpClient;
+        this.httpUtils = httpUtils;
         this.mapper = mapper;
     }
 
@@ -138,14 +126,14 @@ public class CheckRunnerController {
             throw new IllegalStateException("check.node-name is not configured");
         }
 
-        JobRecord rec = jobRunner.start("node-capabilities", record -> {
+        JobRecord rec = jobRunner.start("node-capabilities", jobRecord -> {
             CheckNodeCapabilities.run(
                     nodeApiKey,
                     EnumSet.of(CheckNodeCapabilities.OutputFormat.JSON),
                     dataDirPath,
-                    httpClient,
+                    httpUtils,
                     mapper);
-            record.markDone("node_registry_summary.json written");
+            jobRecord.markDone("node_registry_summary.json written");
         });
 
         jobs.put(rec.getJobId(), rec);
@@ -182,7 +170,7 @@ public class CheckRunnerController {
         }
 
         JobRecord rec = jobRunner.start("other-metrics", record -> {
-            CheckOtherMetrics.run(dataDirPath, targetNode, httpClient, mapper);
+            CheckOtherMetrics.run(dataDirPath, targetNode, httpUtils, mapper);
             record.markDone("front_office_metrics_report.json written for " + targetNode);
         });
 
@@ -220,12 +208,12 @@ public class CheckRunnerController {
 
         URI catalogueUrl = new URI(catalogueUrlString);
 
-        JobRecord rec = jobRunner.start("catalogue-services", record -> {
+        JobRecord rec = jobRunner.start("catalogue-services", jobRecord -> {
                 // Arg order: NODE_NAME, node_pid, api_base_url, [quantity]
                 CheckCatalogueServices.run(dataDirPath, targetNode,
                         nodePid.isBlank() ? null : nodePid,
-                        catalogueUrl, 10, httpClient, mapper);
-                record.markDone("catalogue_services_report.json written for " + targetNode);
+                        catalogueUrl, 10, httpUtils, mapper);
+            jobRecord.markDone("catalogue_services_report.json written for " + targetNode);
             }
         );
 
@@ -260,11 +248,11 @@ public class CheckRunnerController {
             throw new IllegalArgumentException("No ARGO API key provided in request body and check.api-key-argo is not configured");
         }
 
-        JobRecord rec = jobRunner.start("service-uptime", record -> {
+        JobRecord rec = jobRunner.start("service-uptime", jobRecord -> {
             LocalDate start = LocalDate.now().minusDays(6);
             LocalDate end = LocalDate.now();
-            CheckServiceUptime.run(targetNode, targetArgoApiKey, start, end, dataDirPath, httpClient, mapper);
-            record.markDone("argo_uptime_report.json written for " + targetNode);
+            CheckServiceUptime.run(targetNode, targetArgoApiKey, start, end, dataDirPath, httpUtils, mapper);
+            jobRecord.markDone("argo_uptime_report.json written for " + targetNode);
         });
 
         jobs.put(rec.getJobId(), rec);
@@ -287,7 +275,7 @@ public class CheckRunnerController {
     /** Returns the status of all recent jobs (most-recent last). */
     @GetMapping("/status")
     public List<JobRecord> getAllStatuses() {
-        List<JobRecord> list = new ArrayList<>(jobs.values());
+        var list = new ArrayList<>(jobs.values());
         list.sort(null);
         return list;
     }

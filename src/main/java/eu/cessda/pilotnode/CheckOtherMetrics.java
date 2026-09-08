@@ -17,12 +17,16 @@
 
 package eu.cessda.pilotnode;
 
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.node.ArrayNode;
+import com.fasterxml.jackson.databind.node.ObjectNode;
+
 import java.io.IOException;
 import java.io.InputStream;
 import java.net.URI;
 import java.net.URISyntaxException;
 import java.net.URLEncoder;
-import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
@@ -35,11 +39,6 @@ import java.util.List;
 import java.util.Map;
 import java.util.logging.Level;
 import java.util.logging.Logger;
-
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
-import com.fasterxml.jackson.databind.node.ArrayNode;
-import com.fasterxml.jackson.databind.node.ObjectNode;
 
 /**
  * Front Office Cross-Visibility Checker.
@@ -128,13 +127,17 @@ public class CheckOtherMetrics {
     private static final String YELLOW = "\033[1;33m";
     private static final String NC     = "\033[0m";
 
-    private CheckOtherMetrics() {
-        // Static utility class; not instantiated.
+    private final HttpUtils http;
+    private final ObjectMapper mapper;
+
+    public CheckOtherMetrics(HttpUtils http, ObjectMapper mapper) {
+        this.http = http;
+        this.mapper = mapper;
     }
 
     // ── Entry point ───────────────────────────────────────────────────────
 
-    public static void main(String[] args) throws IOException, InterruptedException {
+    public static void main(String[] args) throws IOException {
 
         if (args.length < 1) {
             System.err.println("Error: NODE_NAME is required");
@@ -151,7 +154,7 @@ public class CheckOtherMetrics {
             throw new IllegalArgumentException("nodeName must be a file name");
         }
 
-        run(Path.of(dashboardDir), nodeName, HttpUtils.httpClient(), new ObjectMapper());
+        run(Path.of(dashboardDir), nodeName, new HttpUtils(), new ObjectMapper());
     }
 
     /**
@@ -170,17 +173,16 @@ public class CheckOtherMetrics {
 
     // ── Main logic ────────────────────────────────────────────────────────
 
-    public static void run(
-            Path dashboardDir,
-            String nodeName,
-            HttpClient httpClient,
-            ObjectMapper mapper)
-            throws IOException, InterruptedException {
+    public static void run(Path dashboardDir, String nodeName, HttpUtils http, ObjectMapper mapper) throws IOException {
 
         Path outputDir = dashboardDir.resolve(nodeName);
         Files.createDirectories(outputDir);
         Path reportPath = outputDir.resolve("front_office_metrics_report.json");
 
+        new CheckOtherMetrics(http, mapper).runInternal(dashboardDir, nodeName, reportPath);
+    }
+
+    private void runInternal(Path dashboardDir, String nodeName, Path reportPath) throws IOException {
         log.log(Level.INFO, """
                         Front Office Cross-Visibility Report
                         Generated: {0}
@@ -189,7 +191,7 @@ public class CheckOtherMetrics {
         );
 
         // ── Load registry + resolve PIDs ────────────────────────────────
-        Map<String, String> registryPids = readRegistryPids(dashboardDir, mapper);
+        Map<String, String> registryPids = readRegistryPids(dashboardDir);
 
         String ownPid = registryPids.get(nodeName);
         if (ownPid == null || ownPid.isBlank()) {
@@ -227,10 +229,10 @@ public class CheckOtherMetrics {
             metric4 = MetricResult.notReported();
             printLine(4, "Own resources in own Front Office", metric4);
         } else {
-            metric4 = queryFrontOffice(httpClient, ownFrontOffice, ownPid);
+            metric4 = queryFrontOffice(ownFrontOffice, ownPid);
             printLine(4, "Own resources in own Front Office", metric4);
         }
-        ObjectNode metric4Entry = buildMetricEntry(mapper, 4,
+        ObjectNode metric4Entry = buildMetricEntry(4,
                 withNodeName("<NODE_NAME> resources appear in the Node's Front Office.", nodeName),
                 "own", nodeName, ownPid, metric4, null);
 
@@ -241,13 +243,13 @@ public class CheckOtherMetrics {
             log.warning("Metric 5 skipped: own Front Office endpoint not found");
         } else {
             for (var peer : peers) {
-                MetricResult r = queryFrontOffice(httpClient, ownFrontOffice, peer.getValue());
+                MetricResult r = queryFrontOffice(ownFrontOffice, peer.getValue());
                 printLine(5, "Peer '" + peer.getKey() + "' visible in own Front Office", r);
                 metric5AnyVisible |= r.visible();
                 metric5Peers.add(buildPeerEntry(mapper, peer.getKey(), peer.getValue(), r));
             }
         }
-        ObjectNode metric5Entry = buildMetricEntry(mapper, 5,
+        ObjectNode metric5Entry = buildMetricEntry(5,
                 withNodeName("An Exchange service from another networked Pilot Node is "
                         + "visible in the <NODE_NAME> Front Office.", nodeName),
                 "own", nodeName, null, null, metric5Peers);
@@ -256,9 +258,9 @@ public class CheckOtherMetrics {
         // ── Metric 6: own resources visible in Sandbox Front Office ────
         MetricResult metric6 = sandboxFrontOfficeUrl == null
                 ? MetricResult.notReported()
-                : queryFrontOffice(httpClient, sandboxFrontOfficeUrl, ownPid);
+                : queryFrontOffice(sandboxFrontOfficeUrl, ownPid);
         printLine(6, "Own resources in Sandbox Front Office", metric6);
-        ObjectNode metric6Entry = buildMetricEntry(mapper, 6,
+        ObjectNode metric6Entry = buildMetricEntry(6,
                 withNodeName("One or more <NODE_NAME> Exchange services are visible and accessible "
                         + "from the Sandbox Front Office.", nodeName),
                 "sandbox", SANDBOX_NODE_NAME, ownPid, metric6, null);
@@ -266,15 +268,15 @@ public class CheckOtherMetrics {
         // ── Metric 9: own Research Output visible in Sandbox Discovery Hub
         MetricResult metric9 = sandboxFrontOfficeUrl == null
                 ? MetricResult.notReported()
-                : queryResearchOutputVisibility(httpClient, sandboxFrontOfficeUrl, ownPid);
+                : queryResearchOutputVisibility(sandboxFrontOfficeUrl, ownPid);
         printLine(9, "Own Research Output in Sandbox Discovery Hub", metric9);
-        ObjectNode metric9Entry = buildMetricEntry(mapper, 9,
+        ObjectNode metric9Entry = buildMetricEntry(9,
                 withNodeName("At least one <NODE_NAME> Research Output is visible "
                         + "in the Sandbox Discovery Hub.", nodeName),
                 "sandbox", SANDBOX_NODE_NAME, ownPid, metric9, null);
 
         // ── Metric 10: alias of Metric 4 ────────────────────────────────
-        ObjectNode metric10Entry = buildMetricEntry(mapper, 10,
+        ObjectNode metric10Entry = buildMetricEntry(10,
                 withNodeName("An Exchange service onboarded in the <NODE_NAME> Service "
                         + "Catalogue is visible in the <NODE_NAME> Front Office.", nodeName),
                 "own", nodeName, ownPid, metric4, null);
@@ -293,13 +295,13 @@ public class CheckOtherMetrics {
             if (peerFrontOffice == null) {
                 r = MetricResult.notReported();
             } else {
-                r = queryFrontOffice(httpClient, peerFrontOffice, ownPid);
+                r = queryFrontOffice(peerFrontOffice, ownPid);
             }
             printLine(11, "Own resources visible in peer '" + peer.getKey() + "'", r);
             metric11AnyVisible |= r.visible();
             metric11Peers.add(buildPeerEntry(mapper, peer.getKey(), peerFrontOffice, r));
         }
-        ObjectNode metric11Entry = buildMetricEntry(mapper, 11,
+        ObjectNode metric11Entry = buildMetricEntry(11,
                 withNodeName("An Exchange service onboarded in the <NODE_NAME> Service "
                         + "Catalogue is visible in another networked Pilot "
                         + "Node's Front Office.", nodeName),
@@ -340,7 +342,7 @@ public class CheckOtherMetrics {
      * {@link CheckNodeCapabilities}) and returns a map of node name to
      * node PID, in registry order.
      */
-    private static Map<String, String> readRegistryPids(Path dashboardDir, ObjectMapper mapper)
+    private Map<String, String> readRegistryPids(Path dashboardDir)
             throws IOException {
         Path registryPath = dashboardDir.resolve("node_registry_summary.json");
         if (!Files.exists(registryPath)) {
@@ -440,8 +442,9 @@ public class CheckOtherMetrics {
      * Queries a Front Office for Exchange services filtered to
      * {@code targetPid} and returns whether any results were found.
      */
-    private static MetricResult queryFrontOffice(HttpClient httpClient, URI frontOfficeBase, String targetPid) {
-        return executeVisibilityQuery(httpClient, buildFrontOfficeQueryUrl(frontOfficeBase, targetPid));
+    private MetricResult queryFrontOffice(URI frontOfficeBase, String targetPid) {
+        var frontOfficeQueryUrl = buildFrontOfficeQueryUrl(frontOfficeBase, targetPid);
+        return executeVisibilityQuery(frontOfficeQueryUrl);
     }
 
     /**
@@ -452,11 +455,12 @@ public class CheckOtherMetrics {
      * ({@code total}/{@code results}) are identical, only the query URL
      * differs.
      */
-    private static MetricResult queryResearchOutputVisibility(HttpClient httpClient, URI discoveryHubBase, String targetPid) {
-        return executeVisibilityQuery(httpClient, buildResearchOutputQueryUrl(discoveryHubBase, targetPid));
+    private MetricResult queryResearchOutputVisibility(URI discoveryHubBase, String targetPid) {
+        var researchOutputQueryUrl = buildResearchOutputQueryUrl(discoveryHubBase, targetPid);
+        return executeVisibilityQuery(researchOutputQueryUrl);
     }
 
-    private static MetricResult executeVisibilityQuery(HttpClient httpClient, URI queryUrl) {
+    private MetricResult executeVisibilityQuery(URI queryUrl) {
         HttpRequest request = HttpRequest.newBuilder()
                 .uri(queryUrl)
                 .header("accept", "application/json")
@@ -464,29 +468,22 @@ public class CheckOtherMetrics {
                 .build();
 
         try {
-            HttpResponse<InputStream> response = httpClient.send(
-                    request, HttpResponse.BodyHandlers.ofInputStream());
-
-            int httpCode = response.statusCode();
-            if (httpCode != 200) {
-                try (InputStream ignored = response.body()) {
-                    // drain
-                }
-                return MetricResult.error(queryUrl, httpCode, "HTTP " + httpCode);
-            }
+            HttpResponse<InputStream> response = http.send(request, HttpResponse.BodyHandlers.ofInputStream());
 
             JsonNode root;
             try (InputStream body = response.body()) {
-                root = new ObjectMapper().readTree(body);
+                root = mapper.readTree(body);
             }
 
             long total = root.path("total").asLong(-1);
             long resultCount = total >= 0 ? total : root.path("results").size();
             boolean visible = resultCount > 0;
 
-            return new MetricResult(queryUrl, httpCode, resultCount, visible,
+            return new MetricResult(queryUrl, response.statusCode(), resultCount, visible,
                     visible ? "Available" : "Not visible", null);
 
+        } catch (HTTPException e) {
+            return MetricResult.error(queryUrl, e.getResponse().statusCode(), "HTTP " + e.getResponse().statusCode());
         } catch (IOException e) {
             return MetricResult.error(queryUrl, null, e.getMessage());
         } catch (InterruptedException e) {
@@ -497,8 +494,8 @@ public class CheckOtherMetrics {
 
     // ── JSON entry builders ──────────────────────────────────────────────
 
-    private static ObjectNode buildMetricEntry(
-            ObjectMapper mapper, int metric, String description,
+    private ObjectNode buildMetricEntry(
+            int metric, String description,
             String frontOfficeQueried, String frontOfficeOwner, String targetPid,
             MetricResult result, ArrayNode peerResults) {
 

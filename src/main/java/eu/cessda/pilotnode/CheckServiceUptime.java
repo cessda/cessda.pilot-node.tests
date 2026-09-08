@@ -17,37 +17,33 @@
 
 package eu.cessda.pilotnode;
 
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.PropertyNamingStrategies;
+import com.fasterxml.jackson.databind.annotation.JsonNaming;
+import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
+import org.jsoup.Jsoup;
+import org.jsoup.nodes.Document;
+import org.jsoup.nodes.Element;
+
 import java.io.IOException;
 import java.io.InputStream;
 import java.net.URI;
 import java.net.URLEncoder;
-import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.time.LocalDate;
-import java.time.OffsetDateTime;
-import java.time.format.DateTimeFormatter;
-import java.util.ArrayList;
-import java.util.LinkedHashSet;
-import java.util.List;
-import java.util.Optional;
-import java.util.Set;
+import java.time.*;
+import java.time.format.DateTimeParseException;
+import java.util.*;
 import java.util.logging.Level;
 import java.util.logging.Logger;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
-import org.jsoup.Jsoup;
-import org.jsoup.nodes.Document;
-import org.jsoup.nodes.Element;
-
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
-import com.fasterxml.jackson.databind.node.ArrayNode;
-import com.fasterxml.jackson.databind.node.ObjectNode;
+import static com.fasterxml.jackson.databind.SerializationFeature.WRITE_DATES_AS_TIMESTAMPS;
 
 /**
  * ARGO Uptime Monitor.
@@ -82,12 +78,23 @@ public class CheckServiceUptime {
     private static final String DEFAULT_PUBLIC_API_BASE = "https://api-status.devel.mon.argo.grnet.gr";
     private static final Pattern API_BASE_PATTERN =
             Pattern.compile("https://api-status[\\w.-]*\\.grnet\\.gr");
-    private static final Pattern DATE_PATTERN =
-            Pattern.compile("^\\d{4}-\\d{2}-\\d{2}$");
     private static final Pattern FIRST_COMPONENT_SPLIT_PATTERN =
             Pattern.compile("[\\s-]+");
 
     private static final Logger log = Logger.getLogger(CheckServiceUptime.class.getName());
+
+    // ── Instance variables ────────────────────────────────────────────────────
+
+    private final HttpUtils http;
+    private final ObjectMapper mapper;
+
+    // ── Constructor ───────────────────────────────────────────────────────────
+
+    public CheckServiceUptime(HttpUtils http, ObjectMapper mapper) {
+        this.http = http;
+        this.mapper = mapper;
+    }
+
     // ── Entry point ───────────────────────────────────────────────────────────
 
     @SuppressWarnings({"java:S106", "java:S8688"})
@@ -106,12 +113,10 @@ public class CheckServiceUptime {
             index = 2;
         }
 
-        LocalDate startDate = args.length > index
-                ? parseDate(args[index])
-                : LocalDate.now().minusDays(6);
-        LocalDate endDate = args.length > index + 1
-                ? parseDate(args[index + 1])
-                : LocalDate.now();
+        LocalDate startDate;
+        startDate = args.length > index ? LocalDate.parse(args[index]) : LocalDate.now().minusDays(6);
+        LocalDate endDate;
+        endDate = args.length > index + 1 ? LocalDate.parse(args[index + 1]) : LocalDate.now();
 
         if (!startDate.isBefore(endDate)) {
             System.err.println("Error: Start date (" + startDate + ") must be before end date (" + endDate + ")");
@@ -120,9 +125,11 @@ public class CheckServiceUptime {
 
         Path dashboardDir = Path.of(args.length > index + 2 ? args[index + 2] : "../dashboard/data");
 
-        HttpClient http = HttpUtils.httpClient();
+        HttpUtils http = new HttpUtils();
 
-        var objectMapper = new ObjectMapper();
+        ObjectMapper objectMapper = new ObjectMapper();
+        objectMapper.registerModule(new JavaTimeModule());
+        objectMapper.disable(WRITE_DATES_AS_TIMESTAMPS);
 
         run(nodeName, apiKey, startDate, endDate, dashboardDir, http, objectMapper);
     }
@@ -131,8 +138,38 @@ public class CheckServiceUptime {
     @SuppressWarnings("java:S8688")
     public static void run(String nodeName, String apiKey,
                            LocalDate startDate, LocalDate endDate, Path dashboardDir,
-                           HttpClient http, ObjectMapper mapper) throws IOException, InterruptedException {
+                           HttpUtils http, ObjectMapper mapper) throws IOException, InterruptedException {
+        var checkServiceUptime = new CheckServiceUptime(http, mapper);
+        checkServiceUptime.runInternal(nodeName, apiKey, startDate, endDate, dashboardDir);
+    }
 
+    private static String encodeUrlSegment(String value) {
+        return URLEncoder.encode(value, StandardCharsets.UTF_8).replace("+", "%20");
+    }
+
+    private static Set<String> tenantNameCandidates(String nodeName) {
+        LinkedHashSet<String> candidates = new LinkedHashSet<>();
+        String trimmed = nodeName == null ? "" : nodeName.trim();
+        if (!trimmed.isEmpty()) {
+            candidates.add(trimmed);
+            String firstComponent = firstNodeComponent(trimmed);
+            if (!firstComponent.isBlank()) {
+                candidates.add(firstComponent);
+            }
+        }
+        return candidates;
+    }
+
+    private static boolean looksLikeDate(CharSequence value) {
+        try {
+            LocalDate.parse(value);
+            return true;
+        } catch (DateTimeParseException e) {
+            return false;
+        }
+    }
+
+    private void runInternal(String nodeName, String apiKey, LocalDate startDate, LocalDate endDate, Path dashboardDir) throws IOException, InterruptedException {
         // ── Resolve output path ───────────────────────────────────────────────
 
         Path outputDir  = dashboardDir.resolve(nodeName);
@@ -140,9 +177,9 @@ public class CheckServiceUptime {
         Path reportFile = outputDir.resolve("argo_uptime_report.json");
         // ── Build API URL ─────────────────────────────────────────────────────
         // ── Build API URL ─────────────────────────────────────────────────────
-        String startTime = startDate + "T00:00:00Z";
-        String endTime   = endDate   + "T23:59:59Z";
-      
+        OffsetDateTime startTime = startDate.atTime(OffsetTime.of(LocalTime.MIDNIGHT, ZoneOffset.UTC));
+        OffsetDateTime endTime = endDate.atTime(OffsetTime.of(LocalTime.of(23, 59, 59), ZoneOffset.UTC));
+
         // ── Banner ────────────────────────────────────────────────────────────
 
         log.log(Level.INFO, """
@@ -154,29 +191,22 @@ public class CheckServiceUptime {
 
         UptimeReportData reportData = resolveReportData(
                 new UptimeQuery(nodeName, apiKey, startDate, endDate),
-                http,
-                mapper,
                 startTime,
                 endTime
         );
 
         // ── Write JSON report ─────────────────────────────────────────────────
 
-        ObjectNode report = mapper.createObjectNode();
-        report.put("generated", OffsetDateTime.now().format(DateTimeFormatter.ISO_OFFSET_DATE_TIME));
-        report.put("api_source", reportData.apiSource());
-        if (reportData.resolvedDataEndpoint() != null && !reportData.resolvedDataEndpoint().isBlank()) {
-            report.put("resolved_data_endpoint", reportData.resolvedDataEndpoint());
-        }
-        report.put("data_source", reportData.dataSource());
-        ObjectNode period = report.putObject("period");
-        period.put("start", startTime);
-        period.put("end",   endTime);
-        report.put("project", reportData.projectName());
-        report.set("endpoints", reportData.endpoints());
-        if (reportData.warningMessage() != null && !reportData.warningMessage().isBlank()) {
-            report.put("warning", reportData.warningMessage());
-        }
+        var report = new Report(
+                OffsetDateTime.now(),
+                reportData.apiSource(),
+                reportData.resolvedDataEndpoint(),
+                reportData.dataSource(),
+                new Period(startTime, endTime),
+                reportData.projectName(),
+                reportData.endpoints(),
+                reportData.warningMessage()
+        );
 
         mapper.writerWithDefaultPrettyPrinter().writeValue(reportFile.toFile(), report);
 
@@ -185,9 +215,9 @@ public class CheckServiceUptime {
         log.log(Level.INFO, "Report complete [{0}] - JSON: {1}", new Object[]{reportData.dataSource(), reportFile});
     }
 
-    private static UptimeReportData resolveReportData(UptimeQuery query, HttpClient http, ObjectMapper mapper,
-                                                      String startTime, String endTime)
-            throws IOException, InterruptedException {
+    private record UptimeQuery(String nodeName, String apiKey, LocalDate startDate, LocalDate endDate) { }
+
+    private UptimeReportData resolveReportData(UptimeQuery query, OffsetDateTime startTime, OffsetDateTime endTime) throws InterruptedException {
         List<UptimeReportSource> sources = List.of(
                 new DashboardSource(),
                 new LegacyApiSource()
@@ -196,277 +226,60 @@ public class CheckServiceUptime {
 
         for (UptimeReportSource source : sources) {
             try {
-                UptimeReportData data = source.fetch(query, http, mapper, startTime, endTime);
+                UptimeReportData data = source.fetch(query, startTime, endTime);
                 if (data.endpoints().isEmpty()) {
                     log.log(Level.WARNING, "{0} returned no endpoints for node {1}",
                             new Object[]{source.name(), query.nodeName()});
                 }
                 return data;
-            } catch (InterruptedException e) {
-                Thread.currentThread().interrupt();
-                throw e;
-            } catch (IOException | RuntimeException e) {
+            } catch (IOException e) {
                 String reason = source.name() + ": " + e.getMessage();
                 errors.add(reason);
                 log.log(Level.WARNING, reason);
             }
         }
 
-        ArrayNode emptyEndpoints = mapper.createArrayNode();
-        String dashboardUrl = String.format(PUBLIC_DASHBOARD_TEMPLATE, encodePathSegment(query.nodeName()));
+        List<UptimeReportSource.EndpointOut> emptyEndpoints = Collections.emptyList();
+        URI dashboardUrl = URI.create(String.format(PUBLIC_DASHBOARD_TEMPLATE, encodeUrlSegment(query.nodeName())));
         String warning = "No uptime data source was available. " + String.join(" | ", errors);
         return new UptimeReportData(query.nodeName(), dashboardUrl, null, "unavailable", emptyEndpoints, warning);
     }
 
-    private record UptimeQuery(String nodeName, String apiKey, LocalDate startDate, LocalDate endDate) { }
-
-    private record UptimeReportData(String projectName, String apiSource, String resolvedDataEndpoint, String dataSource,
-                                    ArrayNode endpoints, String warningMessage) { }
-
     private interface UptimeReportSource {
         String name();
 
-        UptimeReportData fetch(UptimeQuery query, HttpClient http, ObjectMapper mapper, String startTime, String endTime)
-                throws IOException, InterruptedException;
-    }
+        UptimeReportData fetch(UptimeQuery query, OffsetDateTime startTime, OffsetDateTime endTime) throws IOException, InterruptedException;
 
-    private static final class DashboardSource implements UptimeReportSource {
-        @Override
-        public String name() {
-            return "public-dashboard";
-        }
-
-        @Override
-        public UptimeReportData fetch(UptimeQuery query, HttpClient http, ObjectMapper mapper, String startTime, String endTime)
-                throws IOException, InterruptedException {
-            IOException lastClientError = null;
-            for (String tenantName : tenantNameCandidates(query.nodeName())) {
-                URI dashboardUri = URI.create(String.format(PUBLIC_DASHBOARD_TEMPLATE, encodePathSegment(tenantName)));
-                HttpTextResponse dashboardResponse = getBodyWithStatus(http, dashboardUri, "text/html");
-                if (dashboardResponse.statusCode() != 200) {
-                    if (is4xx(dashboardResponse.statusCode())) {
-                        lastClientError = new IOException("dashboard not found for tenant '" + tenantName
-                                + "' (HTTP " + dashboardResponse.statusCode() + ")");
-                        continue;
-                    }
-                    throw new IOException("request to " + dashboardUri + " failed with HTTP " + dashboardResponse.statusCode());
-                }
-
-                Document document = Jsoup.parse(dashboardResponse.body(), dashboardUri.toString());
-                Element scriptElement = document.selectFirst("script[src*=/assets/index-]");
-                if (scriptElement == null) {
-                    scriptElement = document.selectFirst("script[src]");
-                }
-                if (scriptElement == null) {
-                    throw new IOException("No script tag found in dashboard page");
-                }
-
-                String scriptUrl = scriptElement.absUrl("src");
-                if (scriptUrl == null || scriptUrl.isBlank()) {
-                    throw new IOException("Could not resolve dashboard script URL");
-                }
-
-                String bundleJs = getBody(http, URI.create(scriptUrl), "text/javascript");
-                String publicApiBase = extractPublicApiBase(bundleJs).orElse(DEFAULT_PUBLIC_API_BASE);
-
-                URI groupsUri = URI.create(publicApiBase + "/v1/public/tenants/"
-                        + encodePathSegment(tenantName)
-                        + "/results/groups?start_time=" + encodeQueryValue(startTime)
-                        + "&end_time=" + encodeQueryValue(endTime));
-                HttpTextResponse groupsResponse = getBodyWithStatus(http, groupsUri, "application/json");
-                if (groupsResponse.statusCode() != 200) {
-                    if (is4xx(groupsResponse.statusCode())) {
-                        lastClientError = new IOException("public results not found for tenant '" + tenantName
-                                + "' (HTTP " + groupsResponse.statusCode() + ")");
-                        continue;
-                    }
-                    throw new IOException("request to " + groupsUri + " failed with HTTP " + groupsResponse.statusCode());
-                }
-
-                JsonNode root = mapper.readTree(groupsResponse.body());
-                JsonNode groups = root.path("data");
-                if (!groups.isArray()) {
-                    throw new IOException("Unexpected groups payload shape");
-                }
-
-                ArrayNode endpointsOut = mapper.createArrayNode();
-                for (JsonNode group : groups) {
-                    String endpointName = group.path("name").asText("(unnamed)");
-                    JsonNode results = group.path("results");
-
-                    double uptimeTotal = 0.0;
-                    int uptimeDays = 0;
-                    double availabilityTotal = 0.0;
-                    int availabilityDays = 0;
-                    double reliabilityTotal = 0.0;
-                    int reliabilityDays = 0;
-
-                    if (results.isArray()) {
-                        for (JsonNode day : results) {
-                            Double uptime = parseMetric(day.path("uptime"));
-                            if (uptime != null) {
-                                uptimeTotal += normalizeUptime(uptime);
-                                uptimeDays++;
-                            }
-                            Double availability = parseMetric(day.path("availability"));
-                            if (availability != null) {
-                                availabilityTotal += availability;
-                                availabilityDays++;
-                            }
-                            Double reliability = parseMetric(day.path("reliability"));
-                            if (reliability != null) {
-                                reliabilityTotal += reliability;
-                                reliabilityDays++;
-                            }
-                        }
-                    }
-
-                    ObjectNode endpointOut = mapper.createObjectNode();
-                    endpointOut.put("name", endpointName);
-                    endpointOut.put("type", group.path("type").asText("SERVICEGROUP"));
-                    Double uptimePercentage = null;
-                    if (availabilityDays > 0) {
-                        double avgAvailability = round2(availabilityTotal / availabilityDays);
-                        endpointOut.put("average_availability", avgAvailability);
-                        uptimePercentage = avgAvailability;
-                    } else {
-                        endpointOut.putNull("average_availability");
-                    }
-                    if (uptimePercentage == null && uptimeDays > 0) {
-                        uptimePercentage = round2(uptimeTotal / uptimeDays);
-                    }
-                    if (uptimePercentage != null) {
-                        endpointOut.put("uptime_percentage", uptimePercentage);
-                    } else {
-                        endpointOut.putNull("uptime_percentage");
-                    }
-                    if (reliabilityDays > 0) {
-                        endpointOut.put("average_reliability", round2(reliabilityTotal / reliabilityDays));
-                    } else {
-                        endpointOut.putNull("average_reliability");
-                    }
-                    endpointOut.put("days_monitored", Math.max(uptimeDays, Math.max(availabilityDays, reliabilityDays)));
-                    endpointsOut.add(endpointOut);
-                }
-
-                String warning = endpointsOut.isEmpty()
-                        ? "Public dashboard was reachable but returned no service uptime values."
-                        : null;
-                return new UptimeReportData(
-                        query.nodeName(),
-                        dashboardUri.toString(),
-                        groupsUri.toString(),
-                        "dashboard-public-results",
-                        endpointsOut,
-                        warning
-                );
-            }
-
-            if (lastClientError != null) {
-                throw lastClientError;
-            }
-            throw new IOException("No tenant name candidate could be resolved for public dashboard");
+        @JsonNaming(PropertyNamingStrategies.SnakeCaseStrategy.class)
+        record EndpointOut(
+                String name,
+                String type,
+                Double averageAvailability,
+                Double uptimePercentage,
+                Double averageReliability,
+                int daysMonitored
+        ) {
         }
     }
 
-    private static final class LegacyApiSource implements UptimeReportSource {
-        @Override
-        public String name() {
-            return "legacy-argo-api";
-        }
-
-        @Override
-        public UptimeReportData fetch(UptimeQuery query, HttpClient http, ObjectMapper mapper, String startTime, String endTime)
-                throws IOException, InterruptedException {
-            if (query.apiKey() == null || query.apiKey().isBlank()) {
-                throw new IOException("legacy API key is missing");
-            }
-
-            URI apiUrl = URI.create(API_BASE + "?start_time=" + startTime + "&end_time=" + endTime);
-            HttpRequest request = HttpRequest.newBuilder()
-                    .uri(apiUrl)
-                    .header("Accept", "application/json")
-                    .header("x-api-key", query.apiKey())
-                    .GET()
-                    .build();
-            HttpResponse<InputStream> response = http.send(request, HttpResponse.BodyHandlers.ofInputStream());
-            if (response.statusCode() != 200) {
-                throw new IOException("failed to fetch uptime data (HTTP " + response.statusCode() + ")");
-            }
-
-            JsonNode root;
-            try (InputStream body = response.body()) {
-                root = mapper.readTree(body);
-            }
-            JsonNode firstResult = root.path("results").path(0);
-            if (firstResult.isMissingNode()) {
-                throw new IOException("legacy API returned no results");
-            }
-
-            String projectName = firstResult.path("name").asText(query.nodeName());
-            ArrayNode endpointsOut = mapper.createArrayNode();
-            JsonNode endpoints = firstResult.path("endpoints");
-            if (endpoints.isArray()) {
-                for (JsonNode endpoint : endpoints) {
-                    String endpointName = endpoint.path("name").asText("(unnamed)");
-                    String endpointType = endpoint.path("type").asText("SERVICEGROUP");
-
-                    double totalUptime = 0;
-                    double totalAvailability = 0;
-                    double totalReliability = 0;
-                    int totalDays = 0;
-
-                    JsonNode results = endpoint.path("results");
-                    if (results.isArray()) {
-                        for (JsonNode day : results) {
-                            totalUptime += day.path("uptime").asDouble(0);
-                            totalAvailability += day.path("availability").asDouble(0);
-                            totalReliability += day.path("reliability").asDouble(0);
-                            totalDays++;
-                        }
-                    }
-
-                    ObjectNode endpointOut = mapper.createObjectNode();
-                    endpointOut.put("name", endpointName);
-                    endpointOut.put("type", endpointType);
-                    endpointOut.put("uptime_percentage", totalDays > 0 ? round2((totalUptime / totalDays) * 100) : 0);
-                    endpointOut.put("average_availability", totalDays > 0 ? round2(totalAvailability / totalDays) : 0);
-                    endpointOut.put("average_reliability", totalDays > 0 ? round2(totalReliability / totalDays) : 0);
-                    endpointOut.put("days_monitored", totalDays);
-                    endpointsOut.add(endpointOut);
-                }
-            }
-
-            return new UptimeReportData(
-                    projectName,
-                    apiUrl.toString(),
-                    apiUrl.toString(),
-                    "legacy-api",
-                    endpointsOut,
-                    null
-            );
-        }
+    @JsonNaming(PropertyNamingStrategies.SnakeCaseStrategy.class)
+    private record Report(
+            OffsetDateTime generated,
+            URI apiSource,
+            URI resolvedDataEndpoint,
+            String dataSource,
+            Period period,
+            String project,
+            List<UptimeReportSource.EndpointOut> endpoints,
+            String warning
+    ) {
     }
 
-    private static String getBody(HttpClient http, URI uri, String acceptHeader) throws IOException, InterruptedException {
-        HttpTextResponse response = getBodyWithStatus(http, uri, acceptHeader);
-        if (response.statusCode() != 200) {
-            throw new IOException("request to " + uri + " failed with HTTP " + response.statusCode());
-        }
-        return response.body();
-    }
-
-    private record HttpTextResponse(int statusCode, String body) { }
-
-    private static HttpTextResponse getBodyWithStatus(HttpClient http, URI uri, String acceptHeader)
-            throws IOException, InterruptedException {
-        HttpRequest request = HttpRequest.newBuilder()
-                .uri(uri)
-                .header("Accept", acceptHeader)
-                .GET()
-                .build();
-        HttpResponse<String> response = http.send(request, HttpResponse.BodyHandlers.ofString());
-        return new HttpTextResponse(response.statusCode(), response.body());
+    @JsonNaming(PropertyNamingStrategies.SnakeCaseStrategy.class)
+    private record Period(
+            OffsetDateTime start,
+            OffsetDateTime end
+    ) {
     }
 
     private static Optional<String> extractPublicApiBase(String scriptText) {
@@ -502,29 +315,186 @@ public class CheckServiceUptime {
         return uptime <= 1.0 ? uptime * 100.0 : uptime;
     }
 
-    private static String encodePathSegment(String value) {
-        return URLEncoder.encode(value, StandardCharsets.UTF_8).replace("+", "%20");
-    }
-
-    private static String encodeQueryValue(String value) {
-        return URLEncoder.encode(value, StandardCharsets.UTF_8).replace("+", "%20");
+    private record UptimeReportData(String projectName, URI apiSource, URI resolvedDataEndpoint, String dataSource,
+                                    List<UptimeReportSource.EndpointOut> endpoints, String warningMessage) {
     }
 
     private static boolean is4xx(int statusCode) {
         return statusCode >= 400 && statusCode < 500;
     }
 
-    private static List<String> tenantNameCandidates(String nodeName) {
-        Set<String> candidates = new LinkedHashSet<>();
-        String trimmed = nodeName == null ? "" : nodeName.trim();
-        if (!trimmed.isEmpty()) {
-            candidates.add(trimmed);
-            String firstComponent = firstNodeComponent(trimmed);
-            if (!firstComponent.isBlank()) {
-                candidates.add(firstComponent);
-            }
+    private final class DashboardSource implements UptimeReportSource {
+
+        private static final String NAME = "name";
+        private static final String TYPE = "type";
+
+        @Override
+        public String name() {
+            return "public-dashboard";
         }
-        return List.copyOf(candidates);
+
+        private static URI getScriptUrl(InputStream dashboardResponse, String dashboardUri) throws IOException {
+            Document document = Jsoup.parse(dashboardResponse, null, dashboardUri);
+            Element scriptElement = document.selectFirst("script[src*=/assets/index-]");
+            if (scriptElement == null) {
+                scriptElement = document.selectFirst("script[src]");
+            }
+            if (scriptElement == null) {
+                throw new IOException("No script tag found in dashboard page");
+            }
+
+            String scriptUrl = scriptElement.absUrl("src");
+            if (scriptUrl.isBlank()) {
+                throw new IOException("Could not resolve dashboard script URL");
+            }
+
+            return URI.create(scriptUrl);
+        }
+
+        @Override
+        public UptimeReportData fetch(UptimeQuery query, OffsetDateTime startTime, OffsetDateTime endTime)
+                throws IOException, InterruptedException {
+            IOException lastClientError = null;
+            Set<String> candidates = tenantNameCandidates(query.nodeName());
+            for (String tenantName : candidates) {
+                URI dashboardUri = URI.create(String.format(PUBLIC_DASHBOARD_TEMPLATE, encodeUrlSegment(tenantName)));
+
+                URI scriptUrl;
+                try {
+                    HttpResponse<InputStream> dashboardResponse = getBodyWithStatus(dashboardUri, "text/html", HttpResponse.BodyHandlers.ofInputStream());
+                    scriptUrl = getScriptUrl(dashboardResponse.body(), dashboardUri.toString());
+                } catch (HTTPException httpException) {
+                    if (is4xx(httpException.getResponse().statusCode())) {
+                        lastClientError = new IOException("dashboard not found for tenant '" + tenantName + "'", httpException);
+                        continue;
+                    } else {
+                        throw httpException;
+                    }
+                }
+
+                HttpResponse<String> bundleJsResponse = getBodyWithStatus(scriptUrl, "text/javascript", HttpResponse.BodyHandlers.ofString());
+                String bundleJs = bundleJsResponse.body();
+                String publicApiBase = extractPublicApiBase(bundleJs).orElse(DEFAULT_PUBLIC_API_BASE);
+
+                URI groupsUri = URI.create(publicApiBase + "/v1/public/tenants/"
+                        + encodeUrlSegment(tenantName)
+                        + "/results/groups?start_time=" + startTime
+                        + "&end_time=" + endTime);
+
+                HttpResponse<InputStream> groupsResponse;
+                try {
+                    groupsResponse = getBodyWithStatus(groupsUri, "application/json", HttpResponse.BodyHandlers.ofInputStream());
+                } catch (HTTPException httpException) {
+                    if (is4xx(httpException.getResponse().statusCode())) {
+                        lastClientError = new IOException("public results not found for tenant '" + tenantName + "'", httpException);
+                        continue;
+                    }
+                    throw httpException;
+                }
+
+                JsonNode root = mapper.readTree(groupsResponse.body());
+                JsonNode groups = root.path("data");
+                if (!groups.isArray()) {
+                    throw new IOException("Unexpected groups payload shape");
+                }
+
+                ArrayList<EndpointOut> endpointsOut = new ArrayList<>();
+                for (JsonNode group : groups) {
+                    EndpointOut endpointOut = parseGroup(group);
+                    endpointsOut.add(endpointOut);
+                }
+
+                String warning = endpointsOut.isEmpty()
+                        ? "Public dashboard was reachable but returned no service uptime values."
+                        : null;
+                return new UptimeReportData(
+                        query.nodeName(),
+                        dashboardUri,
+                        groupsUri,
+                        "dashboard-public-results",
+                        endpointsOut,
+                        warning
+                );
+            }
+
+            if (lastClientError != null) {
+                throw lastClientError;
+            }
+            throw new IOException("No tenant name candidate could be resolved for public dashboard");
+        }
+
+        private EndpointOut parseGroup(JsonNode group) {
+            String endpointName = group.path(NAME).asText("(unnamed)");
+            String type = group.path(TYPE).asText("SERVICEGROUP");
+
+            JsonNode results = group.path("results");
+
+            double uptimeTotal = 0.0;
+            int uptimeDays = 0;
+            double availabilityTotal = 0.0;
+            int availabilityDays = 0;
+            double reliabilityTotal = 0.0;
+            int reliabilityDays = 0;
+
+            if (results.isArray()) {
+                for (JsonNode day : results) {
+                    Double uptime = parseMetric(day.path("uptime"));
+                    if (uptime != null) {
+                        uptimeTotal += normalizeUptime(uptime);
+                        uptimeDays++;
+                    }
+                    Double availability = parseMetric(day.path("availability"));
+                    if (availability != null) {
+                        availabilityTotal += availability;
+                        availabilityDays++;
+                    }
+                    Double reliability = parseMetric(day.path("reliability"));
+                    if (reliability != null) {
+                        reliabilityTotal += reliability;
+                        reliabilityDays++;
+                    }
+                }
+            }
+
+
+            Double avgAvailability = null;
+            Double uptimePercentage = null;
+            Double averageReliability = null;
+
+            if (availabilityDays > 0) {
+                avgAvailability = round2(availabilityTotal / availabilityDays);
+                uptimePercentage = avgAvailability;
+            }
+
+            if (uptimePercentage == null && uptimeDays > 0) {
+                uptimePercentage = round2(uptimeTotal / uptimeDays);
+            }
+
+            if (reliabilityDays > 0) {
+                averageReliability = round2(reliabilityTotal / reliabilityDays);
+            }
+
+            int daysMonitored = Math.max(uptimeDays, Math.max(availabilityDays, reliabilityDays));
+
+            return new EndpointOut(
+                    endpointName,
+                    type,
+                    avgAvailability,
+                    uptimePercentage,
+                    averageReliability,
+                    daysMonitored
+            );
+        }
+
+        private <T> HttpResponse<T> getBodyWithStatus(URI uri, String acceptHeader, HttpResponse.BodyHandler<T> bodyHandler)
+                throws IOException, InterruptedException {
+            HttpRequest request = HttpRequest.newBuilder()
+                    .uri(uri)
+                    .header("Accept", acceptHeader)
+                    .GET()
+                    .build();
+            return http.send(request, bodyHandler);
+        }
     }
 
     private static String firstNodeComponent(String nodeName) {
@@ -534,12 +504,86 @@ public class CheckServiceUptime {
 
     // ── Utility ───────────────────────────────────────────────────────────────
 
-    private static LocalDate parseDate(String s) {
-        return LocalDate.parse(s, DateTimeFormatter.ISO_LOCAL_DATE);
-    }
+    private final class LegacyApiSource implements UptimeReportSource {
+        @Override
+        public String name() {
+            return "legacy-argo-api";
+        }
 
-    private static boolean looksLikeDate(String value) {
-        return DATE_PATTERN.matcher(value).matches();
+        @Override
+        public UptimeReportData fetch(UptimeQuery query, OffsetDateTime startTime, OffsetDateTime endTime)
+                throws IOException, InterruptedException {
+            if (query.apiKey() == null || query.apiKey().isBlank()) {
+                throw new IOException("legacy API key is missing");
+            }
+
+            URI apiUrl = URI.create(API_BASE + "?start_time=" + startTime + "&end_time=" + endTime);
+            HttpRequest request = HttpRequest.newBuilder()
+                    .uri(apiUrl)
+                    .header("Accept", "application/json")
+                    .header("x-api-key", query.apiKey())
+                    .GET()
+                    .build();
+            HttpResponse<InputStream> response = http.send(request, HttpResponse.BodyHandlers.ofInputStream());
+
+            JsonNode root;
+            try (InputStream body = response.body()) {
+                root = mapper.readTree(body);
+            }
+            JsonNode firstResult = root.path("results").path(0);
+            if (firstResult.isMissingNode()) {
+                throw new IOException("legacy API returned no results");
+            }
+
+            String projectName = firstResult.path("name").asText(query.nodeName());
+            ArrayList<EndpointOut> endpointsOut = new ArrayList<>();
+            JsonNode endpoints = firstResult.path("endpoints");
+            if (endpoints.isArray()) {
+                for (JsonNode endpoint : endpoints) {
+                    String endpointName = endpoint.path("name").asText("(unnamed)");
+                    String endpointType = endpoint.path("type").asText("SERVICEGROUP");
+
+                    double totalUptime = 0;
+                    double totalAvailability = 0;
+                    double totalReliability = 0;
+                    int totalDays = 0;
+
+                    JsonNode results = endpoint.path("results");
+                    if (results.isArray()) {
+                        for (JsonNode day : results) {
+                            totalUptime += day.path("uptime").asDouble(0);
+                            totalAvailability += day.path("availability").asDouble(0);
+                            totalReliability += day.path("reliability").asDouble(0);
+                            totalDays++;
+                        }
+                    }
+
+                    double uptimePercentage = totalDays > 0 ? round2((totalUptime / totalDays) * 100) : 0;
+                    double averageAvailability = totalDays > 0 ? round2(totalAvailability / totalDays) : 0;
+                    double averageReliability = totalDays > 0 ? round2(totalReliability / totalDays) : 0;
+
+                    EndpointOut endpointOut = new EndpointOut(
+                            endpointName,
+                            endpointType,
+                            averageAvailability,
+                            uptimePercentage,
+                            averageReliability,
+                            totalDays
+                    );
+
+                    endpointsOut.add(endpointOut);
+                }
+            }
+
+            return new UptimeReportData(
+                    projectName,
+                    apiUrl,
+                    apiUrl,
+                    "legacy-api",
+                    endpointsOut,
+                    null
+            );
+        }
     }
 
     private static double round2(double v) {

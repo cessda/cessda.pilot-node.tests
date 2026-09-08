@@ -17,12 +17,16 @@
 
 package eu.cessda.pilotnode;
 
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.node.ArrayNode;
+import com.fasterxml.jackson.databind.node.ObjectNode;
+
 import java.io.IOException;
 import java.io.InputStream;
 import java.net.URI;
 import java.net.URISyntaxException;
 import java.net.URLEncoder;
-import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
@@ -32,11 +36,6 @@ import java.time.Duration;
 import java.time.Instant;
 import java.util.logging.Level;
 import java.util.logging.Logger;
-
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
-import com.fasterxml.jackson.databind.node.ArrayNode;
-import com.fasterxml.jackson.databind.node.ObjectNode;
 
 /**
  * Service Catalogue Resource Checker
@@ -111,14 +110,14 @@ public class CheckCatalogueServices {
         String nodePid      = args.length >= 5 && !args[4].isBlank()
                 ? args[4] : null;
 
-        HttpClient httpClient = HttpUtils.httpClient();
+        HttpUtils httpUtils = new HttpUtils();
 
         ObjectMapper objectMapper = new ObjectMapper();
 
         // Validate that nodeName contains no directory elements
         var nodeNamePath = Path.of(nodeName);
         if (nodeNamePath.normalize().getNameCount() == 1 && !nodeNamePath.isAbsolute()) {
-            run(Path.of(dashboardDir), nodeName, nodePid, apiBaseUrl, quantity, httpClient, objectMapper);
+            run(Path.of(dashboardDir), nodeName, nodePid, apiBaseUrl, quantity, httpUtils, objectMapper);
         } else {
             throw new IllegalArgumentException(
                     "nodeName must be a file name");
@@ -151,7 +150,7 @@ public class CheckCatalogueServices {
             String nodePid,
             URI apiBaseUrl,
             int quantity,
-            HttpClient httpClient,
+            HttpUtils httpClient,
             ObjectMapper mapper)
             throws IOException, URISyntaxException, InterruptedException {
 
@@ -384,14 +383,14 @@ public class CheckCatalogueServices {
     /**
      * Issues an HTTP HEAD request to the given URL and returns the HTTP status code
      */
-    private static InputStream fetchData(HttpClient httpClient, URI url) throws IOException, InterruptedException {
+    private static InputStream fetchData(HttpUtils httpUtils, URI url) throws IOException, InterruptedException {
         HttpRequest apiRequest = HttpRequest.newBuilder()
                 .uri(url)
                 .header("accept", "application/json")
                 .GET()
                 .build();
 
-        HttpResponse<InputStream> apiResponse = httpClient.send(
+        HttpResponse<InputStream> apiResponse = httpUtils.send(
                 apiRequest,
                 HttpResponse.BodyHandlers.ofInputStream());
 
@@ -434,7 +433,7 @@ public class CheckCatalogueServices {
      * {@link IOException} via the client's request timeout, which the
      * caller treats as "Not available".</p>
      */
-    private static WebpageCheckResult checkWebpage(HttpClient client, URI url)
+    private static WebpageCheckResult checkWebpage(HttpUtils client, URI url)
             throws IOException, InterruptedException {
         HttpRequest req = HttpRequest.newBuilder()
                 .uri(url)

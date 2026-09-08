@@ -27,7 +27,6 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.net.URI;
 import java.net.URISyntaxException;
-import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.nio.file.Files;
@@ -70,21 +69,21 @@ public class CheckNodeCapabilities {
 
     private static final Logger log = Logger.getLogger(CheckNodeCapabilities.class.getName());
 
-    private final EnumSet<OutputFormat> format;
-
     // ── Fields ────────────────────────────────────────────────────────────────
 
-    private CheckNodeCapabilities(EnumSet<OutputFormat> format, Path dashboardDir, HttpClient http, ObjectMapper mapper) {
+    private final Path dashboardDir;
+    private final HttpUtils http;
+    private final ObjectMapper mapper;
+    private final EnumSet<OutputFormat> format;
+
+    // ── Constructor ───────────────────────────────────────────────────────────
+
+    private CheckNodeCapabilities(EnumSet<OutputFormat> format, Path dashboardDir, HttpUtils http, ObjectMapper mapper) {
         this.dashboardDir = dashboardDir;
         this.http = http;
         this.mapper = mapper;
         this.format = format;
     }
-    private final Path dashboardDir;
-    private final HttpClient http;
-    private final ObjectMapper mapper;
-
-    // ── Constructor ───────────────────────────────────────────────────────────
 
     // ── Entry point ───────────────────────────────────────────────────────────
     @SuppressWarnings("java:S106")
@@ -118,13 +117,13 @@ public class CheckNodeCapabilities {
         ObjectMapper mapper = new ObjectMapper();
 
         // Instance an HTTP client
-        HttpClient http = HttpUtils.httpClient();
+        HttpUtils http = new HttpUtils();
 
         run(apiKey, format, dashboardDir, http, mapper);
     }
 
     @SuppressWarnings("java:S6201")
-    public static void run(String apiKey, Set<OutputFormat> format, Path dashboardDir, HttpClient http, ObjectMapper mapper) throws IOException {
+    public static void run(String apiKey, Set<OutputFormat> format, Path dashboardDir, HttpUtils http, ObjectMapper mapper) throws IOException {
 
         printBanner();
 
