@@ -63,7 +63,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
  *   dashboard.data-dir   = ../dashboard/data   # already used by DashboardDataController
  *   check.node-name      = CESSDA              # NODE_NAME arg for all three checks
  *   check.api-key-node   =                     # API key for CheckNodeCapabilities
- *   check.api-key-argo   =                     # fallback ARGO key if not supplied in request
+ *   check.api-key-argo   =                     # optional legacy-ARGO-API fallback key for CheckServiceUptime
  * </pre>
  *
  * <p>Jobs run asynchronously on a dedicated single-thread executor so that
@@ -237,31 +237,31 @@ public class CheckRunnerController {
     /**
      * Triggers {@link CheckServiceUptime}.
      *
-     * <p>Accepts a JSON body: {@code { "node": "...", "apiKey": "..." }}.
-     * {@code node} is the target node name (overrides {@code check.node-name});
-     * {@code apiKey} is the ARGO API key entered by the user in the dashboard
-     * modal — it is used only for this invocation and never persisted.
-     * Falls back to {@code check.api-key-argo} from config if not supplied.</p>
+     * <p>Accepts an optional JSON body: {@code { "node": "...", "apiKey": "..." }}.
+     * {@code node} is the target node name (overrides {@code check.node-name}).
+     * No API key is required — the default capability-metrics API and the
+     * dashboard scrape are both public. {@code apiKey} is optional and only
+     * used if both of those sources are unavailable and this falls back to
+     * the legacy ARGO API; it falls back to {@code check.api-key-argo} from
+     * config if not supplied, and may be left blank entirely.</p>
      *
-     * @param body JSON body containing {@code node} and {@code apiKey}
+     * @param body optional JSON body containing {@code node} and/or {@code apiKey}
      */
     @PostMapping("/service-uptime")
     @ResponseStatus(HttpStatus.ACCEPTED)
-    public JobRecord runServiceUptime(@RequestBody Map<String, String> body) {
+    public JobRecord runServiceUptime(@RequestBody(required = false) Map<String, String> body) {
 
-        String targetNode   = body.getOrDefault("node", nodeName).strip();
-        // User-supplied key takes precedence; config value is the fallback
-        String targetArgoApiKey = body.getOrDefault("apiKey", argoApiKey).strip();
+        String targetNode = (body != null ? body.getOrDefault("node", nodeName) : nodeName).strip();
+        // Optional: only used by the legacy ARGO API fallback. User-supplied
+        // key takes precedence; config value is the fallback; blank is fine.
+        String targetArgoApiKey = (body != null ? body.getOrDefault("apiKey", argoApiKey) : argoApiKey).strip();
 
         if (targetNode.isBlank()) {
             throw new IllegalArgumentException("No node specified in request body and check.node-name is not configured");
         }
-        if (targetArgoApiKey.isBlank()) {
-            throw new IllegalArgumentException("No ARGO API key provided in request body and check.api-key-argo is not configured");
-        }
 
         JobRecord rec = jobRunner.start("service-uptime", record -> {
-            LocalDate start = LocalDate.now().minusDays(6);
+            LocalDate start = LocalDate.now().minusMonths(1);
             LocalDate end = LocalDate.now();
             CheckServiceUptime.run(targetNode, targetArgoApiKey, start, end, dataDirPath, httpClient, mapper);
             record.markDone("argo_uptime_report.json written for " + targetNode);
