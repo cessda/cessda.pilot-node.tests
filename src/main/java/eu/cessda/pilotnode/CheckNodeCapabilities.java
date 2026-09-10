@@ -445,9 +445,16 @@ public class CheckNodeCapabilities {
 
     private CapabilityStatus probeEndpoint(URI url) {
         try {
+            // Unlike the registry and per-node capabilities requests above,
+            // this HEAD probe was sending no User-Agent/Accept at all, so it
+            // got the JDK's default "Java-http-client/..." UA — the same
+            // thing that made CheckCatalogueServices misreport healthy
+            // services as unavailable when a CDN/WAF fast-rejects it.
             HttpRequest req = HttpRequest.newBuilder()
                     .uri(url)
                     .method("HEAD", HttpRequest.BodyPublishers.noBody())
+                    .header("User-Agent", BROWSER_USER_AGENT)
+                    .header("Accept", "application/json")
                     .timeout(CAPABILITY_CHECK_TIMEOUT)
                     .build();
             HttpResponse<Void> resp = http.send(req, HttpResponse.BodyHandlers.discarding());
