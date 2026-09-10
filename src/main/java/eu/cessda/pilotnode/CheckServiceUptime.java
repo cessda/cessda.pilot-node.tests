@@ -53,8 +53,11 @@ import com.fasterxml.jackson.databind.node.ObjectNode;
  * ARGO Uptime Monitor.
  *
  * <p>Builds {@code argo_uptime_report.json} for a node using a pluggable source strategy.
- * The current default is scraping the public ARGO status dashboard and extracting data
- * from its referenced JS/API payloads. A legacy API source is kept as fallback.
+ * The current default calls the public ARGO capability-monitoring metrics API directly
+ * ({@code GET /v1/public/nodes/{NODE}/capabilities/monitoring/metrics}) for monthly-granularity
+ * availability/reliability/uptime figures. If that API is unavailable, this falls back to
+ * scraping the public ARGO status dashboard and extracting data from its referenced JS/API
+ * payloads, and finally to a legacy API source (requires an API key).
  *
  * <p>Usage:
  * <pre>
@@ -64,7 +67,7 @@ import com.fasterxml.jackson.databind.node.ObjectNode;
  * <ul>
  *   <li>{@code NODE_NAME}     – node name used for the output subdirectory (required)</li>
  *   <li>{@code API_KEY}       – API key for legacy ARGO API fallback (optional)</li>
- *   <li>{@code START_DATE}    – {@code YYYY-MM-DD} (optional, defaults to 6 days ago)</li>
+ *   <li>{@code START_DATE}    – {@code YYYY-MM-DD} (optional, defaults to 1 month ago)</li>
  *   <li>{@code END_DATE}      – {@code YYYY-MM-DD} (optional, defaults to today)</li>
  *   <li>{@code dashboard_dir} – path to dashboard data directory
  *                               (optional, defaults to {@code ../dashboard/data})</li>
@@ -80,6 +83,9 @@ public class CheckServiceUptime {
     private static final String PUBLIC_DASHBOARD_TEMPLATE =
             "https://status.devel.mon.argo.grnet.gr/public/tenants/%s/dashboard";
     private static final String DEFAULT_PUBLIC_API_BASE = "https://api-status.devel.mon.argo.grnet.gr";
+    private static final String CAPABILITY_METRICS_PATH_TEMPLATE =
+            "/v1/public/nodes/%s/capabilities/monitoring/metrics";
+    private static final String GRANULARITY = "monthly";
     private static final Pattern API_BASE_PATTERN =
             Pattern.compile("https://api-status[\\w.-]*\\.grnet\\.gr");
     private static final Pattern DATE_PATTERN =
@@ -108,7 +114,7 @@ public class CheckServiceUptime {
 
         LocalDate startDate = args.length > index
                 ? parseDate(args[index])
-                : LocalDate.now().minusDays(6);
+                : LocalDate.now().minusMonths(1);
         LocalDate endDate = args.length > index + 1
                 ? parseDate(args[index + 1])
                 : LocalDate.now();
@@ -189,6 +195,7 @@ public class CheckServiceUptime {
                                                       String startTime, String endTime)
             throws IOException, InterruptedException {
         List<UptimeReportSource> sources = List.of(
+                new CapabilityApiSource(),
                 new DashboardSource(),
                 new LegacyApiSource()
         );
@@ -228,6 +235,75 @@ public class CheckServiceUptime {
 
         UptimeReportData fetch(UptimeQuery query, HttpClient http, ObjectMapper mapper, String startTime, String endTime)
                 throws IOException, InterruptedException;
+    }
+
+    /**
+     * Calls the public ARGO capability-monitoring metrics API directly:
+     * {@code GET /v1/public/nodes/{NODE}/capabilities/monitoring/metrics
+     * ?start_date=YYYY-MM-DD&end_date=YYYY-MM-DD&granularity=monthly}.
+     *
+     * <p>This is the preferred source — it needs no HTML/JS scraping, just the
+     * node (tenant) name. The response shape is
+     * {@code {"data":[{"name":"...","results":[{"date":...,"availability":...,
+     * "reliability":...,"uptime":...}]}]}}; each service's {@code results} entries
+     * are averaged the same way as the dashboard source.</p>
+     */
+    private static final class CapabilityApiSource implements UptimeReportSource {
+        @Override
+        public String name() {
+            return "capability-metrics-api";
+        }
+
+        @Override
+        public UptimeReportData fetch(UptimeQuery query, HttpClient http, ObjectMapper mapper, String startTime, String endTime)
+                throws IOException, InterruptedException {
+            IOException lastClientError = null;
+            for (String tenantName : tenantNameCandidates(query.nodeName())) {
+                URI metricsUri = URI.create(DEFAULT_PUBLIC_API_BASE
+                        + String.format(CAPABILITY_METRICS_PATH_TEMPLATE, encodePathSegment(tenantName))
+                        + "?start_date=" + encodeQueryValue(query.startDate().toString())
+                        + "&end_date=" + encodeQueryValue(query.endDate().toString())
+                        + "&granularity=" + GRANULARITY);
+                HttpTextResponse response = getBodyWithStatus(http, metricsUri, "application/json");
+                if (response.statusCode() != 200) {
+                    if (is4xx(response.statusCode())) {
+                        lastClientError = new IOException("capability metrics not found for node '" + tenantName
+                                + "' (HTTP " + response.statusCode() + ")");
+                        continue;
+                    }
+                    throw new IOException("request to " + metricsUri + " failed with HTTP " + response.statusCode());
+                }
+
+                JsonNode root = mapper.readTree(response.body());
+                JsonNode services = root.path("data");
+                if (!services.isArray()) {
+                    throw new IOException("Unexpected capability metrics payload shape");
+                }
+
+                ArrayNode endpointsOut = mapper.createArrayNode();
+                for (JsonNode service : services) {
+                    String serviceName = service.path("name").asText("(unnamed)");
+                    endpointsOut.add(summariseResults(mapper, serviceName, "SERVICE", service.path("results")));
+                }
+
+                String warning = endpointsOut.isEmpty()
+                        ? "Capability metrics API was reachable but returned no services."
+                        : null;
+                return new UptimeReportData(
+                        query.nodeName(),
+                        metricsUri.toString(),
+                        metricsUri.toString(),
+                        "capability-metrics-api",
+                        endpointsOut,
+                        warning
+                );
+            }
+
+            if (lastClientError != null) {
+                throw lastClientError;
+            }
+            throw new IOException("No tenant name candidate could be resolved for capability metrics API");
+        }
     }
 
     private static final class DashboardSource implements UptimeReportSource {
@@ -292,61 +368,8 @@ public class CheckServiceUptime {
                 ArrayNode endpointsOut = mapper.createArrayNode();
                 for (JsonNode group : groups) {
                     String endpointName = group.path("name").asText("(unnamed)");
-                    JsonNode results = group.path("results");
-
-                    double uptimeTotal = 0.0;
-                    int uptimeDays = 0;
-                    double availabilityTotal = 0.0;
-                    int availabilityDays = 0;
-                    double reliabilityTotal = 0.0;
-                    int reliabilityDays = 0;
-
-                    if (results.isArray()) {
-                        for (JsonNode day : results) {
-                            Double uptime = parseMetric(day.path("uptime"));
-                            if (uptime != null) {
-                                uptimeTotal += normalizeUptime(uptime);
-                                uptimeDays++;
-                            }
-                            Double availability = parseMetric(day.path("availability"));
-                            if (availability != null) {
-                                availabilityTotal += availability;
-                                availabilityDays++;
-                            }
-                            Double reliability = parseMetric(day.path("reliability"));
-                            if (reliability != null) {
-                                reliabilityTotal += reliability;
-                                reliabilityDays++;
-                            }
-                        }
-                    }
-
-                    ObjectNode endpointOut = mapper.createObjectNode();
-                    endpointOut.put("name", endpointName);
-                    endpointOut.put("type", group.path("type").asText("SERVICEGROUP"));
-                    Double uptimePercentage = null;
-                    if (availabilityDays > 0) {
-                        double avgAvailability = round2(availabilityTotal / availabilityDays);
-                        endpointOut.put("average_availability", avgAvailability);
-                        uptimePercentage = avgAvailability;
-                    } else {
-                        endpointOut.putNull("average_availability");
-                    }
-                    if (uptimePercentage == null && uptimeDays > 0) {
-                        uptimePercentage = round2(uptimeTotal / uptimeDays);
-                    }
-                    if (uptimePercentage != null) {
-                        endpointOut.put("uptime_percentage", uptimePercentage);
-                    } else {
-                        endpointOut.putNull("uptime_percentage");
-                    }
-                    if (reliabilityDays > 0) {
-                        endpointOut.put("average_reliability", round2(reliabilityTotal / reliabilityDays));
-                    } else {
-                        endpointOut.putNull("average_reliability");
-                    }
-                    endpointOut.put("days_monitored", Math.max(uptimeDays, Math.max(availabilityDays, reliabilityDays)));
-                    endpointsOut.add(endpointOut);
+                    String endpointType = group.path("type").asText("SERVICEGROUP");
+                    endpointsOut.add(summariseResults(mapper, endpointName, endpointType, group.path("results")));
                 }
 
                 String warning = endpointsOut.isEmpty()
@@ -477,6 +500,70 @@ public class CheckServiceUptime {
         return Optional.empty();
     }
 
+    /**
+     * Averages a service's daily/monthly {@code results} entries (each carrying
+     * {@code uptime}, {@code availability}, {@code reliability}) into the single
+     * endpoint summary object used in {@code argo_uptime_report.json}. Shared by
+     * every source, since the capability-metrics API and the dashboard's
+     * {@code results/groups} API return the same {@code name} + {@code results[]}
+     * shape.
+     */
+    private static ObjectNode summariseResults(ObjectMapper mapper, String name, String type, JsonNode results) {
+        double uptimeTotal = 0.0;
+        int uptimeDays = 0;
+        double availabilityTotal = 0.0;
+        int availabilityDays = 0;
+        double reliabilityTotal = 0.0;
+        int reliabilityDays = 0;
+
+        if (results.isArray()) {
+            for (JsonNode day : results) {
+                Double uptime = parseMetric(day.path("uptime"));
+                if (uptime != null) {
+                    uptimeTotal += normalizeUptime(uptime);
+                    uptimeDays++;
+                }
+                Double availability = parseMetric(day.path("availability"));
+                if (availability != null) {
+                    availabilityTotal += availability;
+                    availabilityDays++;
+                }
+                Double reliability = parseMetric(day.path("reliability"));
+                if (reliability != null) {
+                    reliabilityTotal += reliability;
+                    reliabilityDays++;
+                }
+            }
+        }
+
+        ObjectNode endpointOut = mapper.createObjectNode();
+        endpointOut.put("name", name);
+        endpointOut.put("type", type);
+        Double uptimePercentage = null;
+        if (availabilityDays > 0) {
+            double avgAvailability = round2(availabilityTotal / availabilityDays);
+            endpointOut.put("average_availability", avgAvailability);
+            uptimePercentage = avgAvailability;
+        } else {
+            endpointOut.putNull("average_availability");
+        }
+        if (uptimePercentage == null && uptimeDays > 0) {
+            uptimePercentage = round2(uptimeTotal / uptimeDays);
+        }
+        if (uptimePercentage != null) {
+            endpointOut.put("uptime_percentage", uptimePercentage);
+        } else {
+            endpointOut.putNull("uptime_percentage");
+        }
+        if (reliabilityDays > 0) {
+            endpointOut.put("average_reliability", round2(reliabilityTotal / reliabilityDays));
+        } else {
+            endpointOut.putNull("average_reliability");
+        }
+        endpointOut.put("days_monitored", Math.max(uptimeDays, Math.max(availabilityDays, reliabilityDays)));
+        return endpointOut;
+    }
+
     private static Double parseMetric(JsonNode value) {
         if (value == null || value.isMissingNode() || value.isNull()) {
             return null;
@@ -554,7 +641,7 @@ public class CheckServiceUptime {
                 Arguments:
                   node-name     - Node name used for the output directory (required)
                   api-key       - API key for legacy ARGO API fallback (optional)
-                  start-date    - Start date in YYYY-MM-DD format (optional, defaults to 6 days ago)
+                  start-date    - Start date in YYYY-MM-DD format (optional, defaults to 1 month ago)
                   end-date      - End date in YYYY-MM-DD format (optional, defaults to today)
                   dashboard-dir - Path to dashboard data directory (optional, defaults to ../dashboard/data)
                 ======================================

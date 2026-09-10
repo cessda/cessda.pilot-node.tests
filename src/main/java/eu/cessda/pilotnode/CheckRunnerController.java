@@ -261,7 +261,7 @@ public class CheckRunnerController {
         }
 
         JobRecord rec = jobRunner.start("service-uptime", record -> {
-            LocalDate start = LocalDate.now().minusDays(6);
+            LocalDate start = LocalDate.now().minusMonths(1);
             LocalDate end = LocalDate.now();
             CheckServiceUptime.run(targetNode, targetArgoApiKey, start, end, dataDirPath, httpClient, mapper);
             record.markDone("argo_uptime_report.json written for " + targetNode);
