@@ -75,6 +75,18 @@ public class CheckCatalogueServices {
     private static final long RESPONSE_TIME_THRESHOLD_MS = 30_000L;
     private static final long RESPONSE_TIME_TARGET_MS    = 5_000L;
 
+    // Some Exchange Service webpages sit behind a CDN/WAF that fast-rejects
+    // (typically a quick 403) requests carrying the JDK's default
+    // "Java-http-client/…" User-Agent, misclassifying a perfectly healthy
+    // service as "Not available". A browser-shaped-but-identifiable UA
+    // avoids that false negative while still being honest about what's
+    // making the request.
+    private static final String USER_AGENT =
+            "Mozilla/5.0 (compatible; CESSDA-PilotNode-Monitor/1.0; "
+                    + "+https://github.com/cessda/cessda.pilot-node.tests)";
+    private static final String ACCEPT_HEADER =
+            "text/html,application/json;q=0.9,*/*;q=0.8";
+
     private static final Logger log =
             Logger.getLogger(CheckCatalogueServices.class.getName());
 
@@ -439,6 +451,8 @@ public class CheckCatalogueServices {
         HttpRequest req = HttpRequest.newBuilder()
                 .uri(url)
                 .GET()
+                .header("User-Agent", USER_AGENT)
+                .header("Accept", ACCEPT_HEADER)
                 .timeout(Duration.ofMillis(RESPONSE_TIME_THRESHOLD_MS))
                 .build();
 
