@@ -450,11 +450,19 @@ public class CheckNodeCapabilities {
             // got the JDK's default "Java-http-client/..." UA — the same
             // thing that made CheckCatalogueServices misreport healthy
             // services as unavailable when a CDN/WAF fast-rejects it.
+            //
+            // Unlike those two requests, though, a capability endpoint here
+            // isn't necessarily a JSON API — e.g. an AAI capability is
+            // typically an HTML login/account portal (Keycloak and similar
+            // often do strict content negotiation and will hand back a
+            // non-2xx for a representation they don't have). This is a
+            // bare availability probe with a discarded body, so accept
+            // anything rather than asserting a content type we don't need.
             HttpRequest req = HttpRequest.newBuilder()
                     .uri(url)
                     .method("HEAD", HttpRequest.BodyPublishers.noBody())
                     .header("User-Agent", BROWSER_USER_AGENT)
-                    .header("Accept", "application/json")
+                    .header("Accept", "*/*")
                     .timeout(CAPABILITY_CHECK_TIMEOUT)
                     .build();
             HttpResponse<Void> resp = http.send(req, HttpResponse.BodyHandlers.discarding());
