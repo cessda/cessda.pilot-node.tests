@@ -252,58 +252,6 @@
   .run-btn:hover    { background: var(--orange); }
   .run-btn:disabled { background: var(--grey-200); color: var(--grey-400); cursor: not-allowed; }
 
-  /* ── API key modal ── */
-  .apikey-overlay {
-    display: none; position: fixed; inset: 0;
-    background: rgba(0,0,0,0.55); z-index: 1000;
-    align-items: center; justify-content: center;
-  }
-  .apikey-overlay.open { display: flex; }
-
-  .apikey-modal {
-    background: var(--white); border: 2px solid var(--black);
-    box-shadow: 6px 6px 0 rgba(0,0,0,0.2);
-    padding: 2rem; width: 100%; max-width: 420px; position: relative;
-  }
-  .apikey-modal-title {
-    font-size: 0.85rem; font-weight: 700; letter-spacing: -0.01em;
-    margin-bottom: 0.35rem;
-  }
-  .apikey-modal-sub {
-    font-family: var(--mono); font-size: 0.6rem; color: var(--grey-600);
-    margin-bottom: 1.25rem; line-height: 1.6;
-  }
-  .apikey-modal-sub strong { color: var(--orange); }
-  .apikey-label {
-    font-family: var(--mono); font-size: 0.6rem; color: var(--grey-400);
-    text-transform: uppercase; letter-spacing: 0.08em; display: block; margin-bottom: 0.35rem;
-  }
-  .apikey-input {
-    width: 100%; border: 1.5px solid var(--grey-200); padding: 0.55rem 0.75rem;
-    font-family: var(--mono); font-size: 0.78rem; color: var(--black);
-    background: var(--grey-100); outline: none;
-    transition: border-color 0.15s;
-  }
-  .apikey-input:focus { border-color: var(--orange); background: var(--white); }
-  .apikey-actions {
-    display: flex; gap: 0.75rem; margin-top: 1.25rem; justify-content: flex-end;
-  }
-  .apikey-cancel {
-    background: none; border: 1.5px solid var(--grey-200); color: var(--grey-600);
-    font-family: var(--mono); font-size: 0.62rem; text-transform: uppercase;
-    letter-spacing: 0.05em; padding: 0.4rem 0.9rem; cursor: pointer;
-    transition: border-color 0.15s;
-  }
-  .apikey-cancel:hover { border-color: var(--grey-400); }
-  .apikey-confirm {
-    background: var(--black); border: none; color: var(--white);
-    font-family: var(--mono); font-size: 0.62rem; text-transform: uppercase;
-    letter-spacing: 0.05em; padding: 0.4rem 0.9rem; cursor: pointer;
-    transition: background 0.15s;
-  }
-  .apikey-confirm:hover { background: var(--orange); }
-  .apikey-confirm:disabled { background: var(--grey-200); color: var(--grey-400); cursor: not-allowed; }
-
   /* ── Toast (node page) ── */
   #toast-container {
     position: fixed; bottom: 1.5rem; right: 1.5rem;
@@ -486,7 +434,7 @@
             <div class="run-item-label">Service Monitoring</div>
             <div class="run-item-desc">CheckServiceUptime · argo_uptime_report.json</div>
           </div>
-          <button class="run-btn" id="btn-service-uptime" onclick="promptAndRun()">Run</button>
+          <button class="run-btn" id="btn-service-uptime" onclick="runServiceUptimeCheck()">Run</button>
         </div>
         <div class="run-item" role="menuitem">
           <div class="run-item-info">
@@ -508,26 +456,6 @@
         <div class="ns-header">All nodes</div>
         <div id="ns-list"><div class="ns-loading">Loading…</div></div>
       </div>
-    </div>
-  </div>
-</div>
-
-<!-- API key modal -->
-<div class="apikey-overlay" id="apikey-overlay" role="dialog" aria-modal="true" aria-labelledby="apikey-title">
-  <div class="apikey-modal">
-    <div class="apikey-modal-title" id="apikey-title">API Key Required</div>
-    <div class="apikey-modal-sub">
-      Enter your API key to run <strong id="apikey-check-label">this check</strong> against
-      <strong id="apikey-node-label">the selected node</strong>.<br>
-      The key is used only for this request and is <strong>never saved or stored</strong>.
-    </div>
-    <label class="apikey-label" for="apikey-input">API Key</label>
-    <input class="apikey-input" id="apikey-input" type="password"
-           autocomplete="off" autocorrect="off" spellcheck="false"
-           placeholder="Paste your API key here…">
-    <div class="apikey-actions">
-      <button class="apikey-cancel" onclick="closeApiKeyModal()">Cancel</button>
-      <button class="apikey-confirm" id="apikey-confirm-btn" onclick="confirmApiKey()">Run check</button>
     </div>
   </div>
 </div>
@@ -973,6 +901,11 @@ function renderArgoPanel(data) {
       </div>`;
   }
 
+  // The capability-metrics API reports one point per calendar month
+  // (granularity=monthly); the dashboard and legacy sources report one
+  // point per day — so "days_monitored" needs a matching unit and plural.
+  const monitoredUnit = data.data_source === 'capability-metrics-api' ? 'month' : 'day';
+
   const cards = services.map(s => {
     const name         = s.name || s.service_name || s.id || '(unnamed)';
     const availability = s.average_availability ?? s.availability ?? null;
@@ -987,13 +920,17 @@ function renderArgoPanel(data) {
       ? `<div class="argo-meta">📅 ${sStart ? fmtDate(sStart) : '?'} → ${sEnd ? fmtDate(sEnd) : '?'}</div>`
       : '';
 
+    const monitoredLabel = s.days_monitored
+      ? `${s.days_monitored} ${monitoredUnit}${s.days_monitored === 1 ? '' : 's'} monitored`
+      : null;
+
     return `
       <div class="argo-card">
         <div class="argo-name">${name}</div>
         ${renderMetricRow('Availability', availability)}
         ${renderMetricRow('Reliability', reliability)}
         ${renderMetricRow('Uptime', uptime)}
-        ${s.days_monitored ? `<div class="argo-meta">${s.days_monitored} days monitored</div>` : ''}
+        ${monitoredLabel ? `<div class="argo-meta">${monitoredLabel}</div>` : ''}
         ${period ? `<div class="argo-meta">Period: ${period}</div>` : ''}
         ${sDateRange}
       </div>`;
@@ -1304,7 +1241,6 @@ document.addEventListener('click', e => {
 document.addEventListener('keydown', e => {
   if (e.key === 'Escape') {
     document.getElementById('run-menu')?.setAttribute('aria-expanded', 'false');
-    closeApiKeyModal();
     closeAbout();
   }
 });
@@ -1480,45 +1416,10 @@ async function runOtherMetricsCheck() {
   resetBtn(btn);
 }
 
-// ── Service Uptime check (ARGO API key required) ──────────────────────────────
+// ── Service Uptime check (no API key needed — capability-metrics API is public) ─
 
-function promptAndRun() {
+async function runServiceUptimeCheck() {
   document.getElementById('run-menu').setAttribute('aria-expanded', 'false');
-  const nodeName = decodeURIComponent(window.location.hash.substring(1)) || 'this node';
-  document.getElementById('apikey-node-label').textContent = nodeName;
-
-  // Always start blank — key must never be pre-filled or persisted
-  const input = document.getElementById('apikey-input');
-  input.value = '';
-
-  document.getElementById('apikey-overlay').classList.add('open');
-  setTimeout(() => input.focus(), 50);
-}
-
-function closeApiKeyModal() {
-  document.getElementById('apikey-overlay').classList.remove('open');
-  // Clear immediately so the key does not linger in the DOM
-  document.getElementById('apikey-input').value = '';
-}
-
-// Close on backdrop click
-document.getElementById('apikey-overlay').addEventListener('click', e => {
-  if (e.target === document.getElementById('apikey-overlay')) closeApiKeyModal();
-});
-
-// Allow Enter to confirm
-document.getElementById('apikey-input').addEventListener('keydown', e => {
-  if (e.key === 'Enter') confirmApiKey();
-});
-
-function confirmApiKey() {
-  const apiKey = document.getElementById('apikey-input').value.trim();
-  if (!apiKey) { document.getElementById('apikey-input').focus(); return; }
-  closeApiKeyModal(); // clears the field before anything async happens
-  runUptimeCheck(apiKey);
-}
-
-async function runUptimeCheck(apiKey) {
   const btn      = document.getElementById('btn-service-uptime');
   const nodeName = decodeURIComponent(window.location.hash.substring(1));
   if (btn) { btn.disabled = true; btn.textContent = '…'; }
@@ -1529,8 +1430,7 @@ async function runUptimeCheck(apiKey) {
     const res  = await fetch('/api/run/service-uptime', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      // apiKey is passed in the request body and not stored anywhere
-      body: JSON.stringify({ node: nodeName, apiKey }),
+      body: JSON.stringify({ node: nodeName }),
     });
     const data = await res.json();
     if (!res.ok) { showToast('err', 'Service Uptime', data.error || 'HTTP ' + res.status); resetBtn(btn); return; }
@@ -1539,7 +1439,6 @@ async function runUptimeCheck(apiKey) {
     showToast('err', 'Service Uptime', 'Request failed: ' + e.message);
     resetBtn(btn); return;
   }
-  // apiKey goes out of scope here — it is never written to any storage
 
   showToast('info', 'Service Uptime', 'Running… (job ' + jobId + ')');
   const result = await pollJobStatus(jobId);
