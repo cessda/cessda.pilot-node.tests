@@ -4,9 +4,9 @@
 
 The Node Detail page shows all collected monitoring data for a
 single pilot node. It presents four panels — endpoint connectivity,
-catalogue services, ARGO uptime, and Exchange service visibility —
-together with an overview strip summarising key metrics and a page
-header carrying the node's registry status and contact metadata.
+catalogue services, ARGO uptime, and Federated Search — together with
+an overview strip summarising key metrics and a page header carrying
+the node's registry status and contact metadata.
 
 The page is addressed by appending the node name as a URL fragment,
 for example `node.html#My-Node-Name`. The node switcher in the top
@@ -40,7 +40,7 @@ the selected node.
 - **Compliance tier** — the highest compliance tier fully satisfied
   by this node (see Compliance Tiers below).
 
-The strip does not currently summarise Exchange service visibility;
+The strip does not currently summarise Federated Search visibility;
 that panel carries its own summary badge instead (see below).
 
 ## Compliance Tiers
@@ -133,9 +133,15 @@ The data comes from:
 ## ARGO Uptime Report
 
 This panel shows service availability as measured by the ARGO
-monitoring infrastructure. Each service card displays an uptime
-percentage and a proportional bar coloured green (≥ 90 %), amber
-(≥ 60 %), or red (below 60 %).
+monitoring infrastructure. Each service card shows Availability,
+Reliability, and Uptime as three separate percentages, each with its
+own proportional bar coloured green (≥ 90 %), amber (≥ 60 %), or red
+(below 60 %), plus how long the service was monitored for and the
+reporting period.
+
+The "monitored for" period is shown in months when the report came
+from the default capability-metrics API (which reports monthly), or
+in days for the dashboard-scrape and legacy-API fallback sources.
 
 The data comes from:
 
@@ -143,7 +149,7 @@ The data comes from:
 /api/data/{node_name}/argo_uptime_report.json
 ```
 
-## Exchange Service Visibility Report
+## Federated Search Report
 
 This panel covers the cross-node visibility metrics from the
 Proposed Validation Metrics document — Metrics 4, 5, 6, 9, 10 and
@@ -184,20 +190,22 @@ The data comes from:
 ## Running Checks
 
 The **Run checks** menu in the top bar triggers on-demand data
-collection for the currently selected node. The available checks are:
+collection for the currently selected node. None of the checks
+require any credentials to be entered. The available checks are:
 
-- **Catalogue Services** — runs `CheckCatalogueServices` and
-  refreshes `catalogue_services_report.json` for this node.
-- **Service Uptime** — runs `CheckServiceUptime` and refreshes
-  `argo_uptime_report.json` for this node. The prompt accepts an ARGO
-  API key for fallback use when needed; it is used only for that
-  single request and is never stored.
-- **Exchange Service Visibility** — runs `CheckOtherMetrics` and
-  refreshes `front_office_metrics_report.json` for this node. No
-  credentials or additional input are required: the check resolves
-  every PID and Front Office endpoint it needs, including the
-  Sandbox's, from data already collected by Catalogue Services and
-  Endpoint Connectivity.
+- **Exchange Services** — runs `CheckCatalogueServices` and
+  refreshes `catalogue_services_report.json` for this node, using the
+  Resource Catalogue endpoint read from `endpoint_report.json`.
+- **Service Monitoring** — runs `CheckServiceUptime` and refreshes
+  `argo_uptime_report.json` for this node against the public ARGO
+  capability-metrics API (falling back to a dashboard scrape, then a
+  legacy API, if needed) — no API key prompt, since the default
+  source is public.
+- **Federated Search** — runs `CheckOtherMetrics` and refreshes
+  `front_office_metrics_report.json` for this node. No credentials or
+  additional input are required: the check resolves every PID and
+  Front Office endpoint it needs, including the Sandbox's, from data
+  already collected by Node Capabilities.
 
 The page must be served from an HTTP server with an active backend
 for the Run checks menu to work; it will not function when the file
