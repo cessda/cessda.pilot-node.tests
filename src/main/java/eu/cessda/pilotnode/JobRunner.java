@@ -1,6 +1,7 @@
 package eu.cessda.pilotnode;
 
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.stereotype.Service;
 
 import java.util.concurrent.Executor;
@@ -12,8 +13,14 @@ public class JobRunner {
 
     private final Executor executor;
 
+    // Spring Boot registers a second Executor bean ("taskScheduler", for
+    // @Scheduled methods — see CheckAllScheduler) once @EnableScheduling is
+    // on, so a plain Executor parameter is ambiguous. Job execution has
+    // nothing to do with the cron scheduler; it should always use the
+    // general-purpose "applicationTaskExecutor" Spring Boot provides by
+    // default, so that's pinned explicitly here.
     @Autowired
-    public JobRunner(Executor executor) {
+    public JobRunner(@Qualifier("applicationTaskExecutor") Executor executor) {
         this.executor = executor;
     }
 
