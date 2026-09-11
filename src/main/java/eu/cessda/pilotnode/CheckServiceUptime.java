@@ -78,11 +78,11 @@ import com.fasterxml.jackson.databind.node.ObjectNode;
  * </pre>
  *
  * <ul>
- *   <li>{@code NODE_NAME}     – node name used for the output subdirectory (required)</li>
- *   <li>{@code API_KEY}       – API key for legacy ARGO API fallback (optional)</li>
- *   <li>{@code START_DATE}    – {@code YYYY-MM-DD} (optional, defaults to 1 month ago)</li>
- *   <li>{@code END_DATE}      – {@code YYYY-MM-DD} (optional, defaults to today)</li>
- *   <li>{@code dashboard_dir} – path to dashboard data directory
+ *   <li>{@code NODE_NAME}     - node name used for the output subdirectory (required)</li>
+ *   <li>{@code API_KEY}       - API key for legacy ARGO API fallback (optional)</li>
+ *   <li>{@code START_DATE}    - {@code YYYY-MM-DD} (optional, defaults to 1 month ago)</li>
+ *   <li>{@code END_DATE}      - {@code YYYY-MM-DD} (optional, defaults to today)</li>
+ *   <li>{@code dashboard_dir} - path to dashboard data directory
  *                               (optional, defaults to {@code ../dashboard/data})</li>
  * </ul>
  */
