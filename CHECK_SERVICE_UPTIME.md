@@ -14,11 +14,22 @@ Java check that writes `argo_uptime_report.json` to `<dashboard_dir>/<NODE_NAME>
    `https://status.devel.mon.argo.grnet.gr/public/tenants/<TENANT>/dashboard`
 3. Legacy ARGO API fallback (requires API key)
 
-For both the capability-metrics API and the public-dashboard flow, tenant matching is resilient:
+For both the capability-metrics API and the public-dashboard flow, the ARGO
+tenant name is resolved with a 4-phase cascade:
 
-- Try full node name first
-- If a tenant URL returns `40x`, retry with the first component (split on space/hyphen),
-  e.g. `EGI Pilot Node -> EGI`, `NI4OS-EUROPE -> NI4OS`
+1. The tenant declared by the node's own `Monitoring` capability in
+   `endpoint_report.json` (read from `<dashboard_dir>/<NODE_NAME>/`,
+   written earlier by `CheckNodeCapabilities`), if present — extracted from
+   a `.../tenants/<TENANT>/...` endpoint URL and URL-decoded. This is
+   authoritative and is tried alone, with no further fallback: a node's
+   registry name doesn't always match its real ARGO tenant name (e.g.
+   `LifeWatch-ERIC`'s registry name resolves to ARGO tenant `LIFEWATCH`,
+   which no amount of splitting the registry name would ever produce).
+2. Otherwise, the node name as-is.
+3. If that specifically returns `404` and the node name is hyphenated, the
+   substring before the first hyphen, e.g. `LifeWatch-ERIC -> LifeWatch`.
+4. If still unresolved (any `4xx`) and the node name contains whitespace,
+   its first whitespace-separated token, e.g. `EGI Pilot Node -> EGI`.
 
 ## Usage
 
@@ -28,7 +39,7 @@ CheckServiceUptime NODE_NAME [API_KEY] [START_DATE] [END_DATE] [dashboard_dir]
 
 | Argument | Required | Default | Description |
 | -------- | -------- | ------- | ----------- |
-| `NODE_NAME` | Yes | — | Node name used for output directory and tenant resolution |
+| `NODE_NAME` | Yes | — | Node name used for output directory and tenant resolution (phase 1 of tenant resolution also reads `<dashboard_dir>/NODE_NAME/endpoint_report.json`, if present) |
 | `API_KEY` | No | — | Legacy ARGO API key used only if the capability-metrics API and public-dashboard flow are both unavailable |
 | `START_DATE` | No | 1 month ago | Start date (`YYYY-MM-DD`) |
 | `END_DATE` | No | Today | End date (`YYYY-MM-DD`) |

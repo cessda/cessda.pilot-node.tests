@@ -397,6 +397,14 @@
         <div class="run-dropdown-header">Data collection checks</div>
         <div class="run-item" role="menuitem">
           <div class="run-item-info">
+            <div class="run-item-label">Check All</div>
+            <div class="run-item-desc">Node Capabilities, then every check for every node</div>
+          </div>
+          <button class="run-btn" id="btn-check-all"
+                  onclick="runCheck('check-all')">Run</button>
+        </div>
+        <div class="run-item" role="menuitem">
+          <div class="run-item-info">
             <div class="run-item-label">Node Capabilities</div>
             <div class="run-item-desc">CheckNodeCapabilities · endpoint_report.json</div>
           </div>
@@ -861,6 +869,13 @@ init();
 
 const CHECK_LABELS = {
   'node-capabilities': 'Node Capabilities',
+  'check-all':         'Check All',
+};
+
+// Check All runs Node Capabilities plus three checks for every registered
+// node, one node at a time, so it can take much longer than a single check.
+const CHECK_POLL_MAX_WAIT_MS = {
+  'check-all': 30 * 60 * 1000, // 30 minutes
 };
 
 function toggleRunMenu() {
@@ -1002,7 +1017,8 @@ async function runCheck(type) {
   }
 
   showToast('info', label, 'Running… (job ' + jobId + ')');
-  const result = await pollJobStatus(jobId);
+  const maxWaitMs = CHECK_POLL_MAX_WAIT_MS[type];
+  const result = await (maxWaitMs ? pollJobStatus(jobId, 1500, maxWaitMs) : pollJobStatus(jobId));
 
   if (result.status === 'DONE') { showToast('ok', label, result.message || 'Completed'); init(); }
   else                          { showToast('err', label, result.message || 'Check failed'); }

@@ -54,6 +54,8 @@ import com.fasterxml.jackson.databind.ObjectMapper;
  *   POST /api/run/catalogue-services  – run CheckCatalogueServices
  *   POST /api/run/service-uptime      – run CheckServiceUptime
  *   POST /api/run/other-metrics       – run CheckOtherMetrics
+ *   POST /api/run/check-all           – run CheckNodeCapabilities, then all of the
+ *                                        above for every Node in turn (see {@link CheckAll})
  *   GET  /api/run/{jobId}/status      – poll the status of any job
  *   GET  /api/run/status              – list all recent job statuses
  * </pre>
@@ -65,6 +67,10 @@ import com.fasterxml.jackson.databind.ObjectMapper;
  *   check.api-key-node   =                     # API key for CheckNodeCapabilities
  *   check.api-key-argo   =                     # optional legacy-ARGO-API fallback key for CheckServiceUptime
  * </pre>
+ *
+ * <p>Check All can also be run on a schedule instead of (or as well as) by
+ * hand — see {@link CheckAllScheduler} for its
+ * {@code check.check-all.scheduled.*} settings.</p>
  *
  * <p>Jobs run asynchronously on a dedicated single-thread executor so that
  * only one job of each type can run at a time, and the HTTP request returns
@@ -265,6 +271,40 @@ public class CheckRunnerController {
             LocalDate end = LocalDate.now();
             CheckServiceUptime.run(targetNode, targetArgoApiKey, start, end, dataDirPath, httpClient, mapper);
             record.markDone("argo_uptime_report.json written for " + targetNode);
+        });
+
+        jobs.put(rec.getJobId(), rec);
+
+        return rec;
+    }
+
+    /**
+     * Triggers {@link CheckAll}: runs {@link CheckNodeCapabilities} once for
+     * the whole Node Registry, then Exchange Services, Service Monitoring
+     * and Federated Search for every Node it just wrote a summary for, one
+     * Node at a time.
+     *
+     * <p>Requires {@code check.api-key-node} to be set, same as
+     * {@link #runNodeCapabilities()}. {@code check.api-key-argo} is used the
+     * same way it is for {@link #runServiceUptime}: optional, only needed if
+     * the legacy ARGO API fallback is reached.</p>
+     *
+     * <p>A failure checking one Node (or one of its three checks) does not
+     * stop the run — see {@link CheckAll} for how failures and skips are
+     * counted and reported in the job's final message.</p>
+     *
+     * @throws IllegalStateException if {@code check.api-key-node} is unset
+     */
+    @PostMapping("/check-all")
+    @ResponseStatus(HttpStatus.ACCEPTED)
+    public JobRecord runCheckAll() {
+        if (nodeApiKey.isBlank()) {
+            throw new IllegalStateException("check.api-key-node is not configured");
+        }
+
+        JobRecord rec = jobRunner.start("check-all", record -> {
+            CheckAll.Result result = CheckAll.run(dataDirPath, nodeApiKey, argoApiKey, httpClient, mapper);
+            record.markDone(result.summary());
         });
 
         jobs.put(rec.getJobId(), rec);
