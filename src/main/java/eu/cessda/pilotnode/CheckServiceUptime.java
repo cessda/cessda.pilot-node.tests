@@ -20,6 +20,7 @@ package eu.cessda.pilotnode;
 import java.io.IOException;
 import java.io.InputStream;
 import java.net.URI;
+import java.net.URLDecoder;
 import java.net.URLEncoder;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
@@ -31,10 +32,8 @@ import java.time.LocalDate;
 import java.time.OffsetDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
-import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Optional;
-import java.util.Set;
 import java.util.logging.Level;
 import java.util.logging.Logger;
 import java.util.regex.Matcher;
@@ -58,6 +57,20 @@ import com.fasterxml.jackson.databind.node.ObjectNode;
  * availability/reliability/uptime figures. If that API is unavailable, this falls back to
  * scraping the public ARGO status dashboard and extracting data from its referenced JS/API
  * payloads, and finally to a legacy API source (requires an API key).
+ *
+ * <p>Both the capability-metrics API and the dashboard scrape need an ARGO tenant name for
+ * the node being checked, resolved in this order (see
+ * {@link #monitoringTenantFromEndpointReport} and {@link #appendNodeNameFallbacks}):
+ * <ol>
+ *   <li>The tenant declared by the node's own {@code Monitoring} capability in
+ *       {@code endpoint_report.json} (authoritative — extracted from a
+ *       {@code .../tenants/<TENANT>/...} URL; tried alone if present).</li>
+ *   <li>Otherwise, the node name as-is.</li>
+ *   <li>If that specifically 404s and the node name is hyphenated, the substring before
+ *       the first hyphen (e.g. {@code LifeWatch-ERIC} &rarr; {@code LifeWatch}).</li>
+ *   <li>If still unresolved (any 4xx) and the node name contains whitespace, its first
+ *       whitespace-separated token (e.g. {@code EGI Pilot Node} &rarr; {@code EGI}).</li>
+ * </ol>
  *
  * <p>Usage:
  * <pre>
@@ -90,8 +103,10 @@ public class CheckServiceUptime {
             Pattern.compile("https://api-status[\\w.-]*\\.grnet\\.gr");
     private static final Pattern DATE_PATTERN =
             Pattern.compile("^\\d{4}-\\d{2}-\\d{2}$");
-    private static final Pattern FIRST_COMPONENT_SPLIT_PATTERN =
-            Pattern.compile("[\\s-]+");
+    private static final Pattern TENANT_FROM_URL_PATTERN =
+            Pattern.compile("/tenants/([^/?#]+)");
+    private static final Pattern WHITESPACE_PATTERN =
+            Pattern.compile("\\s");
 
     private static final Logger log = Logger.getLogger(CheckServiceUptime.class.getName());
     // ── Entry point ───────────────────────────────────────────────────────────
@@ -160,6 +175,7 @@ public class CheckServiceUptime {
 
         UptimeReportData reportData = resolveReportData(
                 new UptimeQuery(nodeName, apiKey, startDate, endDate),
+                dashboardDir,
                 http,
                 mapper,
                 startTime,
@@ -191,7 +207,7 @@ public class CheckServiceUptime {
         log.log(Level.INFO, "Report complete [{0}] - JSON: {1}", new Object[]{reportData.dataSource(), reportFile});
     }
 
-    private static UptimeReportData resolveReportData(UptimeQuery query, HttpClient http, ObjectMapper mapper,
+    private static UptimeReportData resolveReportData(UptimeQuery query, Path dashboardDir, HttpClient http, ObjectMapper mapper,
                                                       String startTime, String endTime)
             throws IOException, InterruptedException {
         List<UptimeReportSource> sources = List.of(
@@ -203,7 +219,7 @@ public class CheckServiceUptime {
 
         for (UptimeReportSource source : sources) {
             try {
-                UptimeReportData data = source.fetch(query, http, mapper, startTime, endTime);
+                UptimeReportData data = source.fetch(query, dashboardDir, http, mapper, startTime, endTime);
                 if (data.endpoints().isEmpty()) {
                     log.log(Level.WARNING, "{0} returned no endpoints for node {1}",
                             new Object[]{source.name(), query.nodeName()});
@@ -233,7 +249,7 @@ public class CheckServiceUptime {
     private interface UptimeReportSource {
         String name();
 
-        UptimeReportData fetch(UptimeQuery query, HttpClient http, ObjectMapper mapper, String startTime, String endTime)
+        UptimeReportData fetch(UptimeQuery query, Path dashboardDir, HttpClient http, ObjectMapper mapper, String startTime, String endTime)
                 throws IOException, InterruptedException;
     }
 
@@ -255,10 +271,15 @@ public class CheckServiceUptime {
         }
 
         @Override
-        public UptimeReportData fetch(UptimeQuery query, HttpClient http, ObjectMapper mapper, String startTime, String endTime)
+        public UptimeReportData fetch(UptimeQuery query, Path dashboardDir, HttpClient http, ObjectMapper mapper, String startTime, String endTime)
                 throws IOException, InterruptedException {
+            String monitoringTenant = monitoringTenantFromEndpointReport(dashboardDir, query.nodeName(), mapper);
+            List<String> tenantsToTry = new ArrayList<>();
+            tenantsToTry.add(monitoringTenant != null ? monitoringTenant : query.nodeName());
+
             IOException lastClientError = null;
-            for (String tenantName : tenantNameCandidates(query.nodeName())) {
+            for (int i = 0; i < tenantsToTry.size(); i++) {
+                String tenantName = tenantsToTry.get(i);
                 URI metricsUri = URI.create(DEFAULT_PUBLIC_API_BASE
                         + String.format(CAPABILITY_METRICS_PATH_TEMPLATE, encodePathSegment(tenantName))
                         + "?start_date=" + encodeQueryValue(query.startDate().toString())
@@ -269,6 +290,7 @@ public class CheckServiceUptime {
                     if (is4xx(response.statusCode())) {
                         lastClientError = new IOException("capability metrics not found for node '" + tenantName
                                 + "' (HTTP " + response.statusCode() + ")");
+                        appendNodeNameFallbacks(tenantsToTry, tenantName, response.statusCode(), monitoringTenant != null);
                         continue;
                     }
                     throw new IOException("request to " + metricsUri + " failed with HTTP " + response.statusCode());
@@ -313,16 +335,22 @@ public class CheckServiceUptime {
         }
 
         @Override
-        public UptimeReportData fetch(UptimeQuery query, HttpClient http, ObjectMapper mapper, String startTime, String endTime)
+        public UptimeReportData fetch(UptimeQuery query, Path dashboardDir, HttpClient http, ObjectMapper mapper, String startTime, String endTime)
                 throws IOException, InterruptedException {
+            String monitoringTenant = monitoringTenantFromEndpointReport(dashboardDir, query.nodeName(), mapper);
+            List<String> tenantsToTry = new ArrayList<>();
+            tenantsToTry.add(monitoringTenant != null ? monitoringTenant : query.nodeName());
+
             IOException lastClientError = null;
-            for (String tenantName : tenantNameCandidates(query.nodeName())) {
+            for (int i = 0; i < tenantsToTry.size(); i++) {
+                String tenantName = tenantsToTry.get(i);
                 URI dashboardUri = URI.create(String.format(PUBLIC_DASHBOARD_TEMPLATE, encodePathSegment(tenantName)));
                 HttpTextResponse dashboardResponse = getBodyWithStatus(http, dashboardUri, "text/html");
                 if (dashboardResponse.statusCode() != 200) {
                     if (is4xx(dashboardResponse.statusCode())) {
                         lastClientError = new IOException("dashboard not found for tenant '" + tenantName
                                 + "' (HTTP " + dashboardResponse.statusCode() + ")");
+                        appendNodeNameFallbacks(tenantsToTry, tenantName, dashboardResponse.statusCode(), monitoringTenant != null);
                         continue;
                     }
                     throw new IOException("request to " + dashboardUri + " failed with HTTP " + dashboardResponse.statusCode());
@@ -354,6 +382,7 @@ public class CheckServiceUptime {
                     if (is4xx(groupsResponse.statusCode())) {
                         lastClientError = new IOException("public results not found for tenant '" + tenantName
                                 + "' (HTTP " + groupsResponse.statusCode() + ")");
+                        appendNodeNameFallbacks(tenantsToTry, tenantName, groupsResponse.statusCode(), monitoringTenant != null);
                         continue;
                     }
                     throw new IOException("request to " + groupsUri + " failed with HTTP " + groupsResponse.statusCode());
@@ -399,7 +428,7 @@ public class CheckServiceUptime {
         }
 
         @Override
-        public UptimeReportData fetch(UptimeQuery query, HttpClient http, ObjectMapper mapper, String startTime, String endTime)
+        public UptimeReportData fetch(UptimeQuery query, Path dashboardDir, HttpClient http, ObjectMapper mapper, String startTime, String endTime)
                 throws IOException, InterruptedException {
             if (query.apiKey() == null || query.apiKey().isBlank()) {
                 throw new IOException("legacy API key is missing");
@@ -601,22 +630,87 @@ public class CheckServiceUptime {
         return statusCode >= 400 && statusCode < 500;
     }
 
-    private static List<String> tenantNameCandidates(String nodeName) {
-        Set<String> candidates = new LinkedHashSet<>();
-        String trimmed = nodeName == null ? "" : nodeName.trim();
-        if (!trimmed.isEmpty()) {
-            candidates.add(trimmed);
-            String firstComponent = firstNodeComponent(trimmed);
-            if (!firstComponent.isBlank()) {
-                candidates.add(firstComponent);
-            }
+    /**
+     * Reads {@code <dashboardDir>/<nodeName>/endpoint_report.json} (written earlier by
+     * {@code CheckNodeCapabilities}) and, if it has a {@code Monitoring} capability with
+     * a {@code .../tenants/<TENANT>/...} endpoint URL, returns the URL-decoded
+     * {@code <TENANT>} segment. Returns {@code null} — meaning "phase 1 is empty" to the
+     * caller, which should then resolve a tenant from the node name instead — if the
+     * report is missing or unreadable, there's no {@code Monitoring} capability, its
+     * endpoint is blank, or that endpoint doesn't contain a recognisable
+     * {@code /tenants/<name>} segment.
+     */
+    private static String monitoringTenantFromEndpointReport(Path dashboardDir, String nodeName, ObjectMapper mapper) {
+        Path reportPath = dashboardDir.resolve(nodeName).resolve("endpoint_report.json");
+        if (!Files.isRegularFile(reportPath)) {
+            return null;
         }
-        return List.copyOf(candidates);
+        try {
+            JsonNode root = mapper.readTree(reportPath.toFile());
+            for (JsonNode cap : root.path("capabilities")) {
+                if (!"Monitoring".equals(cap.path("capability_type").asText())) {
+                    continue;
+                }
+                String endpoint = cap.path("endpoint").asText("");
+                if (endpoint.isBlank()) {
+                    return null;
+                }
+                Matcher matcher = TENANT_FROM_URL_PATTERN.matcher(endpoint);
+                if (matcher.find()) {
+                    return URLDecoder.decode(matcher.group(1), StandardCharsets.UTF_8);
+                }
+                log.log(Level.WARNING,
+                        "Monitoring capability endpoint for {0} has no /tenants/<name> segment: {1}",
+                        new Object[]{nodeName, endpoint});
+                return null;
+            }
+        } catch (IOException e) {
+            log.log(Level.WARNING, "Could not read {0} to resolve a Monitoring tenant: {1}",
+                    new Object[]{reportPath, e.getMessage()});
+        }
+        return null;
     }
 
-    private static String firstNodeComponent(String nodeName) {
-        String[] parts = FIRST_COMPONENT_SPLIT_PATTERN.split(nodeName, 2);
-        return parts.length > 0 ? parts[0].trim() : nodeName.trim();
+    /**
+     * If {@code tenantName} was resolved from the node name rather than a declared
+     * Monitoring capability ({@code derivedFromMonitoring} is {@code false} — an
+     * authoritative Monitoring tenant is tried alone, with no further fallback), appends
+     * the next fallback candidate(s) for {@code tenantsToTry} to try, if not already
+     * present:
+     * <ul>
+     *   <li>on a strict 404, the substring before the first hyphen in {@code tenantName}
+     *       (e.g. {@code LifeWatch-ERIC} &rarr; {@code LifeWatch});</li>
+     *   <li>on any 4xx, the substring before the first whitespace in {@code tenantName}
+     *       (e.g. {@code EGI Pilot Node} &rarr; {@code EGI}) — the pre-existing fallback.</li>
+     * </ul>
+     */
+    private static void appendNodeNameFallbacks(List<String> tenantsToTry, String tenantName,
+                                                 int statusCode, boolean derivedFromMonitoring) {
+        if (derivedFromMonitoring) {
+            return;
+        }
+        if (statusCode == 404) {
+            String hyphenTrimmed = beforeFirstHyphen(tenantName);
+            if (hyphenTrimmed != null && !tenantsToTry.contains(hyphenTrimmed)) {
+                tenantsToTry.add(hyphenTrimmed);
+            }
+        }
+        String whitespaceTrimmed = beforeFirstWhitespace(tenantName);
+        if (whitespaceTrimmed != null && !tenantsToTry.contains(whitespaceTrimmed)) {
+            tenantsToTry.add(whitespaceTrimmed);
+        }
+    }
+
+    /** {@code "LifeWatch-ERIC"} &rarr; {@code "LifeWatch"}; {@code null} if there's no hyphen. */
+    private static String beforeFirstHyphen(String name) {
+        int idx = name.indexOf('-');
+        return idx > 0 ? name.substring(0, idx).trim() : null;
+    }
+
+    /** {@code "EGI Pilot Node"} &rarr; {@code "EGI"}; {@code null} if there's no whitespace. */
+    private static String beforeFirstWhitespace(String name) {
+        Matcher matcher = WHITESPACE_PATTERN.matcher(name);
+        return matcher.find() ? name.substring(0, matcher.start()).trim() : null;
     }
 
     // ── Utility ───────────────────────────────────────────────────────────────
