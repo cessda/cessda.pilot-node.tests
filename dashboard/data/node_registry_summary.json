@@ -1,52 +1,120 @@
 {
-  "generated" : "2026-05-12T15:37:52.564756+02:00",
+  "generated" : "2026-09-12T13:51:10.513307+01:00",
   "registry_source" : "https://node-devel.eosc.grnet.gr/federation-backend/tenants/eosc-beyond/nodes",
   "nodes" : [ {
-    "generated" : "2026-05-12T15:37:19.343526+02:00",
-    "node_name" : "ENES",
-    "node_id" : "7",
-    "node_pid" : "21.T15999/ENES",
-    "node_endpoint" : "https://enes-node-endpoint.pilot.eosc-beyond.eu/api/endpoint",
+    "generated" : "2026-09-12T13:50:53.616829+01:00",
+    "node_name" : "EOSC-Beyond",
+    "node_id" : "4",
+    "node_pid" : "21.T15999/EOSC-BEYOND",
+    "node_endpoint" : "https://providers.sandbox.eosc-beyond.eu/node/endpoint",
     "legal_entity" : {
-      "name" : "null",
-      "ror_id" : "null"
+      "name" : "EGI",
+      "ror_id" : "https://ror.org/052jj4m32"
+    },
+    "total_capabilities" : 9,
+    "available_capabilities" : 7,
+    "report_file" : "dashboard/data/EOSC-Beyond/endpoint_report.json",
+    "capabilities" : [ {
+      "capability_type" : "Resource Catalogue",
+      "endpoint" : "https://providers.sandbox.eosc-beyond.eu/api",
+      "version" : "6.2",
+      "status" : "Available",
+      "http_code" : 302
+    }, {
+      "capability_type" : "AAI",
+      "endpoint" : "https://core-proxy.sandbox.eosc-beyond.eu/auth/realms/core",
+      "version" : "1.0.0",
+      "status" : "Available",
+      "http_code" : 200
+    }, {
+      "capability_type" : "Execution Framework",
+      "endpoint" : "https://deploy.sandbox.eosc-beyond.eu/",
+      "version" : "1.0.0",
+      "status" : "Available",
+      "http_code" : 200
+    }, {
+      "capability_type" : "Monitoring",
+      "endpoint" : "https://core.sandbox.eosc-beyond.eu/",
+      "version" : "1.0.0",
+      "status" : "Not available",
+      "http_code" : -1
+    }, {
+      "capability_type" : "Accounting",
+      "endpoint" : "https://ui.acc.argo.grnet.gr/",
+      "version" : "1.0.0",
+      "status" : "Available",
+      "http_code" : 200
+    }, {
+      "capability_type" : "Order Management",
+      "endpoint" : "https://userspace.sandbox.eosc-beyond.eu/",
+      "version" : "3.60.0",
+      "status" : "Available",
+      "http_code" : 200
+    }, {
+      "capability_type" : "Front Office",
+      "endpoint" : "https://userspace.sandbox.eosc-beyond.eu/",
+      "version" : "3.60.0",
+      "status" : "Available",
+      "http_code" : 200
+    }, {
+      "capability_type" : "Helpdesk",
+      "endpoint" : "https://ansible-awx.scc.kit.edu/webhook/docs",
+      "version" : "1.0.0",
+      "status" : "Not available",
+      "http_code" : 404
+    }, {
+      "capability_type" : "Application Deployment Management",
+      "endpoint" : "https://deploy.sandbox.eosc-beyond.eu/adim",
+      "version" : "0.5.0",
+      "status" : "Available",
+      "http_code" : 307
+    } ]
+  }, {
+    "generated" : "2026-09-12T13:50:55.69893+01:00",
+    "node_name" : "CESSDA",
+    "node_id" : "6",
+    "node_pid" : "21.T15999/CESSDA",
+    "node_endpoint" : "https://node-endpoint-staging.beyond.cessda.eu/api/endpoint",
+    "legal_entity" : {
+      "name" : "Consortium of European Social Science Data Archives",
+      "ror_id" : "https://ror.org/02wg9xc72"
     },
     "total_capabilities" : 5,
     "available_capabilities" : 5,
-    "report_file" : "dashboard/data/ENES/endpoint_report.json",
+    "report_file" : "dashboard/data/CESSDA/endpoint_report.json",
     "capabilities" : [ {
+      "capability_type" : "Front Office",
+      "endpoint" : "https://marketplace-staging.cessda.eu/",
+      "version" : "3.63.0",
+      "status" : "Available",
+      "http_code" : 200
+    }, {
       "capability_type" : "AAI",
-      "endpoint" : "https://enes-proxy.pilot.eosc-beyond.eu/",
+      "endpoint" : "https://idp.cessda.eu/",
       "version" : "1.0.0",
       "status" : "Available",
-      "http_code" : "200"
+      "http_code" : 200
     }, {
-      "capability_type" : "Helpdesk",
-      "endpoint" : "https://helpdesk.eneslab.pilot.eosc-beyond.eu/",
+      "capability_type" : "Monitoring",
+      "endpoint" : "https://status.devel.mon.argo.grnet.gr/public/tenants/CESSDA/dashboard/",
       "version" : "1.0.0",
       "status" : "Available",
-      "http_code" : "200"
-    }, {
-      "capability_type" : "PID",
-      "endpoint" : "http://pidhs.disi.unitn.it:8000",
-      "version" : "1.0.0",
-      "status" : "Available",
-      "http_code" : "200"
+      "http_code" : 200
     }, {
       "capability_type" : "Resource Catalogue",
-      "endpoint" : "https://enes-resource-catalogue.pilot.eosc-beyond.eu/",
-      "version" : "1.0.0",
+      "endpoint" : "https://service-catalogue-staging.beyond.cessda.eu/api",
+      "version" : "6.2.0",
       "status" : "Available",
-      "http_code" : "200"
+      "http_code" : 302
     }, {
-      "capability_type" : "Front Office",
-      "endpoint" : "https://enes-discovery-hub.pilot.eosc-beyond.eu/",
+      "capability_type" : "Helpdesk",
+      "endpoint" : "https://helpdesk.cessda.eu/",
       "version" : "1.0.0",
       "status" : "Available",
-      "http_code" : "200"
+      "http_code" : 200
     } ]
   }, {
-    "generated" : "2026-05-12T15:37:20.877449+02:00",
+    "generated" : "2026-09-12T13:50:56.730578+01:00",
     "node_name" : "NFDI",
     "node_id" : "8",
     "node_pid" : "21.T15999/NFDI",
@@ -55,36 +123,42 @@
       "name" : "German National Research Data Infrastructure",
       "ror_id" : "https://ror.org/05qj6w324"
     },
-    "total_capabilities" : 4,
-    "available_capabilities" : 3,
+    "total_capabilities" : 5,
+    "available_capabilities" : 5,
     "report_file" : "dashboard/data/NFDI/endpoint_report.json",
     "capabilities" : [ {
-      "capability_type" : "Resource Catalogue",
-      "endpoint" : "https://public-data.desy.de",
-      "version" : "1.0.0",
-      "status" : "Available",
-      "http_code" : "200"
-    }, {
       "capability_type" : "PID",
       "endpoint" : "https://public-doi.desy.de",
       "version" : "1.0.0",
       "status" : "Available",
-      "http_code" : "200"
+      "http_code" : 200
     }, {
       "capability_type" : "Front Office",
       "endpoint" : "https://nfdi-pilot.desy.de",
       "version" : "1.0.0",
       "status" : "Available",
-      "http_code" : "200"
+      "http_code" : 200
     }, {
       "capability_type" : "AAI",
-      "endpoint" : "https://login-dev.helmholtz.de/oauth2",
+      "endpoint" : "https://login-dev.helmholtz.de/",
       "version" : "1.0.0",
-      "status" : "Not available",
-      "http_code" : "400"
+      "status" : "Available",
+      "http_code" : 200
+    }, {
+      "capability_type" : "Helpdesk",
+      "endpoint" : "https://helpdesk-nfdi-node.de/",
+      "version" : "1.0.0",
+      "status" : "Available",
+      "http_code" : 200
+    }, {
+      "capability_type" : "Monitoring",
+      "endpoint" : "https://status.devel.mon.argo.grnet.gr/public/tenants/NFDI/dashboard#Default",
+      "version" : "1.0.0",
+      "status" : "Available",
+      "http_code" : 200
     } ]
   }, {
-    "generated" : "2026-05-12T15:37:24.488449+02:00",
+    "generated" : "2026-09-12T13:50:58.966368+01:00",
     "node_name" : "METROFOOD",
     "node_id" : "9",
     "node_pid" : "21.T15999/METROFOOD",
@@ -101,28 +175,28 @@
       "endpoint" : "https://aai.staging.metrofood-services.eu/",
       "version" : "1.0.0",
       "status" : "Available",
-      "http_code" : "200"
+      "http_code" : 200
     }, {
       "capability_type" : "Helpdesk",
       "endpoint" : "https://helpdesk.metrofood-services.eu/",
       "version" : "1.0.0",
       "status" : "Available",
-      "http_code" : "200"
+      "http_code" : 200
     }, {
       "capability_type" : "Monitoring",
       "endpoint" : "https://beyond.ui.devel.mon.argo.grnet.gr/eoscbeyond/METROFOOD",
       "version" : "1.0.0",
       "status" : "Available",
-      "http_code" : "200"
+      "http_code" : 200
     }, {
       "capability_type" : "Resource Catalogue",
       "endpoint" : "https://catalogues.eosc.metrofood-services.eu/",
       "version" : "1.0.0",
       "status" : "Available",
-      "http_code" : "200"
+      "http_code" : 200
     } ]
   }, {
-    "generated" : "2026-05-12T15:37:40.736932+02:00",
+    "generated" : "2026-09-12T13:51:00.508842+01:00",
     "node_name" : "Instruct-ERIC",
     "node_id" : "10",
     "node_pid" : "21.T15999/Instruct-ERIC",
@@ -131,7 +205,7 @@
       "name" : "Instruct-ERIC",
       "ror_id" : "https://ror.org/05528ey35"
     },
-    "total_capabilities" : 5,
+    "total_capabilities" : 4,
     "available_capabilities" : 4,
     "report_file" : "dashboard/data/Instruct-ERIC/endpoint_report.json",
     "capabilities" : [ {
@@ -139,181 +213,211 @@
       "endpoint" : "https://pilot-node.instruct-eric.org/catalogue/services",
       "version" : "1.0.0",
       "status" : "Available",
-      "http_code" : "200"
-    }, {
-      "capability_type" : "Monitoring",
-      "endpoint" : "https://status.api.aria.services",
-      "version" : "1.0.0",
-      "status" : "Not found",
-      "http_code" : "404"
+      "http_code" : 200
     }, {
       "capability_type" : "Helpdesk",
       "endpoint" : "https://instruct-helpdesk.scc.kit.edu",
       "version" : "1.0.0",
       "status" : "Available",
-      "http_code" : "200"
+      "http_code" : 200
     }, {
       "capability_type" : "AAI",
       "endpoint" : "https://auth.aria.services/auth/realms/ARIA",
       "version" : "1.0.0",
       "status" : "Available",
-      "http_code" : "200"
+      "http_code" : 200
     }, {
       "capability_type" : "Front Office",
       "endpoint" : "https://instruct-eric.org",
       "version" : "1.0.0",
       "status" : "Available",
-      "http_code" : "200"
+      "http_code" : 200
     } ]
   }, {
-    "generated" : "2026-05-12T15:37:44.824279+02:00",
-    "node_name" : "EOSC-Beyond",
-    "node_id" : "4",
-    "node_pid" : "21.T15999/EOSC-BEYOND",
-    "node_endpoint" : "https://providers.sandbox.eosc-beyond.eu/node/endpoint",
+    "generated" : "2026-09-12T13:51:04.587835+01:00",
+    "node_name" : "LifeWatch-ERIC",
+    "node_id" : "11",
+    "node_pid" : "21.T15999/LifeWatch-ERIC",
+    "node_endpoint" : "https://metadatacatalogue.lifewatch.eu/srv/api/capabilities",
     "legal_entity" : {
-      "name" : "EGI",
-      "ror_id" : "https://ror.org/052jj4m32"
+      "name" : "LWE",
+      "ror_id" : "https://ror.org/04c04g438"
     },
-    "total_capabilities" : 9,
-    "available_capabilities" : 7,
-    "report_file" : "dashboard/data/EOSC-Beyond/endpoint_report.json",
+    "total_capabilities" : 3,
+    "available_capabilities" : 3,
+    "report_file" : "dashboard/data/LifeWatch-ERIC/endpoint_report.json",
     "capabilities" : [ {
-      "capability_type" : "Resource Catalogue",
-      "endpoint" : "https://providers.sandbox.eosc-beyond.eu/api",
-      "version" : "5.4",
-      "status" : "Available",
-      "http_code" : "302"
-    }, {
       "capability_type" : "AAI",
-      "endpoint" : "https://core-proxy.sandbox.eosc-beyond.eu/auth/realms/core",
+      "endpoint" : "https://lifewatch-proxy.pilot.eosc-beyond.eu/",
       "version" : "1.0.0",
       "status" : "Available",
-      "http_code" : "200"
-    }, {
-      "capability_type" : "Execution Framework",
-      "endpoint" : "https://deploy.sandbox.eosc-beyond.eu/",
-      "version" : "1.0.0",
-      "status" : "Available",
-      "http_code" : "200"
-    }, {
-      "capability_type" : "Monitoring",
-      "endpoint" : "https://core.sandbox.eosc-beyond.eu/",
-      "version" : "1.0.0",
-      "status" : "Not available",
-      "http_code" : "000"
-    }, {
-      "capability_type" : "Accounting",
-      "endpoint" : "https://ui.acc.argo.grnet.gr/",
-      "version" : "1.0.0",
-      "status" : "Available",
-      "http_code" : "200"
-    }, {
-      "capability_type" : "Order Management",
-      "endpoint" : "https://userspace.sandbox.eosc-beyond.eu/",
-      "version" : "3.60.0",
-      "status" : "Available",
-      "http_code" : "200"
-    }, {
-      "capability_type" : "Front Office",
-      "endpoint" : "https://userspace.sandbox.eosc-beyond.eu/",
-      "version" : "3.60.0",
-      "status" : "Available",
-      "http_code" : "200"
+      "http_code" : 200
     }, {
       "capability_type" : "Helpdesk",
-      "endpoint" : "https://ansible-awx.scc.kit.edu/webhook/docs",
+      "endpoint" : "https://helpdesk.lifewatch.eu/",
       "version" : "1.0.0",
-      "status" : "Not found",
-      "http_code" : "404"
-    }, {
-      "capability_type" : "Application Deployment Management",
-      "endpoint" : "https://deploy.sandbox.eosc-beyond.eu/adim",
-      "version" : "0.5.0",
       "status" : "Available",
-      "http_code" : "307"
+      "http_code" : 200
+    }, {
+      "capability_type" : "Resource Catalogue",
+      "endpoint" : "https://metadatacatalogue.lifewatch.eu/",
+      "version" : "1.0.0",
+      "status" : "Available",
+      "http_code" : 200
     } ]
   }, {
-    "generated" : "2026-05-12T15:37:49.943857+02:00",
-    "node_name" : "CESSDA",
-    "node_id" : "6",
-    "node_pid" : "21.T15999/CESSDA",
-    "node_endpoint" : "https://node-endpoint-staging.beyond.cessda.eu/api/endpoint",
+    "generated" : "2026-09-12T13:51:06.339926+01:00",
+    "node_name" : "ENES",
+    "node_id" : "7",
+    "node_pid" : "21.T15999/ENES",
+    "node_endpoint" : "https://enes-node-endpoint.pilot.eosc-beyond.eu/api/endpoint",
     "legal_entity" : {
-      "name" : "Consortium of European Social Science Data Archives",
-      "ror_id" : "https://ror.org/02wg9xc72"
+      "name" : "null",
+      "ror_id" : "null"
     },
     "total_capabilities" : 5,
     "available_capabilities" : 5,
-    "report_file" : "dashboard/data/CESSDA/endpoint_report.json",
+    "report_file" : "dashboard/data/ENES/endpoint_report.json",
     "capabilities" : [ {
-      "capability_type" : "Front Office",
-      "endpoint" : "https://marketplace-staging.cessda.eu/",
-      "version" : "4.1.0",
-      "status" : "Available",
-      "http_code" : "200"
-    }, {
       "capability_type" : "AAI",
-      "endpoint" : "https://idp.cessda.eu/",
+      "endpoint" : "https://enes-proxy.pilot.eosc-beyond.eu/",
       "version" : "1.0.0",
       "status" : "Available",
-      "http_code" : "200"
-    }, {
-      "capability_type" : "Monitoring",
-      "endpoint" : "https://cessda.ui.devel.mon.argo.grnet.gr/cessda/CORE",
-      "version" : "1.0.0",
-      "status" : "Available",
-      "http_code" : "200"
-    }, {
-      "capability_type" : "Resource Catalogue",
-      "endpoint" : "https://service-catalogue-staging.beyond.cessda.eu/",
-      "version" : "5.2.0",
-      "status" : "Available",
-      "http_code" : "200"
+      "http_code" : 200
     }, {
       "capability_type" : "Helpdesk",
-      "endpoint" : "https://helpdesk.cessda.eu/",
+      "endpoint" : "https://helpdesk.eneslab.pilot.eosc-beyond.eu/",
       "version" : "1.0.0",
       "status" : "Available",
-      "http_code" : "200"
+      "http_code" : 200
+    }, {
+      "capability_type" : "PID",
+      "endpoint" : "http://pidhs.disi.unitn.it:8000",
+      "version" : "1.0.0",
+      "status" : "Available",
+      "http_code" : 200
+    }, {
+      "capability_type" : "Resource Catalogue",
+      "endpoint" : "https://enes-resource-catalogue.pilot.eosc-beyond.eu/api/service/all",
+      "version" : "6.3.1",
+      "status" : "Available",
+      "http_code" : 200
+    }, {
+      "capability_type" : "Front Office",
+      "endpoint" : "https://enes-discovery-hub.pilot.eosc-beyond.eu",
+      "version" : "3.63.0",
+      "status" : "Available",
+      "http_code" : 200
     } ]
   }, {
-    "generated" : "2026-05-12T15:37:52.562869+02:00",
+    "generated" : "2026-09-12T13:51:07.203539+01:00",
+    "node_name" : "CNB-CSIC",
+    "node_id" : "13",
+    "node_pid" : "21.T15999/CNB-CSIC",
+    "node_endpoint" : "https://pilot-node.i2pc.es/api/endpoint",
+    "legal_entity" : {
+      "name" : "National Center for Biotechnology",
+      "ror_id" : "https://ror.org/015w4v032"
+    },
+    "total_capabilities" : 2,
+    "available_capabilities" : 2,
+    "report_file" : "dashboard/data/CNB-CSIC/endpoint_report.json",
+    "capabilities" : [ {
+      "capability_type" : "Front Office",
+      "endpoint" : "https://biocomp.cnb.csic.es/EMValidationService/",
+      "version" : "null",
+      "status" : "Available",
+      "http_code" : 200
+    }, {
+      "capability_type" : "AAI",
+      "endpoint" : "https://cnb-csic-proxy.pilot.eosc-beyond.eu/auth/realms/cnb-csic",
+      "version" : "null",
+      "status" : "Available",
+      "http_code" : 200
+    } ]
+  }, {
+    "generated" : "2026-09-12T13:51:09.258676+01:00",
     "node_name" : "NI4OS-EUROPE",
     "node_id" : "3",
     "node_pid" : "21.T15999/NI4OS-EUROPE",
-    "node_endpoint" : "https://frontoffice.ni4os.eu/api/endpoint",
+    "node_endpoint" : "https://node.ni4os.eu/api/endpoint",
     "legal_entity" : {
       "name" : "National Infrastructures for Research and Technology -  GRNET S.A",
       "ror_id" : "https://ror.org/05tcasm11"
     },
-    "total_capabilities" : 4,
-    "available_capabilities" : 3,
+    "total_capabilities" : 5,
+    "available_capabilities" : 5,
     "report_file" : "dashboard/data/NI4OS-EUROPE/endpoint_report.json",
     "capabilities" : [ {
       "capability_type" : "Front Office",
       "endpoint" : "https://frontoffice.ni4os.eu/",
       "version" : "v3.61.0",
       "status" : "Available",
-      "http_code" : "200"
+      "http_code" : 200
     }, {
       "capability_type" : "AAI",
       "endpoint" : "https://aai.ni4os.eu",
       "version" : "v1.0",
       "status" : "Available",
-      "http_code" : "200"
+      "http_code" : 200
     }, {
       "capability_type" : "Monitoring",
-      "endpoint" : "https://api.argo.grnet.gr",
+      "endpoint" : "https://status.devel.mon.argo.grnet.gr/public/tenants/NI4OS/capabilities",
       "version" : "v2.0",
-      "status" : "Not found",
-      "http_code" : "404"
+      "status" : "Available",
+      "http_code" : 200
     }, {
       "capability_type" : "Resource Catalogue",
       "endpoint" : "https://cat.ni4os.eu/api",
       "version" : "v5.11",
       "status" : "Available",
-      "http_code" : "302"
+      "http_code" : 302
+    }, {
+      "capability_type" : "Helpdesk",
+      "endpoint" : "https://helpdesk.ni4os.eu/",
+      "version" : "v7.1.3",
+      "status" : "Available",
+      "http_code" : 200
     } ]
+  }, {
+    "generated" : "2026-09-12T13:51:10.277857+01:00",
+    "node_name" : "EGI Pilot Node",
+    "node_id" : "21",
+    "node_pid" : "21.T15999/EGI",
+    "node_endpoint" : "https://node-egi.pilot.eosc-beyond.eu/api/endpoint",
+    "legal_entity" : {
+      "name" : "EGI",
+      "ror_id" : "https://ror.org/052jj4m32"
+    },
+    "total_capabilities" : 2,
+    "available_capabilities" : 1,
+    "report_file" : "dashboard/data/EGI Pilot Node/endpoint_report.json",
+    "capabilities" : [ {
+      "capability_type" : "Resource Catalogue",
+      "endpoint" : "https://eb-servicecatalogue-egi.pilot.eosc-beyond.eu/services",
+      "version" : "0.0.5",
+      "status" : "Not available",
+      "http_code" : 405
+    }, {
+      "capability_type" : "AAI",
+      "endpoint" : "https://aai-demo.egi.eu/auth/realms/egi",
+      "version" : "demo",
+      "status" : "Available",
+      "http_code" : 200
+    } ]
+  }, {
+    "generated" : "2026-09-12T13:51:10.513186+01:00",
+    "node_name" : "e-INFRA_CZ",
+    "node_id" : "12",
+    "node_pid" : "21.T15999/e-INFRA_CZ",
+    "node_endpoint" : "https://res-catalogue.cloud.cesnet.cz/api",
+    "legal_entity" : {
+      "name" : "Czech Education and Scientific Network",
+      "ror_id" : "https://ror.org/050dkka69"
+    },
+    "total_capabilities" : 0,
+    "available_capabilities" : 0,
+    "report_file" : "dashboard/data/e-INFRA_CZ/endpoint_report.json",
+    "capabilities" : [ ]
   } ]
 }

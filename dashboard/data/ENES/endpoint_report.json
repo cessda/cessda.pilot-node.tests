@@ -1,5 +1,5 @@
 {
-  "generated" : "2026-05-12T15:37:19.343526+02:00",
+  "generated" : "2026-09-12T13:51:06.339926+01:00",
   "node_name" : "ENES",
   "node_id" : "7",
   "node_pid" : "21.T15999/ENES",
@@ -16,30 +16,30 @@
     "endpoint" : "https://enes-proxy.pilot.eosc-beyond.eu/",
     "version" : "1.0.0",
     "status" : "Available",
-    "http_code" : "200"
+    "http_code" : 200
   }, {
     "capability_type" : "Helpdesk",
     "endpoint" : "https://helpdesk.eneslab.pilot.eosc-beyond.eu/",
     "version" : "1.0.0",
     "status" : "Available",
-    "http_code" : "200"
+    "http_code" : 200
   }, {
     "capability_type" : "PID",
     "endpoint" : "http://pidhs.disi.unitn.it:8000",
     "version" : "1.0.0",
     "status" : "Available",
-    "http_code" : "200"
+    "http_code" : 200
   }, {
     "capability_type" : "Resource Catalogue",
-    "endpoint" : "https://enes-resource-catalogue.pilot.eosc-beyond.eu/",
-    "version" : "1.0.0",
+    "endpoint" : "https://enes-resource-catalogue.pilot.eosc-beyond.eu/api/service/all",
+    "version" : "6.3.1",
     "status" : "Available",
-    "http_code" : "200"
+    "http_code" : 200
   }, {
     "capability_type" : "Front Office",
-    "endpoint" : "https://enes-discovery-hub.pilot.eosc-beyond.eu/",
-    "version" : "1.0.0",
+    "endpoint" : "https://enes-discovery-hub.pilot.eosc-beyond.eu",
+    "version" : "3.63.0",
     "status" : "Available",
-    "http_code" : "200"
+    "http_code" : 200
   } ]
 }
