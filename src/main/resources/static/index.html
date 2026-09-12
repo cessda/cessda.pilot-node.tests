@@ -557,16 +557,17 @@ function summariseArgo(data) {
   return null;
 }
 
-// front_office_metrics_report.json (CheckOtherMetrics): Metrics 4, 5, 6, 10
-// and 11. Metric 10 is reported as an alias of Metric 4 (see
-// CheckOtherMetrics Javadoc) and is excluded from the "actionable" count
-// here, same as on the node detail page, so it isn't double-counted.
+// front_office_metrics_report.json (CheckOtherMetrics): Metrics 4, 5, 6,
+// 9, 10 and 11 — six metrics in total. Metric 10 is reported as an alias
+// of Metric 4 (see CheckOtherMetrics Javadoc) and its "visible" value
+// simply mirrors Metric 4's, but it's still counted here, same as on the
+// node detail page, so this summary's denominator matches the six
+// metric cards shown there.
 function summariseFrontOffice(data) {
   if (!data) return null;
-  const metrics    = Array.isArray(data.metrics) ? data.metrics : [];
-  const actionable = metrics.filter(m => !m.alias_of_metric);
-  const visible     = actionable.filter(m => m.visible).length;
-  return { visible, total: actionable.length };
+  const metrics = Array.isArray(data.metrics) ? data.metrics : [];
+  const visible = metrics.filter(m => m.visible).length;
+  return { visible, total: metrics.length };
 }
 
 // ── Colour / status helpers ───────────────────────────────────────────────────

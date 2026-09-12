@@ -177,9 +177,10 @@ Each metric renders as its own card, in numerical order:
   another networked Pilot Node's Front Office. Shown the same way
   as Metric 5, per peer node.
 
-The panel header shows a count of visible metrics out of the total
-that are actually queried (Metric 10's alias is excluded from this
-count, since it isn't a separate check).
+The panel header shows a count of visible metrics out of all six
+cards shown below it, Metric 10's alias card included — its
+"visible" value simply mirrors Metric 4's, so the header total
+always matches the number of cards on screen.
 
 The data comes from:
 
