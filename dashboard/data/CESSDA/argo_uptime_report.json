@@ -1,31 +1,61 @@
 {
-  "generated" : "2026-05-12T14:33:46.64195+02:00",
-  "api_source" : "https://api.devel.mon.argo.grnet.gr/api/v2/results/CORE/SERVICEGROUPS?start_time=2026-04-12T00:00:00Z&end_time=2026-05-12T23:59:59Z",
+  "generated" : "2026-09-12T13:51:35.114057+01:00",
+  "api_source" : "https://api-status.devel.mon.argo.grnet.gr/v1/public/nodes/CESSDA/capabilities/monitoring/metrics?start_date=2026-08-12&end_date=2026-09-12&granularity=monthly",
+  "resolved_data_endpoint" : "https://api-status.devel.mon.argo.grnet.gr/v1/public/nodes/CESSDA/capabilities/monitoring/metrics?start_date=2026-08-12&end_date=2026-09-12&granularity=monthly",
+  "data_source" : "capability-metrics-api",
   "period" : {
-    "start" : "2026-04-12T00:00:00Z",
-    "end" : "2026-05-12T23:59:59Z"
+    "start" : "2026-08-12T00:00:00Z",
+    "end" : "2026-09-12T23:59:59Z"
   },
   "project" : "CESSDA",
   "endpoints" : [ {
-    "name" : "Data Catalogue",
-    "type" : "SERVICEGROUPS",
-    "uptime_percentage" : 100.0,
+    "name" : "CESSDA Data Archiving Guide",
+    "type" : "SERVICE",
     "average_availability" : 100.0,
+    "uptime_percentage" : 100.0,
     "average_reliability" : 100.0,
-    "days_monitored" : 30
+    "days_monitored" : 1
   }, {
-    "name" : "Metadata Validator",
-    "type" : "SERVICEGROUPS",
-    "uptime_percentage" : 100.0,
+    "name" : "CESSDA Data Catalogue",
+    "type" : "SERVICE",
     "average_availability" : 100.0,
+    "uptime_percentage" : 100.0,
     "average_reliability" : 100.0,
-    "days_monitored" : 30
+    "days_monitored" : 1
   }, {
-    "name" : "Vocabulary Service",
-    "type" : "SERVICEGROUPS",
-    "uptime_percentage" : 100.0,
+    "name" : "CESSDA Data Management Expert Guide",
+    "type" : "SERVICE",
     "average_availability" : 100.0,
+    "uptime_percentage" : 100.0,
     "average_reliability" : 100.0,
-    "days_monitored" : 30
+    "days_monitored" : 1
+  }, {
+    "name" : "CESSDA European Language Social Science Thesaurus",
+    "type" : "SERVICE",
+    "average_availability" : 100.0,
+    "uptime_percentage" : 100.0,
+    "average_reliability" : 100.0,
+    "days_monitored" : 1
+  }, {
+    "name" : "CESSDA Metadata Validator",
+    "type" : "SERVICE",
+    "average_availability" : 100.0,
+    "uptime_percentage" : 100.0,
+    "average_reliability" : 100.0,
+    "days_monitored" : 1
+  }, {
+    "name" : "CESSDA Vocabulary Service",
+    "type" : "SERVICE",
+    "average_availability" : 100.0,
+    "uptime_percentage" : 100.0,
+    "average_reliability" : 100.0,
+    "days_monitored" : 1
+  }, {
+    "name" : "CESSDA Workspace",
+    "type" : "SERVICE",
+    "average_availability" : 100.0,
+    "uptime_percentage" : 100.0,
+    "average_reliability" : 100.0,
+    "days_monitored" : 1
   } ]
 }

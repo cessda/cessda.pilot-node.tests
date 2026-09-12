@@ -1,5 +1,5 @@
 {
-  "generated" : "2026-05-12T15:37:20.877449+02:00",
+  "generated" : "2026-09-12T13:50:56.730578+01:00",
   "node_name" : "NFDI",
   "node_id" : "8",
   "node_pid" : "21.T15999/NFDI",
@@ -8,32 +8,38 @@
     "name" : "German National Research Data Infrastructure",
     "ror_id" : "https://ror.org/05qj6w324"
   },
-  "total_capabilities" : 4,
-  "available_capabilities" : 3,
+  "total_capabilities" : 5,
+  "available_capabilities" : 5,
   "report_file" : "dashboard/data/NFDI/endpoint_report.json",
   "capabilities" : [ {
-    "capability_type" : "Resource Catalogue",
-    "endpoint" : "https://public-data.desy.de",
-    "version" : "1.0.0",
-    "status" : "Available",
-    "http_code" : "200"
-  }, {
     "capability_type" : "PID",
     "endpoint" : "https://public-doi.desy.de",
     "version" : "1.0.0",
     "status" : "Available",
-    "http_code" : "200"
+    "http_code" : 200
   }, {
     "capability_type" : "Front Office",
     "endpoint" : "https://nfdi-pilot.desy.de",
     "version" : "1.0.0",
     "status" : "Available",
-    "http_code" : "200"
+    "http_code" : 200
   }, {
     "capability_type" : "AAI",
-    "endpoint" : "https://login-dev.helmholtz.de/oauth2",
+    "endpoint" : "https://login-dev.helmholtz.de/",
     "version" : "1.0.0",
-    "status" : "Not available",
-    "http_code" : "400"
+    "status" : "Available",
+    "http_code" : 200
+  }, {
+    "capability_type" : "Helpdesk",
+    "endpoint" : "https://helpdesk-nfdi-node.de/",
+    "version" : "1.0.0",
+    "status" : "Available",
+    "http_code" : 200
+  }, {
+    "capability_type" : "Monitoring",
+    "endpoint" : "https://status.devel.mon.argo.grnet.gr/public/tenants/NFDI/dashboard#Default",
+    "version" : "1.0.0",
+    "status" : "Available",
+    "http_code" : 200
   } ]
 }

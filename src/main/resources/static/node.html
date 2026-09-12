@@ -951,10 +951,13 @@ function renderArgoPanel(data) {
 
 // ── Federated Search panel ─────────────────────────────────────────
 // Renders front_office_metrics_report.json (CheckOtherMetrics), covering
-// Metrics 4, 5, 6, 10 and 11 from the Proposed Validation Metrics doc.
-// Metric 10 is reported as an alias of Metric 4 (see CheckOtherMetrics
-// Javadoc) rather than a separately-run check, so it isn't counted
-// towards the "actionable" total in the header badge.
+// Metrics 4, 5, 6, 9, 10 and 11 from the Proposed Validation Metrics doc
+// — six metric cards in total. Metric 10 is reported as an alias of
+// Metric 4 (see CheckOtherMetrics Javadoc) rather than a separately-run
+// check, and its "visible" value simply mirrors Metric 4's, but it's
+// still one of the six cards shown here, so the header badge counts it
+// too — the badge's denominator should match the number of cards on
+// screen.
 
 function fomStatusTag(m) {
   const cls = m.visible ? 'status-available' : 'status-error';
@@ -1054,11 +1057,10 @@ function renderFrontOfficeMetricsPanel(data) {
     </div>`;
   }
 
-  // Header badge counts "actionable" metrics only — the Metric 10 alias
-  // entry shares its result with Metric 4 and isn't a distinct check.
-  const actionable = metrics.filter(m => !m.alias_of_metric);
-  const visibleCount = actionable.filter(m => m.visible).length;
-  const bCls = visibleCount === actionable.length ? 'badge-ok'
+  // Header badge counts every metric card shown below, Metric 10's alias
+  // card included, so the denominator always matches what's on screen.
+  const visibleCount = metrics.filter(m => m.visible).length;
+  const bCls = visibleCount === metrics.length ? 'badge-ok'
              : visibleCount > 0 ? 'badge-warn' : 'badge-error';
 
   const cards = metrics.map(renderFomCard).join('');
@@ -1067,7 +1069,7 @@ function renderFrontOfficeMetricsPanel(data) {
     <div class="panel">
       <div class="panel-header">
         <div class="panel-header-left"><span class="panel-icon">🔗</span> Federated Search</div>
-        <span class="badge ${bCls}">${visibleCount}/${actionable.length} visible</span>
+        <span class="badge ${bCls}">${visibleCount}/${metrics.length} visible</span>
       </div>
       <div class="panel-body"><div class="fom-grid">${cards}</div></div>
     </div>`;

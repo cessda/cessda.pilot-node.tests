@@ -1,5 +1,5 @@
 {
-  "generated" : "2026-05-12T15:37:24.488449+02:00",
+  "generated" : "2026-09-12T13:50:58.966368+01:00",
   "node_name" : "METROFOOD",
   "node_id" : "9",
   "node_pid" : "21.T15999/METROFOOD",
@@ -16,24 +16,24 @@
     "endpoint" : "https://aai.staging.metrofood-services.eu/",
     "version" : "1.0.0",
     "status" : "Available",
-    "http_code" : "200"
+    "http_code" : 200
   }, {
     "capability_type" : "Helpdesk",
     "endpoint" : "https://helpdesk.metrofood-services.eu/",
     "version" : "1.0.0",
     "status" : "Available",
-    "http_code" : "200"
+    "http_code" : 200
   }, {
     "capability_type" : "Monitoring",
     "endpoint" : "https://beyond.ui.devel.mon.argo.grnet.gr/eoscbeyond/METROFOOD",
     "version" : "1.0.0",
     "status" : "Available",
-    "http_code" : "200"
+    "http_code" : 200
   }, {
     "capability_type" : "Resource Catalogue",
     "endpoint" : "https://catalogues.eosc.metrofood-services.eu/",
     "version" : "1.0.0",
     "status" : "Available",
-    "http_code" : "200"
+    "http_code" : 200
   } ]
 }
