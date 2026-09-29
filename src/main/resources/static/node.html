@@ -695,6 +695,40 @@ function renderEndpointPanel(data) {
     </div>`;
 }
 
+// Core Service integrations (ARGO federation tenant): health of the node's
+// fabric integration endpoints, shown beneath the Exchange services table.
+// Separate from Metric 12 (the node's own Exchange services) and from the
+// Metric 13 counts above.
+function renderCoreIntegrations(ci) {
+  if (!ci || !Array.isArray(ci.endpoints) || ci.endpoints.length === 0) return '';
+  const cls = v => v === 'OK' ? 'badge-ok'
+                 : v === 'WARNING' ? 'badge-warn'
+                 : v === 'CRITICAL' ? 'badge-error' : 'badge-missing';
+  const rows = ci.endpoints.map(e => {
+    const worst = e.worst_status && e.worst_status !== e.status
+      ? ` <span style="font-family:var(--mono);font-size:0.65rem;color:var(--grey-400);">(worst today: ${e.worst_status})</span>` : '';
+    return `
+      <tr>
+        <td><div class="cat-name">${e.capability_type || '(unknown)'}</div></td>
+        <td><div class="cat-url">${e.url ? `<a href="${e.url}" target="_blank" rel="noreferrer">${e.url}</a>` : '—'}</div></td>
+        <td><span class="badge ${cls(e.status)}">${e.status || 'UNKNOWN'}</span>${worst}</td>
+      </tr>`;
+  }).join('');
+  const allOk = ci.ok_endpoints === ci.total_endpoints;
+  return `
+    <div style="display:flex;align-items:center;justify-content:space-between;margin:1.2rem 0 0.4rem;">
+      <div class="cat-name">Core Service integrations</div>
+      <span class="badge ${allOk ? 'badge-ok' : ci.ok_endpoints > 0 ? 'badge-warn' : 'badge-error'}">${ci.ok_endpoints}/${ci.total_endpoints} OK</span>
+    </div>
+    <table class="cat-table">
+      <thead><tr><th>Integration</th><th>URL</th><th>Status</th></tr></thead>
+      <tbody>${rows}</tbody>
+    </table>
+    <div style="font-family:var(--mono);font-size:0.65rem;color:var(--grey-400);margin-top:0.3rem;">
+      Source: ARGO ${ci.tenant || 'federation'} tenant, ${ci.period_start ? ci.period_start.slice(0,10) : ''}
+    </div>`;
+}
+
 // ── Exchange Services panel ──────────────────────────────────────────────────
 
 function renderCataloguePanel(data) {
@@ -797,6 +831,7 @@ function renderCataloguePanel(data) {
           <thead><tr><th>Name</th><th>URL</th><th>Response</th><th>Content</th><th>Status</th></tr></thead>
           <tbody>${rows}</tbody>
         </table>
+        ${renderCoreIntegrations(data.core_integrations)}
       </div>
     </div>`;
 }

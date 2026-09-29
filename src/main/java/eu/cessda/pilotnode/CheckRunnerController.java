@@ -66,6 +66,8 @@ import com.fasterxml.jackson.databind.ObjectMapper;
  *   check.node-name      = CESSDA              # NODE_NAME arg for all three checks
  *   check.api-key-node   =                     # API key for CheckNodeCapabilities
  *   check.api-key-argo   =                     # optional legacy-ARGO-API fallback key for CheckServiceUptime
+ *   check.argo-status-api-base     = https://api-status.devel.mon.argo.grnet.gr  # ARGO status API for Core Service integrations
+ *   check.argo-federation-tenant   = EOSC-BEYOND-FEDERATION                      # ARGO tenant monitoring the Core Service integrations
  * </pre>
  *
  * <p>Check All can also be run on a schedule instead of (or as well as) by
@@ -95,6 +97,7 @@ public class CheckRunnerController {
     private final String nodeName;
     private final String argoApiKey;
     private final String nodeApiKey;
+    private final CheckCatalogueServices.CoreIntegrationsSource coreSource;
     private final JobRunner jobRunner;
     private final HttpClient httpClient;
     private final ObjectMapper mapper;
@@ -111,6 +114,8 @@ public class CheckRunnerController {
             @Value("${check.node-name:}")     String nodeName,
             @Value("${check.api-key-argo:}")  String argoApiKey,
             @Value("${check.api-key-node:}") String nodeApiKey,
+            @Value("${check.argo-status-api-base:" + CheckCatalogueServices.CoreIntegrationsSource.DEFAULT_API_BASE + "}") String argoStatusApiBase,
+            @Value("${check.argo-federation-tenant:" + CheckCatalogueServices.CoreIntegrationsSource.DEFAULT_TENANT + "}") String argoFederationTenant,
             JobRunner jobRunner,
             HttpClient httpClient,
             ObjectMapper mapper) {
@@ -118,6 +123,8 @@ public class CheckRunnerController {
         this.nodeName    = nodeName;
         this.argoApiKey  = argoApiKey;
         this.nodeApiKey  = nodeApiKey;
+        this.coreSource  = new CheckCatalogueServices.CoreIntegrationsSource(
+                argoStatusApiBase.strip(), argoFederationTenant.strip());
         this.jobRunner = jobRunner;
         this.httpClient = httpClient;
         this.mapper = mapper;
@@ -230,7 +237,7 @@ public class CheckRunnerController {
                 // Arg order: NODE_NAME, node_pid, api_base_url, [quantity]
                 CheckCatalogueServices.run(dataDirPath, targetNode,
                         nodePid.isBlank() ? null : nodePid,
-                        catalogueUrl, 10, httpClient, mapper);
+                        catalogueUrl, 10, httpClient, mapper, coreSource);
                 record.markDone("catalogue_services_report.json written for " + targetNode);
             }
         );
@@ -303,7 +310,7 @@ public class CheckRunnerController {
         }
 
         JobRecord rec = jobRunner.start("check-all", record -> {
-            CheckAll.Result result = CheckAll.run(dataDirPath, nodeApiKey, argoApiKey, httpClient, mapper);
+            CheckAll.Result result = CheckAll.run(dataDirPath, nodeApiKey, argoApiKey, coreSource, httpClient, mapper);
             record.markDone(result.summary());
         });
 

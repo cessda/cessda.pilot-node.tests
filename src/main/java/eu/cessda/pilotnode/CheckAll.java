@@ -47,10 +47,13 @@ import com.fasterxml.jackson.databind.ObjectMapper;
  * <p>A failure in one Node's checks does not stop the run: each of the three
  * per-Node checks is attempted independently and failures are counted and
  * logged, so a single unreachable service doesn't prevent every other Node
- * from being checked. Only a failure of the initial
- * {@code CheckNodeCapabilities} pass aborts the whole run, since every later
- * step depends on the Node Registry summary and per-Node
- * {@code endpoint_report.json} files it writes.</p>
+ * from being checked. The same applies to the initial
+ * {@code CheckNodeCapabilities} pass: if it fails (for example while the
+ * Federation Registry is unavailable) the run carries on using the Node
+ * Registry summary and per-Node {@code endpoint_report.json} files left by the
+ * last successful run, and says so in the result. Only if there is no
+ * existing {@code node_registry_summary.json} to fall back on is the run
+ * aborted, since there is then no list of Nodes to check.</p>
  *
  * <p>Exchange Services specifically needs a Resource Catalogue endpoint for
  * the Node, which is read from that Node's freshly-written
@@ -76,37 +79,60 @@ public class CheckAll {
      *
      * @param dashboardDir Node Registry / report output directory
      * @param nodeApiKey   API key for {@code CheckNodeCapabilities}
+     * @param coreSource   ARGO federation tenant used for the Core Service
+     *                     integrations shown in the Exchange Services report
      * @param argoApiKey   optional legacy-ARGO-API fallback key for
      *                     {@code CheckServiceUptime}; may be blank
      * @param http         shared HTTP client
      * @param mapper       shared Jackson mapper
      * @return a summary of what ran and what was skipped or failed
-     * @throws IOException if the initial {@code CheckNodeCapabilities} pass
-     *                      fails, or {@code node_registry_summary.json}
-     *                      cannot be read back afterwards
+     * @throws IOException if {@code node_registry_summary.json} cannot be
+     *                      read — including when the initial
+     *                      {@code CheckNodeCapabilities} pass failed and there
+     *                      is no earlier summary to fall back on
      */
     public static Result run(Path dashboardDir, String nodeApiKey, String argoApiKey,
+                              CheckCatalogueServices.CoreIntegrationsSource coreSource,
                               HttpClient http, ObjectMapper mapper) throws IOException {
 
         log.info("Check All — starting with CheckNodeCapabilities");
-        CheckNodeCapabilities.run(
-                nodeApiKey,
-                EnumSet.of(CheckNodeCapabilities.OutputFormat.JSON),
-                dashboardDir,
-                http,
-                mapper);
+        String capabilitiesError = null;
+        try {
+            CheckNodeCapabilities.run(
+                    nodeApiKey,
+                    EnumSet.of(CheckNodeCapabilities.OutputFormat.JSON),
+                    dashboardDir,
+                    http,
+                    mapper);
+        } catch (IOException | RuntimeException e) {
+            capabilitiesError = String.valueOf(e.getMessage());
+            log.log(Level.WARNING,
+                    "Check All — CheckNodeCapabilities failed ({0}); continuing with existing data",
+                    capabilitiesError);
+        }
 
-        List<String> nodeNames = readNodeNames(dashboardDir, mapper);
-        log.log(Level.INFO, "Check All — CheckNodeCapabilities done, checking {0} node(s)",
-                nodeNames.size());
+        List<String> nodeNames;
+        try {
+            nodeNames = readNodeNames(dashboardDir, mapper);
+        } catch (IOException e) {
+            if (capabilitiesError != null) {
+                throw new IOException("CheckNodeCapabilities failed (" + capabilitiesError
+                        + ") and there is no existing node_registry_summary.json to fall back on", e);
+            }
+            throw e;
+        }
+        log.log(Level.INFO, "Check All — CheckNodeCapabilities {0}, checking {1} node(s)",
+                new Object[]{capabilitiesError == null ? "done" : "failed (using existing data)",
+                        nodeNames.size()});
 
         Result result = new Result(nodeNames.size());
+        result.capabilitiesError = capabilitiesError;
         LocalDate startDate = LocalDate.now().minusMonths(1);
         LocalDate endDate = LocalDate.now();
 
         for (String nodeName : nodeNames) {
             try {
-                runCatalogueServices(dashboardDir, nodeName, mapper, http);
+                runCatalogueServices(dashboardDir, nodeName, mapper, http, coreSource);
                 result.catalogueOk++;
             } catch (SkippedException e) {
                 result.catalogueSkipped++;
@@ -177,7 +203,8 @@ public class CheckAll {
      *                           capability endpoint to check
      */
     private static void runCatalogueServices(Path dashboardDir, String nodeName, ObjectMapper mapper,
-                                              HttpClient http)
+                                              HttpClient http,
+                                              CheckCatalogueServices.CoreIntegrationsSource coreSource)
             throws IOException, URISyntaxException, InterruptedException, SkippedException {
 
         Path reportPath = dashboardDir.resolve(nodeName).resolve("endpoint_report.json");
@@ -202,7 +229,7 @@ public class CheckAll {
         URI catalogueUrl = new URI(catalogueUrlString);
         CheckCatalogueServices.run(dashboardDir, nodeName,
                 (nodePid == null || nodePid.isBlank()) ? null : nodePid,
-                catalogueUrl, CATALOGUE_QUANTITY, http, mapper);
+                catalogueUrl, CATALOGUE_QUANTITY, http, mapper, coreSource);
     }
 
     /** Signals that a per-Node check was deliberately skipped, not failed. */
@@ -226,6 +253,8 @@ public class CheckAll {
         public int uptimeFailed;
         public int metricsOk;
         public int metricsFailed;
+        /** Non-null if the initial CheckNodeCapabilities pass failed and existing data was used. */
+        public String capabilitiesError;
 
         Result(int totalNodes) {
             this.totalNodes = totalNodes;
@@ -233,7 +262,9 @@ public class CheckAll {
 
         /** A short human-readable summary, suitable for {@code JobRecord.markDone(...)}. */
         public String summary() {
-            return "Checked %d node(s). Exchange Services: %d ok, %d skipped, %d failed. "
+            return (capabilitiesError == null ? ""
+                    : "Node Capabilities failed (%s) — used existing data. ".formatted(capabilitiesError))
+                    + "Checked %d node(s). Exchange Services: %d ok, %d skipped, %d failed. "
                     .formatted(totalNodes, catalogueOk, catalogueSkipped, catalogueFailed)
                     + "Service Monitoring: %d ok, %d failed. ".formatted(uptimeOk, uptimeFailed)
                     + "Federated Search: %d ok, %d failed.".formatted(metricsOk, metricsFailed);

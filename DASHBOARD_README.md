@@ -128,6 +128,13 @@ node (or one of its three checks) doesn't stop the run; the job's final
 message reports how many nodes were checked and an ok/skipped/failed count
 per check type.
 
+If the initial `CheckNodeCapabilities` pass fails (for example while the
+Federation Registry is unavailable), the run carries on using the existing
+`node_registry_summary.json` and per-node `endpoint_report.json` files from
+the last successful run, and the job message starts with a "Node Capabilities
+failed … used existing data" note. It only aborts if there is no existing
+`node_registry_summary.json` to fall back on.
+
 Triggered via: `POST /api/run/check-all` — no body required, same
 `check.api-key-node` requirement as `CheckNodeCapabilities`. Can also be run
 on a schedule instead of (or as well as) by hand — see **Scheduled Check
@@ -270,6 +277,9 @@ The page shows:
     URL, HTTP status, and version, grouped by compliance tier.
 - **Exchange Services Report** — table of services with name, abbreviation,
     URL, and availability status.
+    Below it, a **Core Service integrations** table shows the current ARGO
+    status (`OK` / `WARNING` / `CRITICAL`) of the node's fabric integration
+    endpoints, when available.
 - **ARGO Uptime Report** — one card per monitored service, each showing
     Availability, Reliability, and Uptime percentages plus how many months
     (or days, for the dashboard-scrape and legacy sources) were monitored,
