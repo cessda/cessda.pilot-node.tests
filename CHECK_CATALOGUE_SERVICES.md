@@ -14,9 +14,6 @@ this check is labelled **Exchange Services**.
   directory
 - Falls back automatically to the Sandbox Resource Catalogue, then to a
   node-PID keyword search, if the node's own API is unavailable
-- Adds a `core_integrations` block with the current health of the node's Core
-  Service integration endpoints (AAI, Resource Catalogue, Helpdesk, ...) from
-  the ARGO federation tenant (see below)
 
 ## Running via the Dashboard
 
@@ -186,46 +183,6 @@ From each service in the API response, the check extracts:
 
 And, for each service with a `webpage`, from the webpage check itself:
 `http_code`, `content_type`, `content_valid`, `response_time_ms`.
-
-## Core Service integrations (ARGO federation tenant)
-
-Separately from the node's own Exchange services, the federation-wide ARGO
-tenant `EOSC-BEYOND-FEDERATION` monitors each node's Core Service integration
-endpoints (the fabric). After the Exchange services are checked, one call is
-made to:
-
-```text
-GET https://api-status.devel.mon.argo.grnet.gr/v1/public/tenants/EOSC-BEYOND-FEDERATION/status/Default/endpoints?start-time=<today>T00:00:00Z&end-time=<today>T23:59:59Z
-```
-
-The base URL and tenant come from `application.properties` (defaults shown):
-
-```properties
-check.argo-status-api-base   = https://api-status.devel.mon.argo.grnet.gr
-check.argo-federation-tenant = EOSC-BEYOND-FEDERATION
-```
-
-When `CheckCatalogueServices` is run directly from the command line, these
-defaults are used.
-
-The response is grouped by node (`groups[].name` matches the node name,
-case-insensitively), then by capability type, with a list of timestamped
-statuses (`OK`, `WARNING`, `CRITICAL`) per endpoint. The node's group is
-written to `catalogue_services_report.json` as `core_integrations`:
-
-| Field | Description |
-| ----- | ----------- |
-| `total_endpoints` / `ok_endpoints` | Number of integration endpoints, and how many are currently `OK` |
-| `endpoints[].capability_type` / `url` | The integration and its monitored URL |
-| `endpoints[].status` | Latest status in the window |
-| `endpoints[].worst_status` | Worst status seen in the window |
-| `source`, `tenant`, `period_start`, `period_end` | Provenance of the data |
-
-This data is independent of the ARGO Uptime Report (Metric 12, which covers
-the node's Exchange services) and does not affect `total_services`,
-`healthy_services` or `pct_healthy` (Metric 13). The lookup is best effort: if
-the ARGO feed is unreachable or has no group for the node, `core_integrations`
-is omitted and the check still succeeds.
 
 ## Metric 13 (Proposed Validation Metrics document)
 

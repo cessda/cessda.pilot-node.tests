@@ -438,6 +438,13 @@
         </div>
         <div class="run-item" role="menuitem">
           <div class="run-item-info">
+            <div class="run-item-label">Core Service integrations</div>
+            <div class="run-item-desc">CheckCoreIntegrations · core_integrations_report.json</div>
+          </div>
+          <button class="run-btn" id="btn-core-integrations" onclick="runCoreIntegrationsCheck()">Run</button>
+        </div>
+        <div class="run-item" role="menuitem">
+          <div class="run-item-info">
             <div class="run-item-label">Federated Search</div>
             <div class="run-item-desc">CheckOtherMetrics · front_office_metrics_report.json</div>
           </div>
@@ -618,7 +625,24 @@ function buildOverview(ep, cat, argo) {
 
 // ── Endpoint Report panel ─────────────────────────────────────────────────────
 
-function renderEndpointPanel(data) {
+// ARGO federation-tenant status (core_integrations_report.json) for one
+// capability: matched on capability type, preferring the same endpoint URL.
+function findCoreStatus(core, cap) {
+  if (!core || !Array.isArray(core.endpoints)) return null;
+  const norm = u => (u || '').replace(/\/+$/, '').toLowerCase();
+  const sameType = core.endpoints.filter(e => e.capability_type === cap.capability_type);
+  return sameType.find(e => norm(e.url) === norm(cap.endpoint)) || sameType[0] || null;
+}
+
+function coreStatusBadge(cs) {
+  if (!cs) return '';
+  const cls = cs.status === 'OK' ? 'badge-ok' : cs.status === 'WARNING' ? 'badge-warn'
+            : cs.status === 'CRITICAL' ? 'badge-error' : 'badge-missing';
+  const worst = cs.worst_status && cs.worst_status !== cs.status ? ` (worst today: ${cs.worst_status})` : '';
+  return `<div class="ep-version" style="margin-top:0.4rem;">ARGO monitoring: <span class="badge ${cls}">${cs.status}</span>${worst}</div>`;
+}
+
+function renderEndpointPanel(data, core) {
   if (!data) {
     return `<div class="panel">
       <div class="panel-header"><div class="panel-header-left"><span class="panel-icon">🔌</span> Core Services Integration Report</div>
@@ -639,6 +663,12 @@ function renderEndpointPanel(data) {
   const pct   = Math.round(avail / caps.length * 100);
   const bCls  = pct === 100 ? 'badge-ok' : pct >= 50 ? 'badge-warn' : 'badge-error';
 
+  const coreMatches = core ? caps.map(c => findCoreStatus(core, c)).filter(Boolean) : [];
+  const coreOk = coreMatches.filter(m => m.status === 'OK').length;
+  const coreHeader = coreMatches.length
+    ? `<span class="badge ${coreOk === coreMatches.length ? 'badge-ok' : coreOk > 0 ? 'badge-warn' : 'badge-error'}" title="Status of each endpoint from the ARGO federation tenant monitoring">ARGO ${coreOk}/${coreMatches.length} OK</span>`
+    : '';
+
   const byType = new Map(caps.map(c => [c.capability_type, c]));
   const { tiers } = computeComplianceTiers(data);
 
@@ -650,6 +680,7 @@ function renderEndpointPanel(data) {
         <div class="ep-url">${cap.endpoint || ''}</div>
         <span class="status-tag ${sc}">${cap.status} (${cap.http_code ?? '?'})</span>
         ${cap.version ? `<div class="ep-version">Version: ${cap.version}</div>` : ''}
+        ${coreStatusBadge(findCoreStatus(core, cap))}
       </div>`;
   };
 
@@ -689,43 +720,9 @@ function renderEndpointPanel(data) {
     <div class="panel">
       <div class="panel-header">
         <div class="panel-header-left"><span class="panel-icon">🔌</span> Core Services Integration Report</div>
-        <span class="badge ${bCls}">${avail}/${caps.length} available</span>
+        <div style="display:flex;align-items:center;gap:0.6rem;">${coreHeader}<span class="badge ${bCls}">${avail}/${caps.length} available</span></div>
       </div>
       <div class="panel-body">${tierSections}${otherSection}</div>
-    </div>`;
-}
-
-// Core Service integrations (ARGO federation tenant): health of the node's
-// fabric integration endpoints, shown beneath the Exchange services table.
-// Separate from Metric 12 (the node's own Exchange services) and from the
-// Metric 13 counts above.
-function renderCoreIntegrations(ci) {
-  if (!ci || !Array.isArray(ci.endpoints) || ci.endpoints.length === 0) return '';
-  const cls = v => v === 'OK' ? 'badge-ok'
-                 : v === 'WARNING' ? 'badge-warn'
-                 : v === 'CRITICAL' ? 'badge-error' : 'badge-missing';
-  const rows = ci.endpoints.map(e => {
-    const worst = e.worst_status && e.worst_status !== e.status
-      ? ` <span style="font-family:var(--mono);font-size:0.65rem;color:var(--grey-400);">(worst today: ${e.worst_status})</span>` : '';
-    return `
-      <tr>
-        <td><div class="cat-name">${e.capability_type || '(unknown)'}</div></td>
-        <td><div class="cat-url">${e.url ? `<a href="${e.url}" target="_blank" rel="noreferrer">${e.url}</a>` : '—'}</div></td>
-        <td><span class="badge ${cls(e.status)}">${e.status || 'UNKNOWN'}</span>${worst}</td>
-      </tr>`;
-  }).join('');
-  const allOk = ci.ok_endpoints === ci.total_endpoints;
-  return `
-    <div style="display:flex;align-items:center;justify-content:space-between;margin:1.2rem 0 0.4rem;">
-      <div class="cat-name">Core Service integrations</div>
-      <span class="badge ${allOk ? 'badge-ok' : ci.ok_endpoints > 0 ? 'badge-warn' : 'badge-error'}">${ci.ok_endpoints}/${ci.total_endpoints} OK</span>
-    </div>
-    <table class="cat-table">
-      <thead><tr><th>Integration</th><th>URL</th><th>Status</th></tr></thead>
-      <tbody>${rows}</tbody>
-    </table>
-    <div style="font-family:var(--mono);font-size:0.65rem;color:var(--grey-400);margin-top:0.3rem;">
-      Source: ARGO ${ci.tenant || 'federation'} tenant, ${ci.period_start ? ci.period_start.slice(0,10) : ''}
     </div>`;
 }
 
@@ -831,7 +828,6 @@ function renderCataloguePanel(data) {
           <thead><tr><th>Name</th><th>URL</th><th>Response</th><th>Content</th><th>Status</th></tr></thead>
           <tbody>${rows}</tbody>
         </table>
-        ${renderCoreIntegrations(data.core_integrations)}
       </div>
     </div>`;
 }
@@ -1175,11 +1171,12 @@ async function init() {
 
   const base = `/api/data/${encodeURIComponent(nodeName)}`;
 
-  const [ep, cat, argo, fom] = await Promise.all([
+  const [ep, cat, argo, fom, core] = await Promise.all([
     tryFetchJSON(`${base}/endpoint_report.json`),
     tryFetchJSON(`${base}/catalogue_services_report.json`),
     tryFetchJSON(`${base}/argo_uptime_report.json`),
     tryFetchJSON(`${base}/front_office_metrics_report.json`),
+    tryFetchJSON(`${base}/core_integrations_report.json`),
   ]);
 
   if (!ep && !cat && !argo && !fom) {
@@ -1195,7 +1192,7 @@ async function init() {
 
   main.innerHTML = `
     ${buildOverview(ep, cat, argo)}
-    ${renderEndpointPanel(ep)}
+    ${renderEndpointPanel(ep, core)}
     ${renderCataloguePanel(cat)}
     ${renderArgoPanel(argo)}
     ${renderFrontOfficeMetricsPanel(fom)}
@@ -1260,6 +1257,7 @@ document.addEventListener('keydown', e => {
 const NODE_CHECK_LABELS = {
   'catalogue-services': 'Exchange Services',
   'service-uptime':     'Service Uptime',
+  'core-integrations':  'Core Service integrations',
   'other-metrics':      'Federated Search',
 };
 
@@ -1481,6 +1479,35 @@ async function runServiceUptimeCheck() {
   const result = await pollJobStatus(jobId);
   if (result.status === 'DONE') { showToast('ok', 'Service Uptime', result.message || 'Completed'); init(); }
   else                          { showToast('err', 'Service Uptime', result.message || 'Check failed'); }
+  resetBtn(btn);
+}
+
+async function runCoreIntegrationsCheck() {
+  document.getElementById('run-menu').setAttribute('aria-expanded', 'false');
+  const btn      = document.getElementById('btn-core-integrations');
+  const nodeName = decodeURIComponent(window.location.hash.substring(1));
+  if (btn) { btn.disabled = true; btn.textContent = '…'; }
+  showToast('info', 'Core Service integrations', `Starting for ${nodeName}…`);
+
+  let jobId;
+  try {
+    const res  = await fetch('/api/run/core-integrations', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ node: nodeName }),
+    });
+    const data = await res.json();
+    if (!res.ok) { showToast('err', 'Core Service integrations', data.error || 'HTTP ' + res.status); resetBtn(btn); return; }
+    jobId = data.jobId;
+  } catch (e) {
+    showToast('err', 'Core Service integrations', 'Request failed: ' + e.message);
+    resetBtn(btn); return;
+  }
+
+  showToast('info', 'Core Service integrations', 'Running… (job ' + jobId + ')');
+  const result = await pollJobStatus(jobId);
+  if (result.status === 'DONE') { showToast('ok', 'Core Service integrations', result.message || 'Completed'); init(); }
+  else                          { showToast('err', 'Core Service integrations', result.message || 'Check failed'); }
   resetBtn(btn);
 }
 

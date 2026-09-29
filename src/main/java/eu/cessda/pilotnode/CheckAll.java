@@ -36,7 +36,8 @@ import com.fasterxml.jackson.databind.ObjectMapper;
  * Runs every data-collection check in one pass: {@link CheckNodeCapabilities}
  * once for the whole Node Registry, then — for every Node it just wrote a
  * summary for — {@link CheckCatalogueServices} (Exchange Services),
- * {@link CheckServiceUptime} (Service Monitoring) and
+ * {@link CheckServiceUptime} (Service Monitoring),
+ * {@link CheckCoreIntegrations} (Core Service integrations status) and
  * {@link CheckOtherMetrics} (Federated Search) in turn.
  *
  * <p>This mirrors what an operator would otherwise do by hand from the
@@ -44,7 +45,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
  * via {@code POST /api/run/check-all} ({@link CheckRunnerController}) or by
  * the scheduled task in {@link CheckAllScheduler}.</p>
  *
- * <p>A failure in one Node's checks does not stop the run: each of the three
+ * <p>A failure in one Node's checks does not stop the run: each of the
  * per-Node checks is attempted independently and failures are counted and
  * logged, so a single unreachable service doesn't prevent every other Node
  * from being checked. The same applies to the initial
@@ -80,7 +81,7 @@ public class CheckAll {
      * @param dashboardDir Node Registry / report output directory
      * @param nodeApiKey   API key for {@code CheckNodeCapabilities}
      * @param coreSource   ARGO federation tenant used for the Core Service
-     *                     integrations shown in the Exchange Services report
+     *                     integrations status
      * @param argoApiKey   optional legacy-ARGO-API fallback key for
      *                     {@code CheckServiceUptime}; may be blank
      * @param http         shared HTTP client
@@ -92,7 +93,7 @@ public class CheckAll {
      *                      is no earlier summary to fall back on
      */
     public static Result run(Path dashboardDir, String nodeApiKey, String argoApiKey,
-                              CheckCatalogueServices.CoreIntegrationsSource coreSource,
+                              CheckCoreIntegrations.Source coreSource,
                               HttpClient http, ObjectMapper mapper) throws IOException {
 
         log.info("Check All — starting with CheckNodeCapabilities");
@@ -132,7 +133,7 @@ public class CheckAll {
 
         for (String nodeName : nodeNames) {
             try {
-                runCatalogueServices(dashboardDir, nodeName, mapper, http, coreSource);
+                runCatalogueServices(dashboardDir, nodeName, mapper, http);
                 result.catalogueOk++;
             } catch (SkippedException e) {
                 result.catalogueSkipped++;
@@ -156,6 +157,18 @@ public class CheckAll {
             } catch (Exception e) {
                 result.uptimeFailed++;
                 log.log(Level.WARNING, "Check All — Service Monitoring failed for {0}: {1}",
+                        new Object[]{nodeName, e.getMessage()});
+            }
+
+            try {
+                CheckCoreIntegrations.run(dashboardDir, nodeName, coreSource, http, mapper);
+                result.coreOk++;
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                return result;
+            } catch (Exception e) {
+                result.coreFailed++;
+                log.log(Level.WARNING, "Check All — Core Service integrations failed for {0}: {1}",
                         new Object[]{nodeName, e.getMessage()});
             }
 
@@ -203,8 +216,7 @@ public class CheckAll {
      *                           capability endpoint to check
      */
     private static void runCatalogueServices(Path dashboardDir, String nodeName, ObjectMapper mapper,
-                                              HttpClient http,
-                                              CheckCatalogueServices.CoreIntegrationsSource coreSource)
+                                              HttpClient http)
             throws IOException, URISyntaxException, InterruptedException, SkippedException {
 
         Path reportPath = dashboardDir.resolve(nodeName).resolve("endpoint_report.json");
@@ -229,7 +241,7 @@ public class CheckAll {
         URI catalogueUrl = new URI(catalogueUrlString);
         CheckCatalogueServices.run(dashboardDir, nodeName,
                 (nodePid == null || nodePid.isBlank()) ? null : nodePid,
-                catalogueUrl, CATALOGUE_QUANTITY, http, mapper, coreSource);
+                catalogueUrl, CATALOGUE_QUANTITY, http, mapper);
     }
 
     /** Signals that a per-Node check was deliberately skipped, not failed. */
@@ -253,6 +265,8 @@ public class CheckAll {
         public int uptimeFailed;
         public int metricsOk;
         public int metricsFailed;
+        public int coreOk;
+        public int coreFailed;
         /** Non-null if the initial CheckNodeCapabilities pass failed and existing data was used. */
         public String capabilitiesError;
 
@@ -267,6 +281,7 @@ public class CheckAll {
                     + "Checked %d node(s). Exchange Services: %d ok, %d skipped, %d failed. "
                     .formatted(totalNodes, catalogueOk, catalogueSkipped, catalogueFailed)
                     + "Service Monitoring: %d ok, %d failed. ".formatted(uptimeOk, uptimeFailed)
+                    + "Core Service integrations: %d ok, %d failed. ".formatted(coreOk, coreFailed)
                     + "Federated Search: %d ok, %d failed.".formatted(metricsOk, metricsFailed);
         }
     }

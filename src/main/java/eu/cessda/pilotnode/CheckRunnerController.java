@@ -53,6 +53,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
  *   POST /api/run/node-capabilities   – run CheckNodeCapabilities
  *   POST /api/run/catalogue-services  – run CheckCatalogueServices
  *   POST /api/run/service-uptime      – run CheckServiceUptime
+ *   POST /api/run/core-integrations   – run CheckCoreIntegrations
  *   POST /api/run/other-metrics       – run CheckOtherMetrics
  *   POST /api/run/check-all           – run CheckNodeCapabilities, then all of the
  *                                        above for every Node in turn (see {@link CheckAll})
@@ -97,7 +98,7 @@ public class CheckRunnerController {
     private final String nodeName;
     private final String argoApiKey;
     private final String nodeApiKey;
-    private final CheckCatalogueServices.CoreIntegrationsSource coreSource;
+    private final CheckCoreIntegrations.Source coreSource;
     private final JobRunner jobRunner;
     private final HttpClient httpClient;
     private final ObjectMapper mapper;
@@ -114,8 +115,8 @@ public class CheckRunnerController {
             @Value("${check.node-name:}")     String nodeName,
             @Value("${check.api-key-argo:}")  String argoApiKey,
             @Value("${check.api-key-node:}") String nodeApiKey,
-            @Value("${check.argo-status-api-base:" + CheckCatalogueServices.CoreIntegrationsSource.DEFAULT_API_BASE + "}") String argoStatusApiBase,
-            @Value("${check.argo-federation-tenant:" + CheckCatalogueServices.CoreIntegrationsSource.DEFAULT_TENANT + "}") String argoFederationTenant,
+            @Value("${check.argo-status-api-base:" + CheckCoreIntegrations.Source.DEFAULT_API_BASE + "}") String argoStatusApiBase,
+            @Value("${check.argo-federation-tenant:" + CheckCoreIntegrations.Source.DEFAULT_TENANT + "}") String argoFederationTenant,
             JobRunner jobRunner,
             HttpClient httpClient,
             ObjectMapper mapper) {
@@ -123,7 +124,7 @@ public class CheckRunnerController {
         this.nodeName    = nodeName;
         this.argoApiKey  = argoApiKey;
         this.nodeApiKey  = nodeApiKey;
-        this.coreSource  = new CheckCatalogueServices.CoreIntegrationsSource(
+        this.coreSource  = new CheckCoreIntegrations.Source(
                 argoStatusApiBase.strip(), argoFederationTenant.strip());
         this.jobRunner = jobRunner;
         this.httpClient = httpClient;
@@ -237,7 +238,7 @@ public class CheckRunnerController {
                 // Arg order: NODE_NAME, node_pid, api_base_url, [quantity]
                 CheckCatalogueServices.run(dataDirPath, targetNode,
                         nodePid.isBlank() ? null : nodePid,
-                        catalogueUrl, 10, httpClient, mapper, coreSource);
+                        catalogueUrl, 10, httpClient, mapper);
                 record.markDone("catalogue_services_report.json written for " + targetNode);
             }
         );
@@ -286,9 +287,40 @@ public class CheckRunnerController {
     }
 
     /**
+     * Triggers {@link CheckCoreIntegrations}.
+     *
+     * <p>Accepts an optional JSON body: {@code { "node": "..." } }.
+     * {@code node} is the target node name (overrides {@code check.node-name}).
+     * No credentials are required; the ARGO status API and federation tenant
+     * come from {@code check.argo-status-api-base} and
+     * {@code check.argo-federation-tenant}.</p>
+     *
+     * @param body optional JSON body containing {@code node}
+     */
+    @PostMapping("/core-integrations")
+    @ResponseStatus(HttpStatus.ACCEPTED)
+    public JobRecord runCoreIntegrations(@RequestBody(required = false) Map<String, String> body) {
+
+        String targetNode = (body != null ? body.getOrDefault("node", nodeName) : nodeName).strip();
+
+        if (targetNode.isBlank()) {
+            throw new IllegalArgumentException("No node specified in request body and check.node-name is not configured");
+        }
+
+        JobRecord rec = jobRunner.start("core-integrations", record -> {
+            CheckCoreIntegrations.run(dataDirPath, targetNode, coreSource, httpClient, mapper);
+            record.markDone("core_integrations_report.json written for " + targetNode);
+        });
+
+        jobs.put(rec.getJobId(), rec);
+
+        return rec;
+    }
+
+    /**
      * Triggers {@link CheckAll}: runs {@link CheckNodeCapabilities} once for
-     * the whole Node Registry, then Exchange Services, Service Monitoring
-     * and Federated Search for every Node it just wrote a summary for, one
+     * the whole Node Registry, then Exchange Services, Service Monitoring,
+     * Core Service integrations and Federated Search for every Node it just wrote a summary for, one
      * Node at a time.
      *
      * <p>Requires {@code check.api-key-node} to be set, same as

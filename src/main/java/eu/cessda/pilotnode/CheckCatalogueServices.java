@@ -30,9 +30,6 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Duration;
 import java.time.Instant;
-import java.time.LocalDate;
-import java.time.ZoneOffset;
-import java.util.List;
 import java.util.logging.Level;
 import java.util.logging.Logger;
 
@@ -89,28 +86,6 @@ public class CheckCatalogueServices {
                     + "+https://github.com/cessda/cessda.pilot-node.tests)";
     private static final String ACCEPT_HEADER =
             "text/html,application/json;q=0.9,*/*;q=0.8";
-
-    // ── Core Service integrations (ARGO federation tenant) ───────────────
-    // The federation-wide ARGO tenant monitors each node's Core Service
-    // integration endpoints (the fabric: AAI, Resource Catalogue, Helpdesk
-    // ...), grouped by node name. This is distinct from the node's own
-    // Exchange services covered by Metric 12, so it is reported alongside
-    // the Exchange Services results without altering their counts.
-    //
-    // Configurable via check.argo-status-api-base and
-    // check.argo-federation-tenant in application.properties; the values
-    // below are the defaults, also used when run from the command line.
-
-    /** Where to find the ARGO federation tenant's status API. */
-    public record CoreIntegrationsSource(String apiBase, String tenant) {
-        public static final String DEFAULT_API_BASE = "https://api-status.devel.mon.argo.grnet.gr";
-        public static final String DEFAULT_TENANT   = "EOSC-BEYOND-FEDERATION";
-        public static final CoreIntegrationsSource DEFAULT =
-                new CoreIntegrationsSource(DEFAULT_API_BASE, DEFAULT_TENANT);
-    }
-    // Worst-first, so the worst value seen in the window can be picked.
-    private static final List<String> ARGO_STATUS_SEVERITY =
-            List.of("CRITICAL", "WARNING", "UNKNOWN", "MISSING", "OK");
 
     private static final Logger log =
             Logger.getLogger(CheckCatalogueServices.class.getName());
@@ -190,20 +165,6 @@ public class CheckCatalogueServices {
             int quantity,
             HttpClient httpClient,
             ObjectMapper mapper)
-            throws IOException, URISyntaxException, InterruptedException {
-        run(dashboardDir, nodeName, nodePid, apiBaseUrl, quantity, httpClient, mapper,
-                CoreIntegrationsSource.DEFAULT);
-    }
-
-    public static void run(
-            Path dashboardDir,
-            String nodeName,
-            String nodePid,
-            URI apiBaseUrl,
-            int quantity,
-            HttpClient httpClient,
-            ObjectMapper mapper,
-            CoreIntegrationsSource coreSource)
             throws IOException, URISyntaxException, InterruptedException {
 
         // ── Output paths ──────────────────────────────────────────────
@@ -423,20 +384,6 @@ public class CheckCatalogueServices {
         report.put("response_time_threshold_ms", RESPONSE_TIME_THRESHOLD_MS);
         report.set("services", servicesArray);
 
-        // Best effort: a missing/unreachable ARGO feed must never fail the
-        // Exchange Services check, so the block is simply omitted.
-        try {
-            ObjectNode coreIntegrations =
-                    fetchCoreIntegrations(httpClient, mapper, nodeName, coreSource);
-            if (coreIntegrations != null) {
-                report.set("core_integrations", coreIntegrations);
-            }
-        } catch (IOException | RuntimeException e) {
-            log.log(Level.WARNING,
-                    "Core Service integrations unavailable for {0}: {1}",
-                    new Object[] { nodeName, e.getMessage() });
-        }
-
         mapper.writerWithDefaultPrettyPrinter()
               .writeValue(reportFileJson.toFile(), report);
 
@@ -445,91 +392,6 @@ public class CheckCatalogueServices {
     }
 
 
-
-    /**
-     * Fetches today's status of the given node's Core Service integration
-     * endpoints from the ARGO federation tenant.
-     *
-     * @return the {@code core_integrations} block, or {@code null} if the
-     *         feed has no service group for this node
-     */
-    static ObjectNode fetchCoreIntegrations(HttpClient httpClient, ObjectMapper mapper, String nodeName,
-                                            CoreIntegrationsSource source)
-            throws IOException, InterruptedException {
-
-        LocalDate today = LocalDate.now(ZoneOffset.UTC);
-        String start = today + "T00:00:00Z";
-        String end   = today + "T23:59:59Z";
-        URI url = URI.create(source.apiBase() + "/v1/public/tenants/"
-                + URLEncoder.encode(source.tenant(), StandardCharsets.UTF_8)
-                + "/status/Default/endpoints?start-time="
-                + URLEncoder.encode(start, StandardCharsets.UTF_8)
-                + "&end-time=" + URLEncoder.encode(end, StandardCharsets.UTF_8));
-
-        JsonNode root;
-        try (InputStream in = fetchData(httpClient, url)) {
-            root = mapper.readTree(in);
-        }
-
-        JsonNode group = null;
-        for (JsonNode g : root.path("groups")) {
-            if (nodeName.equalsIgnoreCase(g.path("name").asText())) {
-                group = g;
-                break;
-            }
-        }
-        if (group == null) {
-            return null;
-        }
-
-        ArrayNode endpoints = mapper.createArrayNode();
-        int okCount = 0;
-        for (JsonNode serviceType : group.path("service-types")) {
-            for (JsonNode endpoint : serviceType.path("endpoints")) {
-                JsonNode statuses = endpoint.path("statuses");
-                if (!statuses.isArray() || statuses.isEmpty()) {
-                    continue;
-                }
-                String latest = statuses.get(statuses.size() - 1).path("value").asText();
-                String worst = latest;
-                for (JsonNode st : statuses) {
-                    String v = st.path("value").asText();
-                    if (severityRank(v) < severityRank(worst)) {
-                        worst = v;
-                    }
-                }
-                JsonNode info = endpoint.path("info");
-                ObjectNode entry = mapper.createObjectNode();
-                entry.put("capability_type",
-                        info.path("capability_type").asText(serviceType.path("name").asText()));
-                if (info.hasNonNull("URL")) {
-                    entry.put("url", info.get("URL").asText());
-                }
-                entry.put("status", latest);
-                entry.put("worst_status", worst);
-                entry.put("last_checked", statuses.get(statuses.size() - 1).path("timestamp").asText());
-                endpoints.add(entry);
-                if ("OK".equals(latest)) {
-                    okCount++;
-                }
-            }
-        }
-
-        ObjectNode block = mapper.createObjectNode();
-        block.put("source", url.toString());
-        block.put("tenant", source.tenant());
-        block.put("period_start", start);
-        block.put("period_end", end);
-        block.put("total_endpoints", endpoints.size());
-        block.put("ok_endpoints", okCount);
-        block.set("endpoints", endpoints);
-        return block;
-    }
-
-    private static int severityRank(String status) {
-        int i = ARGO_STATUS_SEVERITY.indexOf(status);
-        return i >= 0 ? i : ARGO_STATUS_SEVERITY.indexOf("UNKNOWN");
-    }
 
     /**
      * Issues an HTTP HEAD request to the given URL and returns the HTTP status code
