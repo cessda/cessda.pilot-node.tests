@@ -169,6 +169,19 @@ public class CheckCoreIntegrations {
                 entry.put("status", latest);
                 entry.put("worst_status", worst);
                 entry.put("last_checked", last.path("timestamp").asText());
+                if (!"OK".equals(latest) || !"OK".equals(worst)) {
+                    // Best effort: explains *why* the endpoint isn't OK.
+                    try {
+                        ArrayNode probes = fetchProbes(httpClient, mapper, source,
+                                group.path("name").asText(), endpoint.path("name").asText(), start, end);
+                        if (!probes.isEmpty()) {
+                            entry.set("probes", probes);
+                        }
+                    } catch (IOException | RuntimeException e) {
+                        log.log(Level.WARNING, "Probe detail unavailable for {0} / {1}: {2}",
+                                new Object[]{nodeName, entry.path("capability_type").asText(), e.getMessage()});
+                    }
+                }
                 endpoints.add(entry);
                 if ("OK".equals(latest)) {
                     okCount++;
@@ -189,6 +202,81 @@ public class CheckCoreIntegrations {
 
         mapper.writerWithDefaultPrettyPrinter().writeValue(reportFile.toFile(), report);
         log.log(Level.INFO, "Report generated: JSON: {0}", reportFile.toAbsolutePath());
+    }
+
+    /**
+     * Fetches the per-probe (ARGO metric) statuses behind one endpoint's
+     * status, worst probes first. ARGO's public API reports which probe is
+     * failing and for how long, but not a failure message.
+     */
+    private static ArrayNode fetchProbes(HttpClient httpClient, ObjectMapper mapper, Source source,
+                                         String groupName, String endpointName, String start, String end)
+            throws IOException, InterruptedException {
+
+        URI url = URI.create(source.apiBase() + "/v1/public/tenants/"
+                + pathSegment(source.tenant()) + "/status/Default/groups/"
+                + pathSegment(groupName) + "/endpoints/" + pathSegment(endpointName)
+                + "/metrics?start-time=" + URLEncoder.encode(start, StandardCharsets.UTF_8)
+                + "&end-time=" + URLEncoder.encode(end, StandardCharsets.UTF_8));
+
+        JsonNode root;
+        try (InputStream in = fetchData(httpClient, url)) {
+            root = mapper.readTree(in);
+        }
+
+        List<ObjectNode> probes = new java.util.ArrayList<>();
+        for (JsonNode g : root.path("groups")) {
+            for (JsonNode st : g.path("service-types")) {
+                for (JsonNode ep : st.path("endpoints")) {
+                    for (JsonNode metric : ep.path("metrics")) {
+                        JsonNode statuses = metric.path("statuses");
+                        if (!statuses.isArray() || statuses.isEmpty()) {
+                            continue;
+                        }
+                        JsonNode last = statuses.get(statuses.size() - 1);
+                        String latest = last.path("value").asText();
+                        String worst = latest;
+                        int nonOk = 0;
+                        String firstNonOk = null;
+                        for (JsonNode s : statuses) {
+                            String v = s.path("value").asText();
+                            if (severityRank(v) < severityRank(worst)) {
+                                worst = v;
+                            }
+                            if (!"OK".equals(v)) {
+                                nonOk++;
+                                if (firstNonOk == null) {
+                                    firstNonOk = s.path("timestamp").asText();
+                                }
+                            }
+                        }
+                        ObjectNode probe = mapper.createObjectNode();
+                        probe.put("name", metric.path("name").asText());
+                        probe.put("status", latest);
+                        probe.put("worst_status", worst);
+                        probe.put("total_checks", statuses.size());
+                        probe.put("non_ok_checks", nonOk);
+                        if (firstNonOk != null) {
+                            probe.put("first_non_ok", firstNonOk);
+                        }
+                        probe.put("last_checked", last.path("timestamp").asText());
+                        probes.add(probe);
+                    }
+                }
+            }
+        }
+        probes.sort(java.util.Comparator
+                .comparingInt((ObjectNode p) -> severityRank(p.path("status").asText()))
+                .thenComparingInt(p -> severityRank(p.path("worst_status").asText())));
+
+        ArrayNode out = mapper.createArrayNode();
+        probes.forEach(out::add);
+        return out;
+    }
+
+    /** URL-encodes a single path segment (spaces as %20, not '+'). */
+    private static String pathSegment(String value) {
+        return URLEncoder.encode(value, StandardCharsets.UTF_8).replace("+", "%20");
     }
 
     private static int severityRank(String status) {

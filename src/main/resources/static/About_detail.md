@@ -194,6 +194,8 @@ The **Run checks** menu in the top bar triggers on-demand data
 collection for the currently selected node. None of the checks
 require any credentials to be entered. The available checks are:
 
+- **Run All Node Checks** — runs the four checks below for this node, one
+  after another.
 - **Exchange Services** — runs `CheckCatalogueServices` and
   refreshes `catalogue_services_report.json` for this node, using the
   Resource Catalogue endpoint read from `endpoint_report.json`.

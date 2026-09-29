@@ -8,7 +8,8 @@ labelled **Core Service integrations**.
 
 On the Node page the status is shown on the endpoint cards of the **Core
 Services Integration Report** (each tier's cards gain an "ARGO monitoring"
-status), with an "ARGO n/N OK" badge in the panel header.
+status), with an "ARGO n/N OK" badge in the panel header. A `WARNING` or
+`CRITICAL` status can be clicked ("why?") to show the failing probes.
 
 It is separate from:
 
@@ -37,7 +38,8 @@ check.argo-federation-tenant = EOSC-BEYOND-FEDERATION
 
 ## Running via the Dashboard
 
-Use **Core Service integrations** in a Node's Run checks menu on `node.html`,
+Use **Core Service integrations** in a Node's Run checks menu on `node.html`
+(or **Run All Node Checks**, which runs all four of the node's checks in turn),
 or **Check All** (see [Dashboard](DASHBOARD_README.md)).
 
 Triggered via: `POST /api/run/core-integrations` with optional JSON body
@@ -86,6 +88,14 @@ Written to `<dashboard_dir>/<NODE_NAME>/core_integrations_report.json`:
 
 - `status` is the latest ARGO status in the window; `worst_status` is the
   worst seen in it.
+- For an endpoint that is not fully `OK`, `probes` lists the ARGO probes behind
+  its status (worst first), fetched from
+  `.../tenants/<tenant>/status/Default/groups/<node>/endpoints/<endpoint>/metrics`:
+  `name` (e.g. `generic.http.connect`, `generic.certificate.validity`),
+  `status`, `worst_status`, `non_ok_checks` / `total_checks`, `first_non_ok`
+  and `last_checked`. ARGO's public API reports which probe is failing, not
+  the error message. If the probe fetch fails, `probes` is omitted and the
+  check still succeeds.
 - The dashboard matches each entry to a capability card by `capability_type`,
   preferring the same `url`. Entries with no matching card are not shown.
 - This status is informational: compliance tiers are still computed from

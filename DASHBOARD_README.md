@@ -288,7 +288,8 @@ The page shows:
 - **Core Services Integration Report** — one card per capability with type,
     URL, HTTP status, and version, grouped by compliance tier. When
     `core_integrations_report.json` is present, each card also shows the
-    endpoint's ARGO monitoring status (`OK` / `WARNING` / `CRITICAL`).
+    endpoint's ARGO monitoring status (`OK` / `WARNING` / `CRITICAL`); a
+    non-`OK` status expands to show the failing ARGO probes.
 - **Exchange Services Report** — table of services with name, abbreviation,
     URL, and availability status.
 - **ARGO Uptime Report** — one card per monitored service, each showing
@@ -304,6 +305,8 @@ detail page without returning to the landing page.
 The **Run checks** menu (top right) triggers node-specific data collection —
 none of the three needs any credentials:
 
+- **Run All Node Checks** — runs the node's four checks below one after
+  another (a check that fails or is skipped doesn't stop the rest).
 - **Exchange Services** — runs immediately using the node's Resource
     Catalogue endpoint, read from `endpoint_report.json`.
 - **Service Monitoring** — runs immediately against the public ARGO

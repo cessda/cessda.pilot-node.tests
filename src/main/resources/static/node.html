@@ -140,6 +140,16 @@
   .status-tag { display: inline-block; font-family: var(--mono); font-size: 0.6rem; padding: 0.2rem 0.5rem; border-radius: 3px; }
   .status-available { background: var(--green-lt); color: var(--green); }
   .status-error     { background: var(--red-lt);   color: var(--red);   }
+  .ep-argo-details { margin-top: 0.4rem; font-size: 0.6rem; font-family: var(--mono); color: var(--grey-400); }
+  .ep-argo-details > summary { cursor: pointer; list-style: none; }
+  .ep-argo-details > summary::-webkit-details-marker { display: none; }
+  .ep-argo-more { text-decoration: underline; color: var(--grey-600); }
+  .ep-argo-details[open] .ep-argo-more { display: none; }
+  .ep-probes { list-style: none; margin: 0.5rem 0 0; padding: 0; }
+  .ep-probes li { margin-bottom: 0.45rem; color: var(--grey-600); line-height: 1.5; }
+  .ep-probes code { font-size: 0.55rem; color: var(--grey-400); }
+  .ep-probe-detail { color: var(--grey-400); }
+  .ep-probe-note { margin-top: 0.4rem; color: var(--grey-400); font-style: italic; }
   .ep-version { font-size: 0.6rem; color: var(--grey-400); margin-top: 0.5rem; font-family: var(--mono); }
 
   /* ── Catalogue table ── */
@@ -424,6 +434,13 @@
         <div class="run-dropdown-header">Node-specific checks</div>
         <div class="run-item" role="menuitem">
           <div class="run-item-info">
+            <div class="run-item-label">Run All Node Checks</div>
+            <div class="run-item-desc">All four checks below, one after another, for this node</div>
+          </div>
+          <button class="run-btn" id="btn-run-all-node" onclick="runAllNodeChecks()">Run all</button>
+        </div>
+        <div class="run-item" role="menuitem">
+          <div class="run-item-info">
             <div class="run-item-label">Exchange Services</div>
             <div class="run-item-desc">CheckCatalogueServices · catalogue_services_report.json</div>
           </div>
@@ -634,12 +651,51 @@ function findCoreStatus(core, cap) {
   return sameType.find(e => norm(e.url) === norm(cap.endpoint)) || sameType[0] || null;
 }
 
+// Friendly names for the ARGO probes seen in the federation tenant; any other
+// probe is shown under its raw ARGO metric name.
+const ARGO_PROBE_LABELS = {
+  'generic.http.connect':        'HTTP connection',
+  'generic.certificate.validity': 'TLS certificate validity',
+  'generic.tcp.connect':         'TCP connection',
+};
+
+function argoBadgeClass(v) {
+  return v === 'OK' ? 'badge-ok' : v === 'WARNING' ? 'badge-warn'
+       : v === 'CRITICAL' ? 'badge-error' : 'badge-missing';
+}
+
+// The card's "ARGO monitoring" line. A non-OK status expands (click) to the
+// probes behind it, from core_integrations_report.json.
 function coreStatusBadge(cs) {
   if (!cs) return '';
-  const cls = cs.status === 'OK' ? 'badge-ok' : cs.status === 'WARNING' ? 'badge-warn'
-            : cs.status === 'CRITICAL' ? 'badge-error' : 'badge-missing';
   const worst = cs.worst_status && cs.worst_status !== cs.status ? ` (worst today: ${cs.worst_status})` : '';
-  return `<div class="ep-version" style="margin-top:0.4rem;">ARGO monitoring: <span class="badge ${cls}">${cs.status}</span>${worst}</div>`;
+  const badge = `<span class="badge ${argoBadgeClass(cs.status)}">${cs.status}</span>`;
+  const probes = Array.isArray(cs.probes) ? cs.probes : [];
+  if (cs.status === 'OK' && cs.worst_status === 'OK') {
+    return `<div class="ep-version" style="margin-top:0.4rem;">ARGO monitoring: ${badge}</div>`;
+  }
+  if (probes.length === 0) {
+    return `<div class="ep-version" style="margin-top:0.4rem;">ARGO monitoring: ${badge}${worst}
+      <span title="ARGO probe detail was not available when this report was generated. Re-run Core Service integrations.">(no detail)</span></div>`;
+  }
+  const time = ts => ts ? ts.slice(11, 16) + 'Z' : '';
+  const stamp = ts => ts ? `${ts.slice(0, 10)} ${time(ts)}` : '';
+  const rows = probes.map(pr => {
+    const label = ARGO_PROBE_LABELS[pr.name] || pr.name;
+    const since = pr.first_non_ok ? `, first at ${stamp(pr.first_non_ok)}` : '';
+    const detail = pr.non_ok_checks > 0
+      ? `${pr.non_ok_checks} of ${pr.total_checks} checks not OK${since}`
+      : `all ${pr.total_checks} checks OK`;
+    return `<li><span class="badge ${argoBadgeClass(pr.status)}">${pr.status}</span>
+      <strong>${label}</strong>${ARGO_PROBE_LABELS[pr.name] ? ` <code>${pr.name}</code>` : ''}<br>
+      <span class="ep-probe-detail">${detail}</span></li>`;
+  }).join('');
+  return `
+    <details class="ep-argo-details">
+      <summary>ARGO monitoring: ${badge}${worst} <span class="ep-argo-more">why?</span></summary>
+      <ul class="ep-probes">${rows}</ul>
+      <div class="ep-probe-note">Probe results from the ARGO federation tenant, last checked ${stamp(cs.last_checked)} (period: the current UTC day). ARGO reports which probe is failing, not the error message.</div>
+    </details>`;
 }
 
 function renderEndpointPanel(data, core) {
@@ -1369,6 +1425,24 @@ function handleAboutOverlayClick(e) {
 // ── Exchange Services check (no API key needed) ─────────────────────────────
 // Reads the Resource Catalogue endpoint from this node's endpoint_report.json,
 // then POSTs { node, catalogueUrl } to the backend. No credentials required.
+
+// Runs this node's four checks one after another (same order as the menu).
+// Each check reports its own progress/failure toast, and a failed or skipped
+// check (e.g. no Resource Catalogue endpoint) does not stop the others.
+async function runAllNodeChecks() {
+  document.getElementById('run-menu').setAttribute('aria-expanded', 'false');
+  const btn      = document.getElementById('btn-run-all-node');
+  const nodeName = decodeURIComponent(window.location.hash.substring(1));
+  if (btn) { btn.disabled = true; btn.textContent = '…'; }
+  showToast('info', 'Run All Node Checks', `Starting all checks for ${nodeName}…`);
+
+  for (const check of [runCatalogueCheck, runServiceUptimeCheck, runCoreIntegrationsCheck, runOtherMetricsCheck]) {
+    try { await check(); } catch (e) { showToast('err', 'Run All Node Checks', 'Check failed: ' + e.message); }
+  }
+
+  showToast('ok', 'Run All Node Checks', `All checks finished for ${nodeName}`);
+  if (btn) { btn.disabled = false; btn.textContent = 'Run all'; }
+}
 
 async function runCatalogueCheck() {
   document.getElementById('run-menu').setAttribute('aria-expanded', 'false');
