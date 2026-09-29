@@ -59,21 +59,24 @@ import com.fasterxml.jackson.databind.node.ObjectNode;
  * {@code check.argo-status-api-base} and {@code check.argo-federation-tenant}
  * in {@code application.properties}.</p>
  *
- * Usage: java CheckCoreIntegrations NODE_NAME [dashboard_dir] [api_base] [tenant]
+ * Usage: java CheckCoreIntegrations NODE_NAME [dashboard_dir] [api_base] [tenant] [ui_base]
  *   NODE_NAME:     Node name, as in node_registry_summary.json (required)
  *   dashboard_dir: Path to the dashboard data directory
  *                  (default: ../dashboard/data). Output is written to
  *                  &lt;dashboard_dir&gt;/&lt;NODE_NAME&gt;/core_integrations_report.json
  *   api_base:      ARGO status API base URL (default: {@link Source#DEFAULT_API_BASE})
  *   tenant:        ARGO federation tenant (default: {@link Source#DEFAULT_TENANT})
+ *   ui_base:       ARGO status web UI base URL (default: {@link Source#DEFAULT_UI_BASE})
  */
 public class CheckCoreIntegrations {
 
     /** Where to find the ARGO federation tenant's status API. */
-    public record Source(String apiBase, String tenant) {
+    public record Source(String apiBase, String tenant, String uiBase) {
         public static final String DEFAULT_API_BASE = "https://api-status.devel.mon.argo.grnet.gr";
         public static final String DEFAULT_TENANT   = "EOSC-BEYOND-FEDERATION";
-        public static final Source DEFAULT = new Source(DEFAULT_API_BASE, DEFAULT_TENANT);
+        /** The ARGO status web UI, linked to from the dashboard when an endpoint is not OK. */
+        public static final String DEFAULT_UI_BASE  = "https://status.devel.mon.argo.grnet.gr";
+        public static final Source DEFAULT = new Source(DEFAULT_API_BASE, DEFAULT_TENANT, DEFAULT_UI_BASE);
     }
 
     // Worst-first, so the worst value seen in the window can be picked.
@@ -85,14 +88,15 @@ public class CheckCoreIntegrations {
     public static void main(String[] args) throws IOException, InterruptedException {
         if (args.length < 1) {
             System.err.println("Error: NODE_NAME is required");
-            System.err.println("Usage: java CheckCoreIntegrations <NODE_NAME> [<dashboard_dir>] [<api_base>] [<tenant>]");
+            System.err.println("Usage: java CheckCoreIntegrations <NODE_NAME> [<dashboard_dir>] [<api_base>] [<tenant>] [<ui_base>]");
             System.exit(-1);
         }
         String nodeName     = args[0];
         String dashboardDir = args.length >= 2 ? args[1] : "../dashboard/data";
         Source source = new Source(
                 args.length >= 3 && !args[2].isBlank() ? args[2] : Source.DEFAULT_API_BASE,
-                args.length >= 4 && !args[3].isBlank() ? args[3] : Source.DEFAULT_TENANT);
+                args.length >= 4 && !args[3].isBlank() ? args[3] : Source.DEFAULT_TENANT,
+                args.length >= 5 && !args[4].isBlank() ? args[4] : Source.DEFAULT_UI_BASE);
 
         var nodeNamePath = Path.of(nodeName);
         if (nodeNamePath.normalize().getNameCount() != 1 || nodeNamePath.isAbsolute()) {
@@ -194,6 +198,8 @@ public class CheckCoreIntegrations {
         report.put("node_name", nodeName);
         report.put("api_source", url.toString());
         report.put("tenant", source.tenant());
+        report.put("argo_ui_url", source.uiBase() + "/public/tenants/" + pathSegment(source.tenant())
+                + "/dashboard/groups/" + pathSegment(group.path("name").asText(nodeName)) + "?report=Default");
         report.put("period_start", start);
         report.put("period_end", end);
         report.put("total_endpoints", endpoints.size());

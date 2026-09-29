@@ -69,6 +69,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
  *   check.api-key-argo   =                     # optional legacy-ARGO-API fallback key for CheckServiceUptime
  *   check.argo-status-api-base     = https://api-status.devel.mon.argo.grnet.gr  # ARGO status API for Core Service integrations
  *   check.argo-federation-tenant   = EOSC-BEYOND-FEDERATION                      # ARGO tenant monitoring the Core Service integrations
+ *   check.argo-status-ui-base      = https://status.devel.mon.argo.grnet.gr      # ARGO web UI linked to from non-OK statuses
  * </pre>
  *
  * <p>Check All can also be run on a schedule instead of (or as well as) by
@@ -117,6 +118,7 @@ public class CheckRunnerController {
             @Value("${check.api-key-node:}") String nodeApiKey,
             @Value("${check.argo-status-api-base:" + CheckCoreIntegrations.Source.DEFAULT_API_BASE + "}") String argoStatusApiBase,
             @Value("${check.argo-federation-tenant:" + CheckCoreIntegrations.Source.DEFAULT_TENANT + "}") String argoFederationTenant,
+            @Value("${check.argo-status-ui-base:" + CheckCoreIntegrations.Source.DEFAULT_UI_BASE + "}") String argoStatusUiBase,
             JobRunner jobRunner,
             HttpClient httpClient,
             ObjectMapper mapper) {
@@ -125,7 +127,7 @@ public class CheckRunnerController {
         this.argoApiKey  = argoApiKey;
         this.nodeApiKey  = nodeApiKey;
         this.coreSource  = new CheckCoreIntegrations.Source(
-                argoStatusApiBase.strip(), argoFederationTenant.strip());
+                argoStatusApiBase.strip(), argoFederationTenant.strip(), argoStatusUiBase.strip());
         this.jobRunner = jobRunner;
         this.httpClient = httpClient;
         this.mapper = mapper;

@@ -289,7 +289,8 @@ The page shows:
     URL, HTTP status, and version, grouped by compliance tier. When
     `core_integrations_report.json` is present, each card also shows the
     endpoint's ARGO monitoring status (`OK` / `WARNING` / `CRITICAL`); a
-    non-`OK` status expands to show the failing ARGO probes.
+    non-`OK` status expands to show the failing ARGO probes and a link to the
+    node's page in the ARGO status UI (`check.argo-status-ui-base`).
 - **Exchange Services Report** — table of services with name, abbreviation,
     URL, and availability status.
 - **ARGO Uptime Report** — one card per monitored service, each showing

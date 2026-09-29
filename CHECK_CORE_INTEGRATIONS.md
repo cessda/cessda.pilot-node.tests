@@ -9,7 +9,8 @@ labelled **Core Service integrations**.
 On the Node page the status is shown on the endpoint cards of the **Core
 Services Integration Report** (each tier's cards gain an "ARGO monitoring"
 status), with an "ARGO n/N OK" badge in the panel header. A `WARNING` or
-`CRITICAL` status can be clicked ("why?") to show the failing probes.
+`CRITICAL` status can be clicked ("why?") to show the failing probes, with a
+link to the node's page in the ARGO status UI.
 
 It is separate from:
 
@@ -34,7 +35,11 @@ statuses (`OK`, `WARNING`, `CRITICAL`) per endpoint. Defaults, overridable in
 ```properties
 check.argo-status-api-base   = https://api-status.devel.mon.argo.grnet.gr
 check.argo-federation-tenant = EOSC-BEYOND-FEDERATION
+check.argo-status-ui-base    = https://status.devel.mon.argo.grnet.gr
 ```
+
+`check.argo-status-ui-base` is the ARGO web UI, used to build the
+`argo_ui_url` link (below).
 
 ## Running via the Dashboard
 
@@ -50,7 +55,7 @@ Triggered via: `POST /api/run/core-integrations` with optional JSON body
 ```bash
 mvn compile dependency:build-classpath -Dmdep.outputFile=cp.txt
 java -cp "target/classes:$(cat cp.txt)" \
-  eu.cessda.pilotnode.CheckCoreIntegrations NODE_NAME [dashboard_dir] [api_base] [tenant]
+  eu.cessda.pilotnode.CheckCoreIntegrations NODE_NAME [dashboard_dir] [api_base] [tenant] [ui_base]
 ```
 
 | Argument        | Required | Default                                     | Description |
@@ -59,6 +64,7 @@ java -cp "target/classes:$(cat cp.txt)" \
 | `dashboard_dir` | No       | `../dashboard/data`                         | Output root directory |
 | `api_base`      | No       | `https://api-status.devel.mon.argo.grnet.gr` | ARGO status API base URL |
 | `tenant`        | No       | `EOSC-BEYOND-FEDERATION`                    | ARGO federation tenant |
+| `ui_base`       | No       | `https://status.devel.mon.argo.grnet.gr`    | ARGO status web UI base URL |
 
 ## Output JSON
 
@@ -70,6 +76,7 @@ Written to `<dashboard_dir>/<NODE_NAME>/core_integrations_report.json`:
   "node_name": "CESSDA",
   "api_source": "https://api-status.devel.mon.argo.grnet.gr/v1/public/tenants/EOSC-BEYOND-FEDERATION/status/Default/endpoints?start-time=...",
   "tenant": "EOSC-BEYOND-FEDERATION",
+  "argo_ui_url": "https://status.devel.mon.argo.grnet.gr/public/tenants/EOSC-BEYOND-FEDERATION/dashboard/groups/CESSDA?report=Default",
   "period_start": "2026-09-29T00:00:00Z",
   "period_end": "2026-09-29T23:59:59Z",
   "total_endpoints": 5,
@@ -88,6 +95,10 @@ Written to `<dashboard_dir>/<NODE_NAME>/core_integrations_report.json`:
 
 - `status` is the latest ARGO status in the window; `worst_status` is the
   worst seen in it.
+- `argo_ui_url` is the node's page in the ARGO status UI:
+  `<check.argo-status-ui-base>/public/tenants/<tenant>/dashboard/groups/<node>?report=Default`
+  (node name URL-encoded). The Node page links to it from the expanded details
+  of any endpoint whose status is not `OK`.
 - For an endpoint that is not fully `OK`, `probes` lists the ARGO probes behind
   its status (worst first), fetched from
   `.../tenants/<tenant>/status/Default/groups/<node>/endpoints/<endpoint>/metrics`:

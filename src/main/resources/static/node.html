@@ -648,7 +648,8 @@ function findCoreStatus(core, cap) {
   if (!core || !Array.isArray(core.endpoints)) return null;
   const norm = u => (u || '').replace(/\/+$/, '').toLowerCase();
   const sameType = core.endpoints.filter(e => e.capability_type === cap.capability_type);
-  return sameType.find(e => norm(e.url) === norm(cap.endpoint)) || sameType[0] || null;
+  const match = sameType.find(e => norm(e.url) === norm(cap.endpoint)) || sameType[0] || null;
+  return match ? { ...match, argo_ui_url: core.argo_ui_url || null } : null;
 }
 
 // Friendly names for the ARGO probes seen in the federation tenant; any other
@@ -664,6 +665,11 @@ function argoBadgeClass(v) {
        : v === 'CRITICAL' ? 'badge-error' : 'badge-missing';
 }
 
+function argoUiLink(cs) {
+  if (!cs.argo_ui_url) return '';
+  return `<div class="ep-probe-note" style="font-style:normal;"><a href="${cs.argo_ui_url}" target="_blank" rel="noreferrer">Open in the ARGO status UI &#8599;</a></div>`;
+}
+
 // The card's "ARGO monitoring" line. A non-OK status expands (click) to the
 // probes behind it, from core_integrations_report.json.
 function coreStatusBadge(cs) {
@@ -676,7 +682,8 @@ function coreStatusBadge(cs) {
   }
   if (probes.length === 0) {
     return `<div class="ep-version" style="margin-top:0.4rem;">ARGO monitoring: ${badge}${worst}
-      <span title="ARGO probe detail was not available when this report was generated. Re-run Core Service integrations.">(no detail)</span></div>`;
+      <span title="ARGO probe detail was not available when this report was generated. Re-run Core Service integrations.">(no detail)</span>
+      ${argoUiLink(cs)}</div>`;
   }
   const time = ts => ts ? ts.slice(11, 16) + 'Z' : '';
   const stamp = ts => ts ? `${ts.slice(0, 10)} ${time(ts)}` : '';
@@ -695,6 +702,7 @@ function coreStatusBadge(cs) {
       <summary>ARGO monitoring: ${badge}${worst} <span class="ep-argo-more">why?</span></summary>
       <ul class="ep-probes">${rows}</ul>
       <div class="ep-probe-note">Probe results from the ARGO federation tenant, last checked ${stamp(cs.last_checked)} (period: the current UTC day). ARGO reports which probe is failing, not the error message.</div>
+      ${argoUiLink(cs)}
     </details>`;
 }
 
