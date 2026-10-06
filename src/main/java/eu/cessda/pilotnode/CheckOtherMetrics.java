@@ -484,8 +484,70 @@ public class CheckOtherMetrics {
      * Queries a Front Office for Exchange services filtered to
      * {@code targetPid} and returns whether any results were found.
      */
-    private static MetricResult queryFrontOffice(HttpClient httpClient, URI frontOfficeBase, String targetPid) {
-        return executeVisibilityQuery(httpClient, buildFrontOfficeQueryUrl(frontOfficeBase, targetPid));
+    static MetricResult queryFrontOffice(HttpClient httpClient, URI frontOfficeBase, String targetPid) {
+        MetricResult filtered = executeVisibilityQuery(httpClient, buildFrontOfficeQueryUrl(frontOfficeBase, targetPid));
+        if (!isBackendFailure(filtered)) {
+            return filtered;
+        }
+        return withKeywordFallback(httpClient, frontOfficeBase, targetPid, filtered);
+    }
+
+    /**
+     * True when the Front Office answered but could not serve the node-filtered query: an HTTP 5xx, or
+     * an HTTP 200 whose body is an {@code error}. A 404, a refused connection or a timeout say nothing
+     * about the filter, so they are not retried another way.
+     */
+    private static boolean isBackendFailure(MetricResult result) {
+        return "Error".equals(result.status()) && result.httpCode() != null
+                && (result.httpCode() == 200 || result.httpCode() >= 500);
+    }
+
+    /**
+     * The shared Front Office backend can fail to filter by one node's PID (for example while that node
+     * has a resource it cannot map, such as an Adapter) even though the node's services are indexed and
+     * show up in an ordinary search. Look for them with a keyword search for the node's name, and count
+     * the node as visible only if a result really belongs to it. Otherwise the original error stands.
+     */
+    private static MetricResult withKeywordFallback(HttpClient httpClient, URI frontOfficeBase,
+                                                    String targetPid, MetricResult filtered) {
+        String nodeName = targetPid.substring(targetPid.lastIndexOf('/') + 1);
+        String base = frontOfficeBase.toString();
+        if (base.endsWith("/")) {
+            base = base.substring(0, base.length() - 1);
+        }
+        URI searchUrl = URI.create(base + FEDERATION_PATH_SEGMENT + "/services?q="
+                + URLEncoder.encode(nodeName, StandardCharsets.UTF_8));
+        String why = "the node-filtered query failed (" + filtered.error() + ")";
+
+        try {
+            HttpResponse<InputStream> response = httpClient.send(HttpRequest.newBuilder()
+                    .uri(searchUrl).header("accept", "application/json").GET().build(),
+                    HttpResponse.BodyHandlers.ofInputStream());
+            JsonNode root;
+            try (InputStream body = response.body()) {
+                if (response.statusCode() != 200) {
+                    return filtered.withNote(why + "; keyword search for '" + nodeName + "' returned HTTP "
+                            + response.statusCode());
+                }
+                root = new ObjectMapper().readTree(body);
+            }
+            long matches = 0;
+            for (JsonNode result : root.path("results")) {
+                if (nodeName.equalsIgnoreCase(result.path("nodePID").asText())) {
+                    matches++;
+                }
+            }
+            if (matches > 0) {
+                return new MetricResult(searchUrl, response.statusCode(), matches, true, "Available", null,
+                        why + "; found " + matches + " service(s) of " + nodeName + " with a keyword search instead");
+            }
+            return filtered.withNote(why + "; a keyword search for '" + nodeName + "' found none of its services");
+        } catch (IOException e) {
+            return filtered.withNote(why + "; keyword search failed: " + e.getMessage());
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            return filtered.withNote(why + "; keyword search interrupted");
+        }
     }
 
     /**
@@ -628,6 +690,12 @@ public class CheckOtherMetrics {
                 root = new ObjectMapper().readTree(body);
             }
 
+            // Some backends report failures with HTTP 200 and an {"error": "..."} body; that is not
+            // "no results".
+            if (root.hasNonNull("error") && !root.has("results")) {
+                return MetricResult.error(queryUrl, httpCode, root.get("error").asText());
+            }
+
             long total = root.path("total").asLong(-1);
             long resultCount = total >= 0 ? total : root.path("results").size();
             boolean visible = resultCount > 0;
@@ -668,6 +736,7 @@ public class CheckOtherMetrics {
             } else {
                 entry.putNull("http_code");
             }
+            putDiagnostics(entry, result);
         }
         if (peerResults != null) {
             entry.set("peer_results", peerResults);
@@ -675,7 +744,7 @@ public class CheckOtherMetrics {
         return entry;
     }
 
-    private static ObjectNode buildPeerEntry(
+    static ObjectNode buildPeerEntry(
             ObjectMapper mapper, String peerName, Object peerFrontOfficeOrPid, MetricResult result) {
         ObjectNode entry = mapper.createObjectNode();
         entry.put("peer_node", peerName);
@@ -689,7 +758,18 @@ public class CheckOtherMetrics {
         } else {
             entry.putNull("http_code");
         }
+        putDiagnostics(entry, result);
         return entry;
+    }
+
+    /** Why a result is an error, and how a result was reached when it was not by the normal query. */
+    private static void putDiagnostics(ObjectNode entry, MetricResult result) {
+        if (result.error() != null) {
+            entry.put("error", result.error());
+        }
+        if (result.note() != null) {
+            entry.put("note", result.note());
+        }
     }
 
     private static void printLine(int metric, String label, MetricResult result) {
@@ -699,8 +779,9 @@ public class CheckOtherMetrics {
         String colour = result.visible() ? GREEN
                 : "Error".equals(result.status()) ? RED
                 : YELLOW;
-        System.out.printf("  Metric %-3d %-45s %s%s%s%n",
-                metric, label, colour, result.status(), NC);
+        System.out.printf("  Metric %-3d %-45s %s%s%s%s%n",
+                metric, label, colour, result.status(), result.visible() && result.note() != null
+                        ? " (via keyword search)" : "", NC);
     }
 
     // ── Supporting types ──────────────────────────────────────────────────
@@ -708,7 +789,17 @@ public class CheckOtherMetrics {
     /**
      * Result of querying a single Front Office for a single target PID.
      */
-    record MetricResult(URI queryUrl, Integer httpCode, long resultCount, boolean visible, String status, String error) {
+    record MetricResult(URI queryUrl, Integer httpCode, long resultCount, boolean visible, String status, String error,
+                        String note) {
+        MetricResult(URI queryUrl, Integer httpCode, long resultCount, boolean visible, String status, String error) {
+            this(queryUrl, httpCode, resultCount, visible, status, error, null);
+        }
+
+        /** The same result with an explanation of how it was reached (shown in the report). */
+        MetricResult withNote(String note) {
+            return new MetricResult(queryUrl, httpCode, resultCount, visible, status, error, note);
+        }
+
         static MetricResult notReported() {
             return new MetricResult(null, null, 0, false, "Not reported", null);
         }

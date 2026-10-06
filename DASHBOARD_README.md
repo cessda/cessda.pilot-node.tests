@@ -130,6 +130,25 @@ CheckOtherMetrics NODE_NAME [dashboard_dir]
 
 Triggered via: `POST /api/run/other-metrics` with body `{ "node": "..." }` — no credentials required.
 
+#### How a Front Office is queried
+
+Each Front Office check asks `<front office>/federation/services?q=&nodes[]=<node PID>` and counts the
+results. Three outcomes are distinguished:
+
+- **Available** — the node's resources were returned.
+- **Not visible** — the Front Office answered normally and returned none.
+- **Error** — the Front Office could not answer: a non-200 status, or an HTTP 200 whose body is an
+  `{"error": "..."}` (some backends report failures that way). The backend's message is shown in the
+  report (`error`) and as a tooltip on the Node page.
+
+The node filter can fail on the Front Office side even though the node's services are indexed, for example
+`API Mapping Failed` while the node has a resource the backend cannot map, such as an Adapter. When the
+filtered query fails with an HTTP 200 error body or a 5xx, the check looks for the node with a keyword
+search for its name instead, and counts it as **Available** only if a result carries that node's `nodePID`
+(compared ignoring case). The report then has a `note` saying that the result came from the keyword search
+and why. If the search finds none of the node's services, or fails too, the original **Error** stands. A 404
+or a connection failure is never retried this way, because they say nothing about the filter.
+
 ### CheckAll (Check All)
 
 Runs `CheckNodeCapabilities` once for the whole Node Registry, then — for
