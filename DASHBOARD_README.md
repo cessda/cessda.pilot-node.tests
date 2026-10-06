@@ -135,7 +135,9 @@ Triggered via: `POST /api/run/other-metrics` with body `{ "node": "..." }` — n
 Each Front Office check asks `<front office>/federation/services?q=&nodes[]=<node PID>` and counts the
 results. Three outcomes are distinguished:
 
-- **Available** — the node's resources were returned.
+- **Available** — the node's resources were returned. `result_count` is the number of matches the Front
+  Office reports (`pagination.total_count`), not the number of results on the first page, which is capped at
+  10. If a response has neither that nor a top-level `total`, the page length is used.
 - **Not visible** — the Front Office answered normally and returned none.
 - **Error** — the Front Office could not answer: a non-200 status, or an HTTP 200 whose body is an
   `{"error": "..."}` (some backends report failures that way). The backend's message is shown in the
