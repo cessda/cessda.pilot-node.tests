@@ -311,7 +311,7 @@ public class CheckNodeCapabilities {
                 // record it with an error so that it stays visible.
                 String reason = describe(e);
                 log.log(Level.SEVERE, "Node {0} could not be checked: {1}", new Object[]{nodeName, reason});
-                summary = failedNodeSummary(nodeName, nodeId, nodePid, nodeEndpointString,
+                summary = failedNodeSummary(nodeName, nodeId, nodePid, nodeEndpointString, nodeLogo,
                         legalEntityName, legalEntityRor, reason);
                 writeFailureReport(nodeName, summary);
             }
@@ -390,7 +390,7 @@ public class CheckNodeCapabilities {
             if (resp.statusCode() != 200) {
                 log.log(Level.WARNING, "Failed to fetch capabilities from {0} (HTTP {1})", new Object[]{nodeEndpoint, resp.statusCode()});
 
-                return unreachableNode(nodeName, nodeId, nodePid, nodeEndpoint, legalEntityName, legalEntityRor,
+                return unreachableNode(nodeName, nodeId, nodePid, nodeEndpoint, nodeLogo, legalEntityName, legalEntityRor,
                         reportJsonPath, "node_endpoint returned HTTP " + resp.statusCode());
             }
 
@@ -400,7 +400,7 @@ public class CheckNodeCapabilities {
         } catch (IOException e) {
             log.log(Level.WARNING, "Failed to fetch capabilities from {0}: {1}", new Object[]{nodeEndpoint, e});
 
-            return unreachableNode(nodeName, nodeId, nodePid, nodeEndpoint, legalEntityName, legalEntityRor,
+            return unreachableNode(nodeName, nodeId, nodePid, nodeEndpoint, nodeLogo, legalEntityName, legalEntityRor,
                     reportJsonPath, "node_endpoint unreachable: " + describe(e));
         }
 
@@ -425,7 +425,12 @@ public class CheckNodeCapabilities {
              for (JsonNode cap : capsArray) {
                  String capType = cap.path("capability_type").asText();
                  String endpoint = cap.path("endpoint").asText();
-                 String version = cap.path("version").asText();
+                 String version = optionalText(cap, "version");
+                 String apiSpec = optionalText(cap, "api_spec");
+                 String protocol = optionalText(cap, "protocol");
+                 // The node's own claim about the capability (e.g. OPERATIONAL). Kept apart from
+                 // "status", which is the result of our own availability probe.
+                 String declaredStatus = optionalText(cap, "status");
 
                  System.out.printf("  %-35s ", capType);
 
@@ -444,7 +449,7 @@ public class CheckNodeCapabilities {
                          }
 
                      if (reportTxtPathWriter != null) {
-                         String capability = appendCapabilityToText(capType, endpoint, version, status);
+                         String capability = appendCapabilityToText(capType, endpoint, version, protocol, apiSpec, status);
                          reportTxtPathWriter.write(capability);
                      }
 
@@ -452,6 +457,9 @@ public class CheckNodeCapabilities {
                      capOut.put("capability_type", capType);
                      capOut.put("endpoint", endpoint);
                      capOut.put("version", version);
+                     capOut.put("api_spec", apiSpec);
+                     capOut.put("protocol", protocol);
+                     capOut.put("declared_status", declaredStatus);
                      capOut.put("status", status.label());
                      capOut.put("http_code", status.httpCode());
                      capabilitiesOut.add(capOut);
@@ -466,8 +474,12 @@ public class CheckNodeCapabilities {
 
              // ── Write per-node JSON report ────────────────────────────────────────
 
-             ObjectNode nodeReport = buildNodeSummary(nodeName, nodeId, nodePid, nodeEndpoint.toString(),
+             ObjectNode nodeReport = buildNodeSummary(nodeName, nodeId, nodePid, nodeEndpoint.toString(), nodeLogo,
                      legalEntityName, legalEntityRor, total, available, capabilitiesOut, reportJsonPath);
+             // Free-form description some nodes publish about themselves; kept as returned.
+             if (capsRoot.path("node_details").isObject()) {
+                 nodeReport.set("node_details", capsRoot.get("node_details"));
+             }
 
 
             if (format.contains(OutputFormat.JSON)) {
@@ -550,9 +562,9 @@ public class CheckNodeCapabilities {
      * node's own {@code endpoint_report.json} so that its detail page shows the failure.
      */
     private ObjectNode unreachableNode(
-            String nodeName, String nodeId, String nodePid, URI nodeEndpoint,
+            String nodeName, String nodeId, String nodePid, URI nodeEndpoint, String nodeLogo,
             String legalEntityName, String legalEntityRor, Path reportJsonPath, String reason) throws IOException {
-        ObjectNode report = failedNodeSummary(nodeName, nodeId, nodePid, nodeEndpoint.toString(),
+        ObjectNode report = failedNodeSummary(nodeName, nodeId, nodePid, nodeEndpoint.toString(), nodeLogo,
                 legalEntityName, legalEntityRor, reason);
         if (format.contains(OutputFormat.JSON)) {
             mapper.writerWithDefaultPrettyPrinter().writeValue(reportJsonPath.toFile(), report);
@@ -562,10 +574,10 @@ public class CheckNodeCapabilities {
 
     /** A node entry with no capabilities and an {@code error} explaining why. */
     private ObjectNode failedNodeSummary(
-            String nodeName, String nodeId, String nodePid, String nodeEndpoint,
+            String nodeName, String nodeId, String nodePid, String nodeEndpoint, String nodeLogo,
             String legalEntityName, String legalEntityRor, String reason) {
         Path reportPath = dashboardDir.resolve(nodeName).resolve("endpoint_report.json");
-        ObjectNode n = buildNodeSummary(nodeName, nodeId, nodePid, nodeEndpoint,
+        ObjectNode n = buildNodeSummary(nodeName, nodeId, nodePid, nodeEndpoint, nodeLogo,
                 legalEntityName, legalEntityRor, 0, 0, mapper.createArrayNode(), reportPath);
         n.put("error", reason);
         return n;
@@ -596,7 +608,7 @@ public class CheckNodeCapabilities {
     }
 
     private ObjectNode buildNodeSummary(
-            String nodeName, String nodeId, String nodePid, String nodeEndpoint,
+            String nodeName, String nodeId, String nodePid, String nodeEndpoint, String nodeLogo,
             String legalEntityName, String legalEntityRor,
             int total, int available, ArrayNode capabilities, Path reportPath) {
 
@@ -606,6 +618,7 @@ public class CheckNodeCapabilities {
         n.put("node_id", nodeId);
         n.put("node_pid", nodePid);
         n.put("node_endpoint", nodeEndpoint);
+        n.put("logo", nodeLogo == null || nodeLogo.isBlank() ? null : nodeLogo);
         ObjectNode le = n.putObject("legal_entity");
         le.put("name", legalEntityName);
         le.put("ror_id", legalEntityRor);
@@ -617,9 +630,14 @@ public class CheckNodeCapabilities {
     }
 
     private String appendCapabilityToText(String capType, String endpoint,
-            String version, CapabilityStatus status) {
-        return "%-40s %s (HTTP %s)%n  └─ Endpoint: %s%n  └─ Version: %s%n%n"
-                .formatted(capType, status.label(), status.httpCode(), endpoint, version);
+            String version, String protocol, String apiSpec, CapabilityStatus status) {
+        return "%-40s %s (HTTP %s)%n  └─ Endpoint: %s%n  └─ Version: %s%n  └─ Protocol: %s%n  └─ API spec: %s%n%n"
+                .formatted(capType, status.label(), status.httpCode(), endpoint,
+                        orDash(version), orDash(protocol), orDash(apiSpec));
+    }
+
+    private static String orDash(String value) {
+        return value == null ? "-" : value;
     }
 
     private String buildNodeTextHeader(
@@ -642,6 +660,16 @@ public class CheckNodeCapabilities {
 
     private static String text(JsonNode node, String field) {
         return node.path(field).asText();
+    }
+
+    /** The field's text, or null if it is missing, JSON null or blank (never the string "null"). */
+    private static String optionalText(JsonNode node, String field) {
+        JsonNode value = node.path(field);
+        if (value.isMissingNode() || value.isNull() || !value.isValueNode()) {
+            return null;
+        }
+        String s = value.asText().trim();
+        return s.isEmpty() ? null : s;
     }
 
     private static String nowIso() {
