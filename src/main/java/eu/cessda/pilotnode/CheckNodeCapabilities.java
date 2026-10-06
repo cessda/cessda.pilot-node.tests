@@ -123,8 +123,44 @@ public class CheckNodeCapabilities {
         run(apiKey, format, dashboardDir, http, mapper);
     }
 
+    /**
+     * Outcome of a run: how many nodes the registry listed, and which of them could not be
+     * processed. A node that failed is still listed in {@code node_registry_summary.json}, with an
+     * {@code error} field and no capabilities, so that it stays visible on the dashboard.
+     */
+    public record Result(int totalNodes, List<NodeProblem> problems) {
+        public Result {
+            problems = List.copyOf(problems);
+        }
+
+        /** A short human-readable message, suitable for {@code JobRecord.markDone(...)}. */
+        public String message() {
+            if (problems.isEmpty()) {
+                return "node_registry_summary.json written: %d node(s)".formatted(totalNodes);
+            }
+            var sb = new StringBuilder("node_registry_summary.json written: %d node(s), %d with problems: "
+                    .formatted(totalNodes, problems.size()));
+            for (int i = 0; i < problems.size(); i++) {
+                if (i > 0) {
+                    sb.append("; ");
+                }
+                sb.append(problems.get(i).node()).append(" (").append(problems.get(i).reason()).append(')');
+            }
+            return sb.toString();
+        }
+    }
+
+    /** A node that the registry listed but whose capabilities could not be checked. */
+    public record NodeProblem(String node, String reason) {}
+
     @SuppressWarnings("java:S6201")
-    public static void run(String apiKey, Set<OutputFormat> format, Path dashboardDir, HttpClient http, ObjectMapper mapper) throws IOException {
+    public static Result run(String apiKey, Set<OutputFormat> format, Path dashboardDir, HttpClient http, ObjectMapper mapper) throws IOException {
+        return run(apiKey, format, dashboardDir, http, mapper, URI.create(NODE_REGISTRY_URL));
+    }
+
+    @SuppressWarnings("java:S6201")
+    static Result run(String apiKey, Set<OutputFormat> format, Path dashboardDir, HttpClient http, ObjectMapper mapper,
+                      URI registry) throws IOException {
 
         printBanner();
 
@@ -136,7 +172,7 @@ public class CheckNodeCapabilities {
             formatEnumSet = EnumSet.copyOf(format);
         }
 
-        new CheckNodeCapabilities(formatEnumSet, dashboardDir, http, mapper).check(apiKey);
+        return new CheckNodeCapabilities(formatEnumSet, dashboardDir, http, mapper).check(apiKey, registry);
     }
 
     // ── Main logic ────────────────────────────────────────────────────────────
@@ -195,13 +231,13 @@ public class CheckNodeCapabilities {
         Files.writeString(path, entry, java.nio.file.StandardOpenOption.APPEND);
     }
 
-    private void check(String apiKey) throws IOException {
+    private Result check(String apiKey, URI registry) throws IOException {
         // ── Fetch node list ───────────────────────────────────────────────────
 
         log.info("Fetching node list from registry...");
 
         HttpRequest registryRequest = HttpRequest.newBuilder()
-                .uri(URI.create(NODE_REGISTRY_URL))
+                .uri(registry)
                 .header("X-Api-Key", apiKey)
                 .header("User-Agent", BROWSER_USER_AGENT)
                 .header("Accept", "application/json")
@@ -219,7 +255,7 @@ public class CheckNodeCapabilities {
             }
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
-            return;
+            throw new IOException("Interrupted while fetching the node list", e);
         }
 
         JsonNode root;
@@ -247,6 +283,7 @@ public class CheckNodeCapabilities {
         }
 
         List<ObjectNode> nodeSummaries = new ArrayList<>();
+        List<NodeProblem> problems = new ArrayList<>();
 
         // ── Process each node ─────────────────────────────────────────────────
 
@@ -261,24 +298,31 @@ public class CheckNodeCapabilities {
             String legalEntityName = nodeJson.path("legal_entity").path("name").asText();
             String legalEntityRor = nodeJson.path("legal_entity").path("ror_id").asText();
 
+            ObjectNode summary;
             try {
-                URI nodeEndpoint = new URI(nodeEndpointString);
-
-
-                ObjectNode summary = checkNodeCapabilities(
-                        nodeName, nodeId, nodePid, nodeEndpoint,
+                summary = checkNodeCapabilities(
+                        nodeName, nodeId, nodePid, new URI(nodeEndpointString),
                         nodeLogo, legalEntityName, legalEntityRor);
-
-                nodeSummaries.add(summary);
-
-                if (format.contains(OutputFormat.TEXT)) {
-                    appendTextSummaryEntry(summaryTxtPath, summary);
-                }
-            } catch (URISyntaxException e) {
-                log.log(Level.SEVERE, "Node {0} - node_endpoint is an invalid URI: {1}", new Object[]{nodeName, e.getMessage()});
             } catch (InterruptedException e) {
                 Thread.currentThread().interrupt();
-                return;
+                throw new IOException("Interrupted while checking node " + nodeName, e);
+            } catch (URISyntaxException | IOException | RuntimeException e) {
+                // One bad node must not hide the others, nor stop the summary being written:
+                // record it with an error so that it stays visible.
+                String reason = describe(e);
+                log.log(Level.SEVERE, "Node {0} could not be checked: {1}", new Object[]{nodeName, reason});
+                summary = failedNodeSummary(nodeName, nodeId, nodePid, nodeEndpointString,
+                        legalEntityName, legalEntityRor, reason);
+                writeFailureReport(nodeName, summary);
+            }
+
+            if (summary.hasNonNull("error")) {
+                problems.add(new NodeProblem(nodeName, summary.get("error").asText()));
+            }
+            nodeSummaries.add(summary);
+
+            if (format.contains(OutputFormat.TEXT)) {
+                appendTextSummaryEntry(summaryTxtPath, summary);
             }
         }
 
@@ -302,6 +346,8 @@ public class CheckNodeCapabilities {
             summaryMessage += "\n  JSON: " + summaryJsonPath;
         }
         log.info(summaryMessage);
+
+        return new Result(nodeSummaries.size(), problems);
     }
 
     // ── Text report helpers ───────────────────────────────────────────────────
@@ -344,9 +390,8 @@ public class CheckNodeCapabilities {
             if (resp.statusCode() != 200) {
                 log.log(Level.WARNING, "Failed to fetch capabilities from {0} (HTTP {1})", new Object[]{nodeEndpoint, resp.statusCode()});
 
-                // Return an empty summary for this node
-                return buildNodeSummary(nodeName, nodeId, nodePid, nodeEndpoint,
-                        legalEntityName, legalEntityRor, 0, 0, mapper.createArrayNode(), reportJsonPath);
+                return unreachableNode(nodeName, nodeId, nodePid, nodeEndpoint, legalEntityName, legalEntityRor,
+                        reportJsonPath, "node_endpoint returned HTTP " + resp.statusCode());
             }
 
             try (InputStream capabilitiesBody = resp.body()) {
@@ -355,9 +400,8 @@ public class CheckNodeCapabilities {
         } catch (IOException e) {
             log.log(Level.WARNING, "Failed to fetch capabilities from {0}: {1}", new Object[]{nodeEndpoint, e});
 
-            // Return an empty summary for this node
-            return buildNodeSummary(nodeName, nodeId, nodePid, nodeEndpoint,
-                    legalEntityName, legalEntityRor, 0, 0, mapper.createArrayNode(), reportJsonPath);
+            return unreachableNode(nodeName, nodeId, nodePid, nodeEndpoint, legalEntityName, legalEntityRor,
+                    reportJsonPath, "node_endpoint unreachable: " + describe(e));
         }
 
         log.info("Checking capabilities...");
@@ -422,7 +466,7 @@ public class CheckNodeCapabilities {
 
              // ── Write per-node JSON report ────────────────────────────────────────
 
-             ObjectNode nodeReport = buildNodeSummary(nodeName, nodeId, nodePid, nodeEndpoint,
+             ObjectNode nodeReport = buildNodeSummary(nodeName, nodeId, nodePid, nodeEndpoint.toString(),
                      legalEntityName, legalEntityRor, total, available, capabilitiesOut, reportJsonPath);
 
 
@@ -467,6 +511,10 @@ public class CheckNodeCapabilities {
             return CapabilityStatus.of(code);
         } catch (IOException e) {
             return CapabilityStatus.exceptionally(e);
+        } catch (IllegalArgumentException e) {
+            // A URL the JDK cannot send a request to (no scheme, not http/https): report this
+            // capability as not available rather than failing the whole run.
+            return CapabilityStatus.exceptionally(new IOException("Invalid endpoint URL: " + e.getMessage(), e));
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
             return CapabilityStatus.of(-1);
@@ -497,8 +545,58 @@ public class CheckNodeCapabilities {
         return http.send(req, HttpResponse.BodyHandlers.discarding()).statusCode();
     }
 
-    private ObjectNode buildNodeSummary(
+    /**
+     * The summary entry for a node whose capabilities could not be fetched, also written as the
+     * node's own {@code endpoint_report.json} so that its detail page shows the failure.
+     */
+    private ObjectNode unreachableNode(
             String nodeName, String nodeId, String nodePid, URI nodeEndpoint,
+            String legalEntityName, String legalEntityRor, Path reportJsonPath, String reason) throws IOException {
+        ObjectNode report = failedNodeSummary(nodeName, nodeId, nodePid, nodeEndpoint.toString(),
+                legalEntityName, legalEntityRor, reason);
+        if (format.contains(OutputFormat.JSON)) {
+            mapper.writerWithDefaultPrettyPrinter().writeValue(reportJsonPath.toFile(), report);
+        }
+        return report;
+    }
+
+    /** A node entry with no capabilities and an {@code error} explaining why. */
+    private ObjectNode failedNodeSummary(
+            String nodeName, String nodeId, String nodePid, String nodeEndpoint,
+            String legalEntityName, String legalEntityRor, String reason) {
+        Path reportPath = dashboardDir.resolve(nodeName).resolve("endpoint_report.json");
+        ObjectNode n = buildNodeSummary(nodeName, nodeId, nodePid, nodeEndpoint,
+                legalEntityName, legalEntityRor, 0, 0, mapper.createArrayNode(), reportPath);
+        n.put("error", reason);
+        return n;
+    }
+
+    /**
+     * Replaces the node's own {@code endpoint_report.json} with the failure, so that its detail page
+     * does not keep showing the result of an earlier, successful run. Best effort: if the report
+     * cannot be written the summary entry still records the problem.
+     */
+    private void writeFailureReport(String nodeName, ObjectNode report) {
+        if (!format.contains(OutputFormat.JSON) || nodeName.isBlank()) {
+            return;
+        }
+        try {
+            Path nodeDir = dashboardDir.resolve(nodeName);
+            Files.createDirectories(nodeDir);
+            mapper.writerWithDefaultPrettyPrinter().writeValue(nodeDir.resolve("endpoint_report.json").toFile(), report);
+        } catch (IOException | RuntimeException e) {
+            log.log(Level.WARNING, "Could not write the failure report for {0}: {1}", new Object[]{nodeName, e});
+        }
+    }
+
+    private static String describe(Exception e) {
+        String message = e.getMessage();
+        String type = e.getClass().getSimpleName();
+        return message == null || message.isBlank() ? type : type + ": " + message;
+    }
+
+    private ObjectNode buildNodeSummary(
+            String nodeName, String nodeId, String nodePid, String nodeEndpoint,
             String legalEntityName, String legalEntityRor,
             int total, int available, ArrayNode capabilities, Path reportPath) {
 
@@ -507,7 +605,7 @@ public class CheckNodeCapabilities {
         n.put("node_name", nodeName);
         n.put("node_id", nodeId);
         n.put("node_pid", nodePid);
-        n.put("node_endpoint", nodeEndpoint.toString());
+        n.put("node_endpoint", nodeEndpoint);
         ObjectNode le = n.putObject("legal_entity");
         le.put("name", legalEntityName);
         le.put("ror_id", legalEntityRor);
