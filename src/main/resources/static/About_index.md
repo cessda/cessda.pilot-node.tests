@@ -135,7 +135,8 @@ The **Run checks** menu in the top-right corner triggers on-demand
 data collection for the whole network. The available checks are:
 
 - **Check All** — runs Node Capabilities, then Exchange Services,
-  Service Monitoring, and Federated Search for every registered node,
+  Service Monitoring, Core Service integrations, and Federated Search
+  for every registered node,
   one node at a time. A failure checking one node doesn't stop the
   run for the others. This can take much longer than a single check.
   It can also be configured to run automatically on a schedule.
@@ -143,8 +144,8 @@ data collection for the whole network. The available checks are:
   registered node and refreshes `endpoint_report.json` for each, on
   its own.
 
-Exchange Services, Service Monitoring, and Federated Search can also
-be run per node, from the **Run checks** menu on each node's own Node
+Exchange Services, Service Monitoring, Core Service integrations, and
+Federated Search can also be run per node, from the **Run checks** menu on each node's own Node
 Detail page. None of the checks — network-wide or per-node — require
 any credentials to be entered.
 

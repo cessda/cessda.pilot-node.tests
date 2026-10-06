@@ -194,6 +194,8 @@ The **Run checks** menu in the top bar triggers on-demand data
 collection for the currently selected node. None of the checks
 require any credentials to be entered. The available checks are:
 
+- **Run All Node Checks** — runs the four checks below for this node, one
+  after another.
 - **Exchange Services** — runs `CheckCatalogueServices` and
   refreshes `catalogue_services_report.json` for this node, using the
   Resource Catalogue endpoint read from `endpoint_report.json`.
@@ -202,6 +204,10 @@ require any credentials to be entered. The available checks are:
   capability-metrics API (falling back to a dashboard scrape, then a
   legacy API, if needed) — no API key prompt, since the default
   source is public.
+- **Core Service integrations** — runs `CheckCoreIntegrations` and
+  refreshes `core_integrations_report.json` for this node with the
+  ARGO monitoring status of its Core Service integration endpoints,
+  shown on the cards of the Core Services Integration Report.
 - **Federated Search** — runs `CheckOtherMetrics` and refreshes
   `front_office_metrics_report.json` for this node. No credentials or
   additional input are required: the check resolves every PID and

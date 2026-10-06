@@ -36,7 +36,8 @@ import com.fasterxml.jackson.databind.ObjectMapper;
  * Runs every data-collection check in one pass: {@link CheckNodeCapabilities}
  * once for the whole Node Registry, then — for every Node it just wrote a
  * summary for — {@link CheckCatalogueServices} (Exchange Services),
- * {@link CheckServiceUptime} (Service Monitoring) and
+ * {@link CheckServiceUptime} (Service Monitoring),
+ * {@link CheckCoreIntegrations} (Core Service integrations status) and
  * {@link CheckOtherMetrics} (Federated Search) in turn.
  *
  * <p>This mirrors what an operator would otherwise do by hand from the
@@ -44,13 +45,16 @@ import com.fasterxml.jackson.databind.ObjectMapper;
  * via {@code POST /api/run/check-all} ({@link CheckRunnerController}) or by
  * the scheduled task in {@link CheckAllScheduler}.</p>
  *
- * <p>A failure in one Node's checks does not stop the run: each of the three
+ * <p>A failure in one Node's checks does not stop the run: each of the
  * per-Node checks is attempted independently and failures are counted and
  * logged, so a single unreachable service doesn't prevent every other Node
- * from being checked. Only a failure of the initial
- * {@code CheckNodeCapabilities} pass aborts the whole run, since every later
- * step depends on the Node Registry summary and per-Node
- * {@code endpoint_report.json} files it writes.</p>
+ * from being checked. The same applies to the initial
+ * {@code CheckNodeCapabilities} pass: if it fails (for example while the
+ * Federation Registry is unavailable) the run carries on using the Node
+ * Registry summary and per-Node {@code endpoint_report.json} files left by the
+ * last successful run, and says so in the result. Only if there is no
+ * existing {@code node_registry_summary.json} to fall back on is the run
+ * aborted, since there is then no list of Nodes to check.</p>
  *
  * <p>Exchange Services specifically needs a Resource Catalogue endpoint for
  * the Node, which is read from that Node's freshly-written
@@ -76,31 +80,54 @@ public class CheckAll {
      *
      * @param dashboardDir Node Registry / report output directory
      * @param nodeApiKey   API key for {@code CheckNodeCapabilities}
+     * @param coreSource   ARGO federation tenant used for the Core Service
+     *                     integrations status
      * @param argoApiKey   optional legacy-ARGO-API fallback key for
      *                     {@code CheckServiceUptime}; may be blank
      * @param http         shared HTTP client
      * @param mapper       shared Jackson mapper
      * @return a summary of what ran and what was skipped or failed
-     * @throws IOException if the initial {@code CheckNodeCapabilities} pass
-     *                      fails, or {@code node_registry_summary.json}
-     *                      cannot be read back afterwards
+     * @throws IOException if {@code node_registry_summary.json} cannot be
+     *                      read — including when the initial
+     *                      {@code CheckNodeCapabilities} pass failed and there
+     *                      is no earlier summary to fall back on
      */
     public static Result run(Path dashboardDir, String nodeApiKey, String argoApiKey,
+                              CheckCoreIntegrations.Source coreSource,
                               HttpClient http, ObjectMapper mapper) throws IOException {
 
         log.info("Check All — starting with CheckNodeCapabilities");
-        CheckNodeCapabilities.run(
-                nodeApiKey,
-                EnumSet.of(CheckNodeCapabilities.OutputFormat.JSON),
-                dashboardDir,
-                http,
-                mapper);
+        String capabilitiesError = null;
+        try {
+            CheckNodeCapabilities.run(
+                    nodeApiKey,
+                    EnumSet.of(CheckNodeCapabilities.OutputFormat.JSON),
+                    dashboardDir,
+                    http,
+                    mapper);
+        } catch (IOException | RuntimeException e) {
+            capabilitiesError = String.valueOf(e.getMessage());
+            log.log(Level.WARNING,
+                    "Check All — CheckNodeCapabilities failed ({0}); continuing with existing data",
+                    capabilitiesError);
+        }
 
-        List<String> nodeNames = readNodeNames(dashboardDir, mapper);
-        log.log(Level.INFO, "Check All — CheckNodeCapabilities done, checking {0} node(s)",
-                nodeNames.size());
+        List<String> nodeNames;
+        try {
+            nodeNames = readNodeNames(dashboardDir, mapper);
+        } catch (IOException e) {
+            if (capabilitiesError != null) {
+                throw new IOException("CheckNodeCapabilities failed (" + capabilitiesError
+                        + ") and there is no existing node_registry_summary.json to fall back on", e);
+            }
+            throw e;
+        }
+        log.log(Level.INFO, "Check All — CheckNodeCapabilities {0}, checking {1} node(s)",
+                new Object[]{capabilitiesError == null ? "done" : "failed (using existing data)",
+                        nodeNames.size()});
 
         Result result = new Result(nodeNames.size());
+        result.capabilitiesError = capabilitiesError;
         LocalDate startDate = LocalDate.now().minusMonths(1);
         LocalDate endDate = LocalDate.now();
 
@@ -130,6 +157,18 @@ public class CheckAll {
             } catch (Exception e) {
                 result.uptimeFailed++;
                 log.log(Level.WARNING, "Check All — Service Monitoring failed for {0}: {1}",
+                        new Object[]{nodeName, e.getMessage()});
+            }
+
+            try {
+                CheckCoreIntegrations.run(dashboardDir, nodeName, coreSource, http, mapper);
+                result.coreOk++;
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                return result;
+            } catch (Exception e) {
+                result.coreFailed++;
+                log.log(Level.WARNING, "Check All — Core Service integrations failed for {0}: {1}",
                         new Object[]{nodeName, e.getMessage()});
             }
 
@@ -226,6 +265,10 @@ public class CheckAll {
         public int uptimeFailed;
         public int metricsOk;
         public int metricsFailed;
+        public int coreOk;
+        public int coreFailed;
+        /** Non-null if the initial CheckNodeCapabilities pass failed and existing data was used. */
+        public String capabilitiesError;
 
         Result(int totalNodes) {
             this.totalNodes = totalNodes;
@@ -233,9 +276,12 @@ public class CheckAll {
 
         /** A short human-readable summary, suitable for {@code JobRecord.markDone(...)}. */
         public String summary() {
-            return "Checked %d node(s). Exchange Services: %d ok, %d skipped, %d failed. "
+            return (capabilitiesError == null ? ""
+                    : "Node Capabilities failed (%s) — used existing data. ".formatted(capabilitiesError))
+                    + "Checked %d node(s). Exchange Services: %d ok, %d skipped, %d failed. "
                     .formatted(totalNodes, catalogueOk, catalogueSkipped, catalogueFailed)
                     + "Service Monitoring: %d ok, %d failed. ".formatted(uptimeOk, uptimeFailed)
+                    + "Core Service integrations: %d ok, %d failed. ".formatted(coreOk, coreFailed)
                     + "Federated Search: %d ok, %d failed.".formatted(metricsOk, metricsFailed);
         }
     }
