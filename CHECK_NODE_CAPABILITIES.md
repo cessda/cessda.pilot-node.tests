@@ -260,14 +260,51 @@ the summary. Every node the registry lists appears in
   URL: the node is listed with `total_capabilities: 0` and an `error` field
   naming the problem, and its own `endpoint_report.json` is replaced with the
   same entry. Processing continues with the next node.
-- A node's `node_endpoint` is unreachable or returns a non-200 status: same as
-  above, with the HTTP status or exception in `error`.
+- A node's `node_endpoint` is unreachable or returns a non-200 status: the
+  fetch is retried (see below). If it still fails, the node is listed with an
+  `error` naming the HTTP status or exception. Its last known capabilities are
+  kept if there are any (see [Stale capabilities](#stale-capabilities)),
+  otherwise it has none.
 - Any other unexpected failure while checking a node is handled the same way.
 - An individual capability's `endpoint` is an invalid URI: that one capability
   is skipped (logged); the rest of the node's capabilities are still checked.
   A capability endpoint that cannot be requested at all (for example no scheme,
   or `ftp://`) is reported as **Not available** instead.
 - Timeout: 10 seconds per capability endpoint probe.
+
+### Retries
+
+Fetching a node's capability list is attempted up to three times, waiting one
+and then two seconds between attempts. Network errors, timeouts and 5xx
+responses (a gateway returning 502 while it restarts, for example) are retried.
+Other statuses, such as 404, are not: they will not change within seconds.
+
+### Stale capabilities
+
+If the capability list still cannot be fetched, the dashboard does not throw
+away what it knew about the node. When the node's `endpoint_report.json`
+already holds capabilities, they are kept and their endpoints are **probed
+again**, so their `status` and `http_code` are current. The report is marked:
+
+```json
+{
+  "error": "node_endpoint returned HTTP 502",
+  "capabilities_stale": true,
+  "capabilities_last_fetched": "2026-10-06T18:00:12.044123+01:00"
+}
+```
+
+`capabilities_last_fetched` is the time of the last successful fetch and stays
+the same across repeated failures. The node still appears in the job result and
+Check All message as having a problem, and the message gives that time. The
+markers disappear as soon as a fetch succeeds. A node that has never been
+fetched successfully has no capabilities to keep, so its report is empty with an
+`error`, as before.
+
+Because the capabilities are kept, checks that depend on them (Exchange
+Services, Federated Search) carry on with the last known endpoints. If a node
+has no capabilities at all, Exchange Services is skipped and says why:
+`no Resource Catalogue endpoint: endpoint_report.json records an error (…)`.
 
 ### Node `error` field
 

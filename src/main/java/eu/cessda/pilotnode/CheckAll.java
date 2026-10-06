@@ -218,7 +218,7 @@ public class CheckAll {
      * @throws SkippedException if the Node has no Resource Catalogue
      *                           capability endpoint to check
      */
-    private static void runCatalogueServices(Path dashboardDir, String nodeName, ObjectMapper mapper,
+    static void runCatalogueServices(Path dashboardDir, String nodeName, ObjectMapper mapper,
                                               HttpClient http)
             throws IOException, URISyntaxException, InterruptedException, SkippedException {
 
@@ -238,7 +238,10 @@ public class CheckAll {
         }
 
         if (catalogueUrlString == null || catalogueUrlString.isBlank()) {
-            throw new SkippedException("no Resource Catalogue endpoint in endpoint_report.json");
+            String error = root.path("error").asText("");
+            throw new SkippedException(error.isBlank()
+                    ? "no Resource Catalogue endpoint in endpoint_report.json"
+                    : "no Resource Catalogue endpoint: endpoint_report.json records an error (" + error + ")");
         }
 
         URI catalogueUrl = new URI(catalogueUrlString);
