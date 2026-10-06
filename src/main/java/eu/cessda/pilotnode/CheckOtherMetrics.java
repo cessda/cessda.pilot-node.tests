@@ -666,6 +666,23 @@ public class CheckOtherMetrics {
         }
     }
 
+    /**
+     * How many results a Front Office response matched, not how many it returned on this page.
+     * The Front Office reports the total as {@code pagination.total_count}; a top-level {@code total}
+     * is also accepted. Only when neither is present is the number of results on the page used.
+     */
+    static long totalResultCount(JsonNode root) {
+        JsonNode paged = root.path("pagination").path("total_count");
+        if (paged.canConvertToLong() && paged.asLong() >= 0) {
+            return paged.asLong();
+        }
+        JsonNode total = root.path("total");
+        if (total.canConvertToLong() && total.asLong() >= 0) {
+            return total.asLong();
+        }
+        return root.path("results").size();
+    }
+
     private static MetricResult executeVisibilityQuery(HttpClient httpClient, URI queryUrl) {
         HttpRequest request = HttpRequest.newBuilder()
                 .uri(queryUrl)
@@ -696,8 +713,7 @@ public class CheckOtherMetrics {
                 return MetricResult.error(queryUrl, httpCode, root.get("error").asText());
             }
 
-            long total = root.path("total").asLong(-1);
-            long resultCount = total >= 0 ? total : root.path("results").size();
+            long resultCount = totalResultCount(root);
             boolean visible = resultCount > 0;
 
             return new MetricResult(queryUrl, httpCode, resultCount, visible,
