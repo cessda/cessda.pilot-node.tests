@@ -444,35 +444,57 @@ public class CheckNodeCapabilities {
     }
 
     private CapabilityStatus probeEndpoint(URI url) {
+        return probe(http, url);
+    }
+
+    /**
+     * Probes a capability endpoint with a {@code HEAD} request, retrying with {@code GET} if the
+     * server does not handle {@code HEAD}.
+     *
+     * <p>Some APIs only route {@code GET}: FastAPI-based service catalogues answer {@code HEAD}
+     * with 405, and others with 404 (a route that exists for {@code GET} only), so a bare
+     * {@code HEAD} reported working endpoints as "Not available". The retry is triggered by 404,
+     * 405 and 501 only; for a genuinely missing endpoint the {@code GET} returns 404 again, so
+     * the result is unchanged and it costs one extra request. Any other status is taken at face
+     * value.</p>
+     */
+    static CapabilityStatus probe(HttpClient http, URI url) {
         try {
-            // Unlike the registry and per-node capabilities requests above,
-            // this HEAD probe was sending no User-Agent/Accept at all, so it
-            // got the JDK's default "Java-http-client/..." UA — the same
-            // thing that made CheckCatalogueServices misreport healthy
-            // services as unavailable when a CDN/WAF fast-rejects it.
-            //
-            // Unlike those two requests, though, a capability endpoint here
-            // isn't necessarily a JSON API — e.g. an AAI capability is
-            // typically an HTML login/account portal (Keycloak and similar
-            // often do strict content negotiation and will hand back a
-            // non-2xx for a representation they don't have). This is a
-            // bare availability probe with a discarded body, so accept
-            // anything rather than asserting a content type we don't need.
-            HttpRequest req = HttpRequest.newBuilder()
-                    .uri(url)
-                    .method("HEAD", HttpRequest.BodyPublishers.noBody())
-                    .header("User-Agent", BROWSER_USER_AGENT)
-                    .header("Accept", "*/*")
-                    .timeout(CAPABILITY_CHECK_TIMEOUT)
-                    .build();
-            HttpResponse<Void> resp = http.send(req, HttpResponse.BodyHandlers.discarding());
-            return CapabilityStatus.of(resp.statusCode());
+            int code = send(http, url, "HEAD");
+            if (code == 404 || code == 405 || code == 501) {
+                code = send(http, url, "GET");
+            }
+            return CapabilityStatus.of(code);
         } catch (IOException e) {
             return CapabilityStatus.exceptionally(e);
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
             return CapabilityStatus.of(-1);
         }
+    }
+
+    private static int send(HttpClient http, URI url, String method) throws IOException, InterruptedException {
+        // Unlike the registry and per-node capabilities requests above,
+        // this probe was sending no User-Agent/Accept at all, so it
+        // got the JDK's default "Java-http-client/..." UA — the same
+        // thing that made CheckCatalogueServices misreport healthy
+        // services as unavailable when a CDN/WAF fast-rejects it.
+        //
+        // Unlike those two requests, though, a capability endpoint here
+        // isn't necessarily a JSON API — e.g. an AAI capability is
+        // typically an HTML login/account portal (Keycloak and similar
+        // often do strict content negotiation and will hand back a
+        // non-2xx for a representation they don't have). This is a
+        // bare availability probe with a discarded body, so accept
+        // anything rather than asserting a content type we don't need.
+        HttpRequest req = HttpRequest.newBuilder()
+                .uri(url)
+                .method(method, HttpRequest.BodyPublishers.noBody())
+                .header("User-Agent", BROWSER_USER_AGENT)
+                .header("Accept", "*/*")
+                .timeout(CAPABILITY_CHECK_TIMEOUT)
+                .build();
+        return http.send(req, HttpResponse.BodyHandlers.discarding()).statusCode();
     }
 
     private ObjectNode buildNodeSummary(
