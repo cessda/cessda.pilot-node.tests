@@ -100,7 +100,7 @@ class CheckNodeCapabilitiesReportingTest {
 
     private CheckNodeCapabilities.Result run() throws IOException {
         return CheckNodeCapabilities.run("key", EnumSet.of(CheckNodeCapabilities.OutputFormat.JSON), dataDir,
-                HttpClient.newHttpClient(), MAPPER, URI.create(base + "/registry"));
+                HttpClient.newHttpClient(), MAPPER, URI.create(base + "/registry"), java.time.Duration.ZERO);
     }
 
     private JsonNode summary() throws IOException {

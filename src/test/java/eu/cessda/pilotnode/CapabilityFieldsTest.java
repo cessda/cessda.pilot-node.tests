@@ -88,7 +88,7 @@ class CapabilityFieldsTest {
 
     private JsonNode report(String node) throws IOException {
         CheckNodeCapabilities.run("key", EnumSet.of(CheckNodeCapabilities.OutputFormat.JSON), dataDir,
-                HttpClient.newHttpClient(), MAPPER, URI.create(base + "/registry"));
+                HttpClient.newHttpClient(), MAPPER, URI.create(base + "/registry"), java.time.Duration.ZERO);
         return MAPPER.readTree(dataDir.resolve(node).resolve("endpoint_report.json").toFile());
     }
 
