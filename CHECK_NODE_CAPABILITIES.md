@@ -134,6 +134,7 @@ The registry summary is written to `<dashboard_dir>/node_registry_summary.json`
   "node_id": "6",
   "node_pid": "21.T15999/CESSDA",
   "node_endpoint": "https://node-endpoint-staging.beyond.cessda.eu/api/endpoint",
+  "logo": "https://idp.cessda.eu/static/images/CESSDA_logo.svg",
   "legal_entity": {
     "name": "Consortium of European Social Science Data Archives",
     "ror_id": "https://ror.org/02wg9xc72"
@@ -146,12 +147,34 @@ The registry summary is written to `<dashboard_dir>/node_registry_summary.json`
       "capability_type": "CESSDA Data Catalogue",
       "endpoint": "https://datacatalogue.cessda.eu/api/DataSets/v2",
       "version": "2.0",
+      "api_spec": "https://datacatalogue.cessda.eu/api/docs",
+      "protocol": "REST",
+      "declared_status": "OPERATIONAL",
       "status": "Available",
       "http_code": 200
     }
   ]
 }
 ```
+
+### Capability fields
+
+| Field | Source | Notes |
+| ----- | ------ | ----- |
+| `capability_type`, `endpoint`, `version` | the node's capability list | `version` is JSON `null` if the node gives none |
+| `api_spec` | the node's capability list | URL (or other reference) to the capability's API description; JSON `null` if absent |
+| `protocol` | the node's capability list | for example `REST`, `OAI-PMH`, `OIDC`; JSON `null` if absent |
+| `declared_status` | the node's own `status` | what the node says (for example `OPERATIONAL` or `PLANNED`); JSON `null` if absent |
+| `status`, `http_code` | the dashboard's own probe | `Available` / `Not available` and the HTTP status; **not** the node's `declared_status` |
+
+`declared_status` and `status` are deliberately separate: a node can declare a
+capability `OPERATIONAL` while its endpoint is not responding, or `PLANNED` with
+no endpoint yet. Fields a node does not return are stored as JSON `null`, never
+as the text `"null"`.
+
+At node level the report also carries the registry's `logo` (JSON `null` if the
+registry has none) and, when the node publishes one, its `node_details` block
+(`name`, `url`, `description`) exactly as returned.
 
 `http_code` is a JSON number, not a string. If the node's own
 `node_endpoint` is unreachable or returns a non-200 status, the report is
