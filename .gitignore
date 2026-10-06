@@ -63,4 +63,6 @@ nbdist/
 bin/
 
 ### Data files ###
-dashboard/data/**/*.json
+# Check reports (JSON and text) written by the dashboard at runtime; the data
+# directory is created on demand and lives on the PVC when deployed
+dashboard/data/
