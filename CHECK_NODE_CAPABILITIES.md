@@ -191,7 +191,10 @@ per-node report written to `endpoint_report.json`.)
 ## Status Indicators
 
 Each capability's endpoint is probed with an HTTP `HEAD` request (10-second
-timeout). There are only two statuses — there is no separate "Not found"
+timeout). Some APIs only route `GET` and answer `HEAD` with 404, 405 or 501, so
+for those three statuses the probe is repeated once with `GET` and the `GET`
+status is the one reported. Any other status is reported as returned by
+`HEAD`. There are only two statuses — there is no separate "Not found"
 status for a 404 here (unlike Exchange Services — see
 [Check Catalogue Services](CHECK_CATALOGUE_SERVICES.md) — which does
 distinguish 404):
@@ -212,7 +215,7 @@ distinguish 404):
    ├─> Extract node metadata (name, ID, PID, endpoint, legal entity)
    ├─> Query the node's own node_endpoint for its declared capabilities
    ├─> For each capability:
-   │   ├─> Send an HTTP HEAD request to its endpoint
+   │   ├─> Send an HTTP HEAD request to its endpoint (retry with GET on 404/405/501)
    │   ├─> Record the HTTP status code
    │   └─> Determine Available / Not available
    ├─> Write endpoint_report.json (and endpoint_report.txt in text/both mode)
