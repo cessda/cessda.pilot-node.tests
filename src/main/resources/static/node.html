@@ -1075,11 +1075,16 @@ function fomHeaderBadge(m) {
   return fomStatusTag(m);
 }
 
+// Tooltip text for a result: the backend's error and/or how the result was reached.
+function fomDetail(p) {
+  return [p.error ? 'Error: ' + p.error : '', p.note || ''].filter(Boolean).join(' — ').replace(/"/g, '&quot;');
+}
+
 function renderFomPeerTable(peers) {
   const rows = peers.map(p => `
     <tr>
       <td>${p.peer_node}</td>
-      <td>${fomStatusTag(p)}</td>
+      <td title="${fomDetail(p)}">${fomStatusTag(p)}${p.note || p.error ? ' <span class="fom-alias-note">ⓘ</span>' : ''}</td>
       <td>${p.result_count ?? '—'}</td>
     </tr>`).join('');
   return `
@@ -1132,6 +1137,8 @@ function renderFomCard(m) {
         ${m.query_url ? `<a href="${m.query_url}" target="_blank" rel="noreferrer">${m.query_url}</a>` : '—'}
       </div>
       ${m.result_count != null ? `<div class="fom-alias-note">${m.result_count} result(s)</div>` : ''}
+      ${m.error ? `<div class="fom-alias-note">Error: ${m.error}</div>` : ''}
+      ${m.note ? `<div class="fom-alias-note">${m.note}</div>` : ''}
     </div>`;
 }
 
