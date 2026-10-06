@@ -98,13 +98,15 @@ public class CheckAll {
 
         log.info("Check All — starting with CheckNodeCapabilities");
         String capabilitiesError = null;
+        List<CheckNodeCapabilities.NodeProblem> nodeProblems = List.of();
         try {
-            CheckNodeCapabilities.run(
+            CheckNodeCapabilities.Result capabilities = CheckNodeCapabilities.run(
                     nodeApiKey,
                     EnumSet.of(CheckNodeCapabilities.OutputFormat.JSON),
                     dashboardDir,
                     http,
                     mapper);
+            nodeProblems = capabilities.problems();
         } catch (IOException | RuntimeException e) {
             capabilitiesError = String.valueOf(e.getMessage());
             log.log(Level.WARNING,
@@ -128,6 +130,7 @@ public class CheckAll {
 
         Result result = new Result(nodeNames.size());
         result.capabilitiesError = capabilitiesError;
+        result.nodeProblems = nodeProblems;
         LocalDate startDate = LocalDate.now().minusMonths(1);
         LocalDate endDate = LocalDate.now();
 
@@ -269,6 +272,8 @@ public class CheckAll {
         public int coreFailed;
         /** Non-null if the initial CheckNodeCapabilities pass failed and existing data was used. */
         public String capabilitiesError;
+        /** Nodes listed by the registry whose capabilities could not be checked (they still appear in the summary). */
+        public List<CheckNodeCapabilities.NodeProblem> nodeProblems = List.of();
 
         Result(int totalNodes) {
             this.totalNodes = totalNodes;
@@ -278,6 +283,10 @@ public class CheckAll {
         public String summary() {
             return (capabilitiesError == null ? ""
                     : "Node Capabilities failed (%s) — used existing data. ".formatted(capabilitiesError))
+                    + (nodeProblems.isEmpty() ? ""
+                    : "Node Capabilities had problems with %d node(s): %s. ".formatted(nodeProblems.size(),
+                            nodeProblems.stream().map(p -> p.node() + " (" + p.reason() + ")")
+                                    .collect(java.util.stream.Collectors.joining("; "))))
                     + "Checked %d node(s). Exchange Services: %d ok, %d skipped, %d failed. "
                     .formatted(totalNodes, catalogueOk, catalogueSkipped, catalogueFailed)
                     + "Service Monitoring: %d ok, %d failed. ".formatted(uptimeOk, uptimeFailed)

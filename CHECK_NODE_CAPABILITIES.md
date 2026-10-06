@@ -226,17 +226,49 @@ distinguish 404):
 
 ## Error Handling
 
+One node that cannot be checked never stops the run and never disappears from
+the summary. Every node the registry lists appears in
+`node_registry_summary.json`, in registry order.
+
 - Registry returns something that isn't a JSON array, object with a
-  recognised array key: the whole run fails with an `IOException`.
-- A node's `node_endpoint` is an invalid URI: that node is skipped (logged),
-  processing continues with the rest.
-- A node's `node_endpoint` is unreachable or returns a non-200 status: an
-  empty report (`0`/`0` capabilities) is written for that node; processing
-  continues.
-- An individual capability's `endpoint` is an invalid URI: that one
-  capability is skipped (logged); the rest of the node's capabilities are
-  still checked.
+  recognised array key: the whole run fails with an `IOException`. This is the
+  only case that stops the run, since there is then no list of nodes to check.
+- A node's `node_endpoint` is missing, empty or not a usable `http`/`https`
+  URL: the node is listed with `total_capabilities: 0` and an `error` field
+  naming the problem, and its own `endpoint_report.json` is replaced with the
+  same entry. Processing continues with the next node.
+- A node's `node_endpoint` is unreachable or returns a non-200 status: same as
+  above, with the HTTP status or exception in `error`.
+- Any other unexpected failure while checking a node is handled the same way.
+- An individual capability's `endpoint` is an invalid URI: that one capability
+  is skipped (logged); the rest of the node's capabilities are still checked.
+  A capability endpoint that cannot be requested at all (for example no scheme,
+  or `ftp://`) is reported as **Not available** instead.
 - Timeout: 10 seconds per capability endpoint probe.
+
+### Node `error` field
+
+A node entry that could not be checked carries an extra field:
+
+```json
+{
+  "node_name": "Example",
+  "node_endpoint": "node.example.org/api",
+  "total_capabilities": 0,
+  "available_capabilities": 0,
+  "capabilities": [],
+  "error": "IllegalArgumentException: URI with undefined scheme"
+}
+```
+
+Nodes that were checked successfully have no `error` field.
+
+### Result message
+
+When the check is run from the dashboard, the job message says what happened,
+for example `node_registry_summary.json written: 12 node(s), 1 with problems:
+Data-Terra (node_endpoint returned HTTP 500)`. **Check All** includes the same
+list in its result.
 
 ## Integration with Service Monitoring Systems
 

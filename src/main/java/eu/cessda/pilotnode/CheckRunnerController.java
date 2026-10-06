@@ -155,13 +155,13 @@ public class CheckRunnerController {
         }
 
         JobRecord rec = jobRunner.start("node-capabilities", record -> {
-            CheckNodeCapabilities.run(
+            CheckNodeCapabilities.Result result = CheckNodeCapabilities.run(
                     nodeApiKey,
                     EnumSet.of(CheckNodeCapabilities.OutputFormat.JSON),
                     dataDirPath,
                     httpClient,
                     mapper);
-            record.markDone("node_registry_summary.json written");
+            record.markDone(result.message());
         });
 
         jobs.put(rec.getJobId(), rec);
