@@ -157,6 +157,30 @@ The registry summary is written to `<dashboard_dir>/node_registry_summary.json`
 }
 ```
 
+### Capability shapes
+
+A node can describe a capability's endpoints in two ways, and both are read:
+
+```json
+{ "capability_type": "AAI", "endpoint": "https://idp.example.org/", "protocol": "REST", "api_spec": null }
+```
+
+```json
+{ "capability_type": "Service Catalogue", "version": "0.2.58", "status": "OPERATIONAL",
+  "endpoints": [
+    { "protocol": "REST", "endpoint": "https://s.example.org/api/resources?types=Service&format=dcat", "api_spec": "https://s.example.org/docs#/Resources" },
+    { "protocol": "REST", "endpoint": "https://s.example.org/services", "api_spec": "https://s.example.org/docs#/EEN" }
+  ] }
+```
+
+The second form lets one capability offer several interfaces (a catalogue with a REST API and an OAI-PMH
+endpoint, say). In `endpoint_report.json` **each endpoint becomes one row** in the flat shape described below,
+repeating the capability's `capability_type`, `version` and `declared_status`, so everything that reads the
+report works the same for both. An entry without its own `protocol` or `api_spec` takes the capability's, an
+endpoint given both ways is reported once, and a capability with no endpoint at all (for example one the node
+says is `PLANNED`) still gets one row with an empty endpoint, reported as **Not available**.
+`total_capabilities` and `available_capabilities` count rows, that is endpoints.
+
 ### Capability fields
 
 | Field | Source | Notes |
