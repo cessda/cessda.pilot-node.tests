@@ -37,6 +37,7 @@ import java.time.OffsetDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.EnumSet;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
 import java.util.logging.Level;
@@ -436,13 +437,16 @@ public class CheckNodeCapabilities {
              JsonNode capsArray = capsRoot.path("capabilities");
              for (JsonNode cap : capsArray) {
                  String capType = cap.path("capability_type").asText();
-                 String endpoint = cap.path("endpoint").asText();
                  String version = optionalText(cap, "version");
-                 String apiSpec = optionalText(cap, "api_spec");
-                 String protocol = optionalText(cap, "protocol");
                  // The node's own claim about the capability (e.g. OPERATIONAL). Kept apart from
                  // "status", which is the result of our own availability probe.
                  String declaredStatus = optionalText(cap, "status");
+
+                 // A capability may list several endpoints; each is probed and reported on its own row.
+                 for (EndpointRow row : endpointsOf(cap)) {
+                 String endpoint = row.endpoint();
+                 String apiSpec = row.apiSpec();
+                 String protocol = row.protocol();
 
                  System.out.printf("  %-35s ", capType);
 
@@ -480,6 +484,7 @@ public class CheckNodeCapabilities {
                      logRecord.setParameters(new Object[]{endpoint});
                      logRecord.setThrown(e);
                      log.log(logRecord);
+                 }
                  }
              }
 
@@ -766,6 +771,62 @@ public class CheckNodeCapabilities {
 
     private static String text(JsonNode node, String field) {
         return node.path(field).asText();
+    }
+
+    /** One endpoint of a capability, with the protocol and API description that belong to it. */
+    record EndpointRow(String endpoint, String protocol, String apiSpec) {}
+
+    /**
+     * The endpoints a capability offers. Nodes report them in two shapes:
+     * <ul>
+     *   <li>flat: {@code endpoint}, {@code protocol} and {@code api_spec} on the capability itself;</li>
+     *   <li>nested: an {@code endpoints} list of {@code {protocol, endpoint, api_spec}}, so that one capability
+     *       (a catalogue with a REST and an OAI-PMH interface, say) can offer several.</li>
+     * </ul>
+     * Nested entries take their own protocol and API description, falling back to the capability's. A node
+     * that gives both shapes has both reported, without repeating an endpoint. A capability with no
+     * endpoint at all (for example one the node says is planned) still gets one row, with an empty endpoint.
+     */
+    static List<EndpointRow> endpointsOf(JsonNode cap) {
+        String capProtocol = optionalText(cap, "protocol");
+        String capApiSpec = optionalText(cap, "api_spec");
+        List<EndpointRow> rows = new ArrayList<>();
+        Set<String> seen = new HashSet<>();
+
+        JsonNode nested = cap.path("endpoints");
+        if (nested.isArray()) {
+            for (JsonNode entry : nested) {
+                String url;
+                String protocol = capProtocol;
+                String apiSpec = capApiSpec;
+                if (entry.isTextual()) {
+                    url = entry.asText().trim();
+                } else if (entry.isObject()) {
+                    url = entry.path("endpoint").asText("").trim();
+                    protocol = firstNonNull(optionalText(entry, "protocol"), capProtocol);
+                    apiSpec = firstNonNull(optionalText(entry, "api_spec"), capApiSpec);
+                } else {
+                    continue;
+                }
+                if (!url.isEmpty() && seen.add(url)) {
+                    rows.add(new EndpointRow(url, protocol, apiSpec));
+                }
+            }
+        }
+
+        String flat = cap.path("endpoint").asText("").trim();
+        if (!flat.isEmpty() && seen.add(flat)) {
+            rows.add(new EndpointRow(flat, capProtocol, capApiSpec));
+        }
+
+        if (rows.isEmpty()) {
+            rows.add(new EndpointRow("", capProtocol, capApiSpec));
+        }
+        return rows;
+    }
+
+    private static String firstNonNull(String first, String second) {
+        return first != null ? first : second;
     }
 
     /** The field's text, or null if it is missing, JSON null or blank (never the string "null"). */
