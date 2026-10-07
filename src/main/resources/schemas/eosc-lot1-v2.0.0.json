@@ -1,0 +1,723 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "Service Catalogue API",
+    "version": "2.0.0"
+  },
+  "paths": {
+    "/services": {
+      "get": {
+        "summary": "Get Services",
+        "description": "Get a list of Service profiles based on filters.\n\nParams:\n    keyword: String (optional) – keyword to filter on name, description, tags\n    from: String (optional) – starting index (0-based), default 0\n    quantity: String (optional) – number of results to return, default 10\n    order: String (optional) – 'asc' or 'desc', default 'asc'\n    sort: String (optional) – field to sort by: 'name', 'description', 'id'\n\nExample:\n    GET /services?quantity=50&keyword=data",
+        "operationId": "get_services_services_get",
+        "parameters": [
+          {
+            "name": "keyword",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Keyword to refine the search",
+              "title": "Keyword"
+            },
+            "description": "Keyword to refine the search"
+          },
+          {
+            "name": "from",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Starting index in the result set (0-based)",
+              "default": 0,
+              "title": "From"
+            },
+            "description": "Starting index in the result set (0-based)"
+          },
+          {
+            "name": "quantity",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Number of results to fetch (default 10)",
+              "default": 10,
+              "title": "Quantity"
+            },
+            "description": "Number of results to fetch (default 10)"
+          },
+          {
+            "name": "order",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Order of results: 'asc' or 'desc'",
+              "default": "asc",
+              "title": "Order"
+            },
+            "description": "Order of results: 'asc' or 'desc'"
+          },
+          {
+            "name": "sort",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Field to sort by: 'name', 'description', 'total' (by ID)",
+              "default": "name",
+              "title": "Sort"
+            },
+            "description": "Field to sort by: 'name', 'description', 'total' (by ID)"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PagingServiceBundle"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid query parameters (quantity, from, order or sort)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPError"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "AccessMode": {
+        "type": "string",
+        "enum": [
+          "access_mode-free",
+          "access_mode-free_conditionally",
+          "access_mode-other",
+          "access_mode-paid",
+          "access_mode-peer_reviewed"
+        ],
+        "title": "AccessMode"
+      },
+      "AlternativeIdentifier": {
+        "properties": {
+          "type": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Type",
+            "description": "Type of the alternative identifier",
+            "examples": [
+              "Any of OpenDOAR, re3data, handle, doi, FAIRSharing"
+            ]
+          },
+          "value": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Value",
+            "description": "Value of the alternative identifier",
+            "examples": [
+              "10.1234/example.svc.123456, 21.1234/EX-SVC-123456 When using PIDs for instruments https://docs.pidinst.org/en/latest/"
+            ]
+          }
+        },
+        "type": "object",
+        "title": "AlternativeIdentifier"
+      },
+      "Category": {
+        "type": "string",
+        "enum": [
+          "service_classification-publishing_discovery",
+          "service_classification-research_assessment_monitoring",
+          "service_classification-data_management_curation",
+          "service_classification-data_processing_analysis",
+          "service_classification-compute_services",
+          "service_classification-storage_services",
+          "service_classification-networking_services",
+          "service_classification-science_gateways",
+          "service_classification-instrumentation_physical_resources",
+          "service_classification-research_support_collaboration",
+          "service_classification-training_skills_development",
+          "service_classification-infrastructure_operations_services",
+          "service_classification-persistent_identifiers",
+          "service_classification-other"
+        ],
+        "title": "Category",
+        "description": "Service classification.\n\npublishing_discovery - Publishing & Discovery: Examples include catch-all\n    repositories (e.g., Zenodo), data repositories (e.g., PANGAEA), software\n    repositories, scientific data collections (e.g., Copernicus and biobanks),\n    metadata aggregators and catalogues, scholarly knowledge graphs (SKGs),\n    service catalogues, instrument registries, APIs, web portals, and semantic\n    artefact catalogues (e.g., OntoPortal-based catalogues, EBI-based\n    catalogues, and TIB Terminology Services).\nresearch_assessment_monitoring - Research Assessment & Monitoring: Examples\n    include FAIR validators, Open Science monitoring tools, and research impact\n    and evaluation systems.\ndata_management_curation - Data Management & Curation: Examples include data\n    management plan tools (DMP tools), metadata editors, curation and annotation\n    platforms, and data policy management tools.\ndata_processing_analysis - Data Processing & Analysis: Examples include Jupyter\n    notebooks, workflow engines, analysis platforms, AI and machine-learning\n    services, and statistical tools.\ncompute_services - Compute Services: Examples include HPC clusters, cloud\n    computing infrastructure (IaaS), virtual machines, and container\n    orchestration platforms such as Kubernetes.\nstorage_services - Storage Services: Examples include object storage such as S3,\n    archival storage, file systems, backup services, long-term preservation\n    platforms, and secure storage services.\nnetworking_services - Networking Services: Examples include research networks\n    (NRENs), VPNs, high-speed data-transfer services, and federated connectivity\n    services.\nscience_gateways - Science Gateways: Examples include web-based research\n    platforms, virtual laboratories, and Virtual Research Environments (VREs).\ninstrumentation_physical_resources - Instrumentation & Physical Resources:\n    Examples include laboratory instruments, sensors, IoT devices, and\n    experimental facilities.\nresearch_support_collaboration - Research Support & Collaboration: Examples\n    include user-support and consultancy services, collaboration platforms, and\n    project-management tools.\ntraining_skills_development - Training & Skills Development: Examples include\n    e-learning platforms, MOOCs, training portals, webinars, and certification\n    services.\ninfrastructure_operations_services - Infrastructure Operations Services:\n    Examples include authentication and authorization infrastructures (AAI),\n    federated identity systems such as eduGAIN, monitoring systems, and helpdesk\n    platforms.\npersistent_identifiers - Persistent Identifiers: Examples include persistent\n    identifier and registry services for researchers, organizations, and\n    research resources, such as DOI, ORCID, and ROR.\nother - Other: Use this category if and only if the service does not match any\n    of the other classifications."
+      },
+      "HTTPError": {
+        "properties": {
+          "detail": {
+            "type": "string",
+            "title": "Detail"
+          }
+        },
+        "type": "object",
+        "required": [
+          "detail"
+        ],
+        "title": "HTTPError"
+      },
+      "HTTPValidationError": {
+        "properties": {
+          "detail": {
+            "items": {
+              "$ref": "#/components/schemas/ValidationError"
+            },
+            "type": "array",
+            "title": "Detail"
+          }
+        },
+        "type": "object",
+        "title": "HTTPValidationError"
+      },
+      "OrderType": {
+        "type": "string",
+        "enum": [
+          "order_type-fully_open_access",
+          "order_type-open_access",
+          "order_type-order_required",
+          "order_type-other"
+        ],
+        "title": "OrderType"
+      },
+      "PagingServiceBundle": {
+        "properties": {
+          "total": {
+            "type": "integer",
+            "title": "Total",
+            "description": "Total number of results matching the search criteria",
+            "default": 0
+          },
+          "from": {
+            "type": "integer",
+            "title": "From",
+            "description": "The index of the first element in results. It's inclusive and zero based",
+            "default": 0
+          },
+          "to": {
+            "type": "integer",
+            "title": "To",
+            "description": "The index of element after the last in results",
+            "default": 0
+          },
+          "results": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/components/schemas/ServiceBundle"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Results"
+          }
+        },
+        "type": "object",
+        "title": "PagingServiceBundle"
+      },
+      "ScientificDomain": {
+        "type": "string",
+        "enum": [
+          "scientific_domain-agricultural_sciences",
+          "scientific_domain-engineering_and_technology",
+          "scientific_domain-generic",
+          "scientific_domain-humanities",
+          "scientific_domain-medical_and_health_sciences",
+          "scientific_domain-natural_sciences",
+          "scientific_domain-other",
+          "scientific_domain-social_sciences"
+        ],
+        "title": "ScientificDomain"
+      },
+      "Service": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id",
+            "description": "Unique identifier for the service (use the same value as the Service Bundle ID)",
+            "examples": [
+              "surf-node:servicebundle:123456"
+            ]
+          },
+          "alternativeIdentifiers": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/components/schemas/AlternativeIdentifier"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Alternativeidentifiers",
+            "description": "List of alternative identifiers for the service",
+            "examples": [
+              [
+                {
+                  "type": "doi",
+                  "value": "10.1234/example.svc.123456"
+                }
+              ]
+            ]
+          },
+          "abbreviation": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Abbreviation",
+            "description": "Abbreviation of the service's name.",
+            "examples": [
+              "EXSVC"
+            ]
+          },
+          "name": {
+            "type": "string",
+            "title": "Name",
+            "description": "Full name of the service",
+            "examples": [
+              "Example Service for Research Data Processing"
+            ]
+          },
+          "webpage": {
+            "type": "string",
+            "title": "Webpage",
+            "description": "URL of the service's webpage",
+            "examples": [
+              "https://service.example.org"
+            ]
+          },
+          "description": {
+            "type": "string",
+            "title": "Description",
+            "description": "An abstract with a detailed description of the service",
+            "examples": [
+              "Example Service for Research Data Processing provides scalable compute, curated datasets, and workflows to support reproducible research across multiple scientific domains."
+            ]
+          },
+          "tagline": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Tagline",
+            "description": "Short tagline summarizing the service",
+            "examples": [
+              "Scalable, reproducible research processing"
+            ]
+          },
+          "logo": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Logo",
+            "description": "URL of the service's logo",
+            "examples": [
+              "https://service.example.org/assets/logo.png"
+            ]
+          },
+          "scientificDomains": {
+            "items": {
+              "$ref": "#/components/schemas/ServiceProviderDomain"
+            },
+            "type": "array",
+            "title": "Scientificdomains",
+            "description": "List of scientific domains related to the service"
+          },
+          "categories": {
+            "items": {
+              "$ref": "#/components/schemas/ServiceCategory"
+            },
+            "type": "array",
+            "title": "Categories",
+            "description": "Categories the service, i.e., type of service"
+          },
+          "targetUsers": {
+            "items": {
+              "$ref": "#/components/schemas/TargetUser"
+            },
+            "type": "array",
+            "title": "Targetusers",
+            "description": "List of target users for the service"
+          },
+          "accessModes": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/components/schemas/AccessMode"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Accessmodes",
+            "description": "Types of access provided by the service"
+          },
+          "tags": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Tags",
+            "description": "Tags associated with the service",
+            "examples": [
+              [
+                "Reproducibility",
+                "workflows",
+                "datasets",
+                "high-performance"
+              ]
+            ]
+          },
+          "languageAvailabilities": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Languageavailabilities",
+            "description": "List of language availabilities of the service  (ISO 639-1 Code)",
+            "examples": [
+              [
+                "en",
+                "nl"
+              ]
+            ]
+          },
+          "helpdeskEmail": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Helpdeskemail",
+            "description": "Email address for the service's helpdesk",
+            "examples": [
+              "helpdesk@example.org"
+            ]
+          },
+          "securityContactEmail": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Securitycontactemail",
+            "description": "Email address for security contact",
+            "examples": [
+              "security@example.org"
+            ]
+          },
+          "trl": {
+            "$ref": "#/components/schemas/TRL",
+            "description": "Technology Readiness Level of the service"
+          },
+          "userManual": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Usermanual",
+            "description": "URL of the user manual",
+            "examples": [
+              "https://service.example.org/docs"
+            ]
+          },
+          "termsOfUse": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Termsofuse",
+            "description": "URL of the terms of use",
+            "examples": [
+              "https://service.example.org/legal/terms"
+            ]
+          },
+          "privacyPolicy": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Privacypolicy",
+            "description": "URL of the privacy policy",
+            "examples": [
+              "https://service.example.org/legal/privacy"
+            ]
+          },
+          "accessPolicy": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Accesspolicy",
+            "description": "URL of the access policy",
+            "examples": [
+              "https://service.example.org/legal/access"
+            ]
+          },
+          "orderType": {
+            "$ref": "#/components/schemas/OrderType",
+            "description": "Service access modality"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "name",
+          "webpage",
+          "description",
+          "scientificDomains",
+          "categories",
+          "targetUsers",
+          "languageAvailabilities",
+          "trl",
+          "orderType"
+        ],
+        "title": "Service"
+      },
+      "ServiceBundle": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id",
+            "description": "Unique identifier for the service",
+            "examples": [
+              "surf-node:servicebundle:123456"
+            ]
+          },
+          "service": {
+            "$ref": "#/components/schemas/Service",
+            "description": "Metadata of the actual resource"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "service"
+        ],
+        "title": "ServiceBundle"
+      },
+      "ServiceCategory": {
+        "properties": {
+          "category": {
+            "$ref": "#/components/schemas/Category",
+            "description": "Category of the service",
+            "examples": [
+              "service_classification-data_processing_analysis"
+            ]
+          }
+        },
+        "type": "object",
+        "required": [
+          "category"
+        ],
+        "title": "ServiceCategory"
+      },
+      "ServiceProviderDomain": {
+        "properties": {
+          "scientificDomain": {
+            "$ref": "#/components/schemas/ScientificDomain",
+            "description": "Scientific domain related to the catalogue",
+            "examples": [
+              "scientific_domain-social_sciences"
+            ]
+          }
+        },
+        "type": "object",
+        "required": [
+          "scientificDomain"
+        ],
+        "title": "ServiceProviderDomain"
+      },
+      "TRL": {
+        "type": "string",
+        "enum": [
+          "trl-1",
+          "trl-2",
+          "trl-3",
+          "trl-4",
+          "trl-5",
+          "trl-6",
+          "trl-7",
+          "trl-8",
+          "trl-9"
+        ],
+        "title": "TRL"
+      },
+      "TargetUser": {
+        "type": "string",
+        "enum": [
+          "target_user-businesses",
+          "target_user-eu_node_users",
+          "target_user-funders",
+          "target_user-innovators",
+          "target_user-other",
+          "target_user-policy_makers",
+          "target_user-providers",
+          "target_user-publishers",
+          "target_user-research_communities",
+          "target_user-research_groups",
+          "target_user-research_infrastructure_managers",
+          "target_user-research_managers",
+          "target_user-research_networks",
+          "target_user-research_organisations",
+          "target_user-research_projects",
+          "target_user-researchers",
+          "target_user-resource_managers",
+          "target_user-resource_provider_managers",
+          "target_user-students"
+        ],
+        "title": "TargetUser"
+      },
+      "ValidationError": {
+        "properties": {
+          "loc": {
+            "items": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "integer"
+                }
+              ]
+            },
+            "type": "array",
+            "title": "Location"
+          },
+          "msg": {
+            "type": "string",
+            "title": "Message"
+          },
+          "type": {
+            "type": "string",
+            "title": "Error Type"
+          }
+        },
+        "type": "object",
+        "required": [
+          "loc",
+          "msg",
+          "type"
+        ],
+        "title": "ValidationError"
+      }
+    }
+  }
+}

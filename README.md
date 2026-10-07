@@ -92,18 +92,19 @@ See the following for details of what each check does and how to run it:
 
 Application configuration is in `src/main/resources/application.properties`:
 
-| Property             | Description                                                        |
-|----------------------|--------------------------------------------------------------------|
+| Property | Description |
+| --- | --- |
 | `dashboard.data-dir` | Path to the data directory (e.g. `src/main/resources/static/data`) |
-| `check.node-name`    | Default node name used by `CheckNodeCapabilities`                  |
-| `check.api-key-node` | API key for `CheckNodeCapabilities` (also required for Check All)  |
+| `check.node-name` | Default node name used by `CheckNodeCapabilities` |
+| `check.api-key-node` | API key for `CheckNodeCapabilities` (also required for Check All) |
 | `check.argo-status-api-base` | ARGO status API for `CheckCoreIntegrations` (default `https://api-status.devel.mon.argo.grnet.gr`) |
 | `check.argo-status-ui-base` | ARGO status web UI linked to from non-OK Core Service integration statuses (default `https://status.devel.mon.argo.grnet.gr`) |
 | `check.argo-federation-tenant` | ARGO federation tenant for `CheckCoreIntegrations` (default `EOSC-BEYOND-FEDERATION`) |
 | `check.discovery-hub-node-aliases` | Metric 9: comma-separated `Node=HubName` pairs, the name the Sandbox Discovery Hub uses for a Node. Blank or missing means the Node's own name; all registered Nodes are listed, only `LifeWatch-ERIC=LifeWatch` currently differs |
+| `check.catalogue.capability-order` | Capability types to read a node's services from, in order of preference; default `Service Catalogue,Resource Catalogue` — see [Check Catalogue Services](CHECK_CATALOGUE_SERVICES.md) |
 | `check.api-key-argo` | Fallback ARGO API key for `CheckServiceUptime`'s legacy-API source only |
 | `check.check-all.scheduled.enabled` | Run Check All on a schedule (default `false`) — see [Dashboard](DASHBOARD_README.md#scheduled-check-all) |
-| `check.check-all.scheduled.cron`    | Cron expression for the scheduled run (default: daily at 03:00) |
+| `check.check-all.scheduled.cron` | Cron expression for the scheduled run (default: daily at 03:00) |
 
 ---
 

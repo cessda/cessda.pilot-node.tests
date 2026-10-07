@@ -151,39 +151,87 @@ whichever source URL actually answered (the node's own catalogue or the
 Sandbox fallback — see below); it isn't necessarily the same as
 `services.length` if `quantity` limited a fallback query.
 
+## Choosing the Catalogue Endpoint
+
+A node can offer several catalogue endpoints, in different formats (Data-Terra, for instance, lists a Service
+Catalogue with a DCAT feed and a Lot-1 list, and a Resource Catalogue of research products). When the check is
+run from the dashboard, or by Check All, it chooses among them from the node's `endpoint_report.json`:
+
+1. **By capability type**, in the order set by `check.catalogue.capability-order` (default
+   `Service Catalogue,Resource Catalogue`, matched ignoring case). A Service Catalogue states that it lists
+   services, whereas a Resource Catalogue may hold other resource types.
+2. **By format**, within a type: a native EOSC Beyond list (no conversion) before a Lot-1 list.
+3. **Operational** endpoints (as the node declares them) before others, then the node's own order.
+
+An endpoint counts only if an adapter **recognises what it returns**, from a sample of the response. A
+capability name alone is never enough, and an endpoint that returns something unreadable, such as a DCAT feed,
+is skipped and not taken for an empty list. The first readable endpoint of the first type that has one is used;
+if reading it fails, the next is tried.
+
+| Format | How it is recognised | Handling |
+| ------ | -------------------- | -------- |
+| EOSC Beyond list | `<base>/api/service/all` returns `results` of services with a `name` | used as it is |
+| EOSC-Lot-1 v1.0.0 / v2.0.0 | `results` of `{id, service}` bundles; the release from the category vocabulary (`category-*` is v1.0.0, `service_classification-*` is v2.0.0) | every page is read, each record validated against the bundled model and converted |
+| anything else | not recognised | skipped and listed under `tried` |
+
+The `api_spec` and `version` a node reports are not used to decide: they are often missing, or point at the
+node's own documentation.
+
+**Lot-1 conversion.** Only what the checks and the Node page use is converted: `id`, `name`, `abbreviation`,
+`description`, `webpage` (also as `urls`), `logo`, `tags`, `trl`, the order and policy links, and the helpdesk
+email as `publicContacts`. `nodePID` is taken from the node's registry entry and `type` is `Service`. Records that
+do not conform to the model are left out and counted in `invalid_records`.
+
+If no endpoint can be read, or the node has none, the [Sandbox fallback](#sandbox-fallback) applies.
+
 ## API Endpoint and Fallback Order
 
-1. **Primary**: the node's own Resource Catalogue, built from
-   `api_base_url`. A trailing `/api` or `/api/` is stripped and
-   `/api/service/all` appended; an endpoint that already ends in
-   `/api/service/all` is used as it is. Returns every service for that node,
-   unfiltered.
-2. **Sandbox fallback** (only if the primary request fails, and `node_pid` was
-   supplied): the Sandbox Resource Catalogue, which lists the services of
-   every node, asked for this node only with its `node` filter:
+1. **The node's own catalogue**: chosen as described above, or, when a `catalogueUrl` is given explicitly (the
+   command line, or the `catalogueUrl` field of the REST call), that one endpoint, built from `api_base_url`:
+   any trailing `/api` or `/api/` stripped and `/api/service/all` appended; an endpoint that already ends in
+   `/api/service/all` is used as it is.
+2. <a id="sandbox-fallback"></a>**Sandbox fallback** (only if the first step fails, and `node_pid` was
+   supplied): the Sandbox Resource Catalogue, which lists the services of every node, asked for this node only
+   with its `node` filter:
 
    ```text
    https://providers.sandbox.eosc-beyond.eu/api/service/all?node=NODE_PID&from=0&quantity=QUANTITY&order=asc
    ```
 
-   Only services whose `nodePID` is this node's are ever reported, even if the
-   Sandbox ignores the filter, so a node that has no services registered in
-   the Sandbox gets an empty report and never another node's services. Without
-   a `node_pid` there is no safe way to look the node up and the check fails.
+   Only services whose `nodePID` is this node's are ever reported, even if the Sandbox ignores the filter, so a
+   node that has no services registered in the Sandbox gets an empty report and never another node's services.
+   Without a `node_pid` there is no safe way to look the node up and the check fails.
 
-A report produced by the fallback has `"fallback": true`, a
-`fallback_reason` (why the node's own catalogue could not be read) and a
-`note`, which the Node page shows above the table. The fallback lists what the
-Sandbox has registered for the node, which can be fewer than the node
-publishes.
+A node whose `endpoint_report.json` lists no Service Catalogue or Resource Catalogue endpoint at all is skipped
+by Check All, and fails (with that message) when run on its own; the Sandbox is not asked.
 
-If both the primary and the fallback fail, the whole check fails with an
-`IOException`.
+A report produced by the fallback has `"fallback": true`, a `fallback_reason` and a `note`, which the Node page
+shows above the table. The fallback lists what the Sandbox has registered for the node, which can be fewer than
+the node publishes.
 
-**Why not a keyword search.** An earlier version searched the Sandbox with the
-node name as a free-text `keyword`. That matches fragments of the name inside
-other nodes' services (`Data-Terra` matches "Data …"), so the report listed
-dozens of services that did not belong to the node.
+If both the node's catalogue and the fallback fail, the whole check fails with an `IOException`.
+
+**Why not a keyword search.** An earlier version searched the Sandbox with the node name as a free-text
+`keyword`. That matches fragments of the name inside other nodes' services (`Data-Terra` matches "Data …"), so
+the report listed dozens of services that did not belong to the node.
+
+### What the report says about its source
+
+```json
+"source": { "capability_type": "Service Catalogue", "protocol": "REST",
+            "endpoint": "https://services.earth-data.eu/services",
+            "adapter": "lot1", "format": "Lot-1 v2.0.0", "converted": true },
+"tried": [ { "capability_type": "Service Catalogue", "endpoint": "https://…/api/resources?types=Service&format=dcat",
+             "outcome": "not a catalogue format that can be read (… a DCAT feed …)" },
+           { "capability_type": "Service Catalogue", "endpoint": "https://services.earth-data.eu/services",
+             "outcome": "used (Lot-1 v2.0.0)" } ],
+"invalid_records": 0,
+"warnings": []
+```
+
+`source` is absent when the Sandbox fallback was used. `invalid_records` (with `invalid_details`) and `warnings`
+(for example a list that ended early) appear only when there is something to report. The Node page shows the
+source, any warnings, and the endpoints that were not used.
 
 ## Data Extracted
 
