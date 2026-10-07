@@ -12,8 +12,8 @@ this check is labelled **Exchange Services**.
   service's webpage (Metric 13 — see below)
 - Writes `catalogue_services_report.json` directly to the dashboard data
   directory
-- Falls back automatically to the Sandbox Resource Catalogue, then to a
-  node-PID keyword search, if the node's own API is unavailable
+- If the node's own API cannot be read, falls back to the Sandbox Resource
+  Catalogue filtered to the node (and never lists another node's services)
 
 ## Running via the Dashboard
 
@@ -26,8 +26,8 @@ Triggered via: `POST /api/run/catalogue-services` with JSON body
 is the node's Resource Catalogue endpoint, read from that node's
 `endpoint_report.json` (capability_type `Resource Catalogue`) — the
 dashboard's JavaScript does this lookup automatically before calling the
-endpoint. `nodePid` is optional and only used for the third-level keyword
-fallback described below. No credentials are required.
+endpoint. `nodePid` is optional and is needed for the Sandbox fallback
+described below. No credentials are required.
 
 ## Running Directly
 
@@ -46,11 +46,11 @@ java -cp "target/classes:$(cat cp.txt)" \
 
 | Argument        | Required | Default                                        | Description |
 | --------------- | -------- | ----------------------------------------------- | ----------- |
-| `NODE_NAME`     | Yes      | —                                               | Node name; used as the output directory and, when falling back to the Sandbox catalogue, as the keyword filter |
+| `NODE_NAME`     | Yes      | —                                               | Node name; used as the output directory |
 | `api_base_url`  | No       | `https://providers.sandbox.eosc-beyond.eu`      | The node's own Resource Catalogue base URL — the `Resource Catalogue` capability's `endpoint` value from `endpoint_report.json`, passed as-is. Any trailing `/api` or `/api/` is stripped and `/api/service/all` appended |
-| `quantity`      | No       | `10`                                            | Maximum number of services to request from a fallback (keyword-filtered) URL — has no effect on the primary node-catalogue call, which returns everything for that node unfiltered |
+| `quantity`      | No       | `10`                                            | Maximum number of services to request from the Sandbox fallback — has no effect on the primary node-catalogue call, which returns everything for that node unfiltered |
 | `dashboard_dir` | No       | `../dashboard/data`                             | Output root directory |
-| `node_pid`      | No       | —                                               | Node PID from `endpoint_report.json`, used as a keyword for a third-level fallback if both the primary and Sandbox-fallback URLs fail |
+| `node_pid`      | No       | —                                               | Node PID from `endpoint_report.json`; the Sandbox fallback filters on it, and is not attempted without it |
 
 ### Examples
 
@@ -147,30 +147,43 @@ Report generated: JSON: dashboard/data/CESSDA/catalogue_services_report.json
 service with no webpage (status `"No webpage defined"`) or whose webpage
 URL couldn't be parsed. `avg_response_time_ms` is `null` if no service in
 the report had a measurable response time. `total_services` reflects
-whichever source URL actually answered (primary, Sandbox fallback, or
-node-PID fallback — see below); it isn't necessarily the same as
+whichever source URL actually answered (the node's own catalogue or the
+Sandbox fallback — see below); it isn't necessarily the same as
 `services.length` if `quantity` limited a fallback query.
 
 ## API Endpoint and Fallback Order
 
 1. **Primary**: the node's own Resource Catalogue, built from
-   `api_base_url` — any trailing `/api` or `/api/` stripped, then
-   `/api/service/all` appended. Returns every service for that node,
+   `api_base_url`. A trailing `/api` or `/api/` is stripped and
+   `/api/service/all` appended; an endpoint that already ends in
+   `/api/service/all` is used as it is. Returns every service for that node,
    unfiltered.
-2. **Sandbox fallback** (only if the primary request fails): the Sandbox
-   Resource Catalogue, `https://providers.sandbox.eosc-beyond.eu/api/service/all`,
-   filtered by `NODE_NAME` as a keyword:
+2. **Sandbox fallback** (only if the primary request fails, and `node_pid` was
+   supplied): the Sandbox Resource Catalogue, which lists the services of
+   every node, asked for this node only with its `node` filter:
 
    ```text
-   https://providers.sandbox.eosc-beyond.eu/api/service/all?keyword=NODE_NAME&from=0&quantity=QUANTITY&order=asc
+   https://providers.sandbox.eosc-beyond.eu/api/service/all?node=NODE_PID&from=0&quantity=QUANTITY&order=asc
    ```
 
-3. **Node-PID fallback** (only if both of the above fail, and `node_pid`
-   was supplied): the same Sandbox URL, but with `node_pid` as the
-   `keyword` instead of `NODE_NAME`.
+   Only services whose `nodePID` is this node's are ever reported, even if the
+   Sandbox ignores the filter, so a node that has no services registered in
+   the Sandbox gets an empty report and never another node's services. Without
+   a `node_pid` there is no safe way to look the node up and the check fails.
 
-If all three fail, the whole check fails with an `IOException` describing
-which URLs were tried.
+A report produced by the fallback has `"fallback": true`, a
+`fallback_reason` (why the node's own catalogue could not be read) and a
+`note`, which the Node page shows above the table. The fallback lists what the
+Sandbox has registered for the node, which can be fewer than the node
+publishes.
+
+If both the primary and the fallback fail, the whole check fails with an
+`IOException`.
+
+**Why not a keyword search.** An earlier version searched the Sandbox with the
+node name as a free-text `keyword`. That matches fragments of the name inside
+other nodes' services (`Data-Terra` matches "Data …"), so the report listed
+dozens of services that did not belong to the node.
 
 ## Data Extracted
 
@@ -208,16 +221,16 @@ The per-service webpage check evidences Metric 13. For each service with a
 The per-service webpage check sends a browser-shaped `User-Agent`, since
 some Exchange Service webpages sit behind a CDN/WAF that fast-rejects the
 JDK HttpClient's default `User-Agent`, otherwise misreporting a healthy
-service as unavailable. (The Resource Catalogue API fetch itself — primary,
-Sandbox-fallback, or node-PID-fallback — only sets an `Accept:
-application/json` header, no custom `User-Agent`.)
+service as unavailable. (The Resource Catalogue API fetch itself — primary
+or Sandbox fallback — only sets an `Accept: application/json` header, no
+custom `User-Agent`.)
 
 ## Troubleshooting
 
 ### "Failed to fetch Catalogue Services data from ... URLs"
 
-All of the primary, Sandbox-fallback, and (if attempted) node-PID-fallback
-requests failed. Check:
+Both the node's own catalogue and the Sandbox fallback failed (or the own
+catalogue failed and no `node_pid` was available for the fallback). Check:
 
 - Network connectivity from wherever the check is running
 - Whether `api_base_url` (from `endpoint_report.json`) is actually correct
