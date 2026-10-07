@@ -100,6 +100,7 @@ Application configuration is in `src/main/resources/application.properties`:
 | `check.argo-status-api-base` | ARGO status API for `CheckCoreIntegrations` (default `https://api-status.devel.mon.argo.grnet.gr`) |
 | `check.argo-status-ui-base` | ARGO status web UI linked to from non-OK Core Service integration statuses (default `https://status.devel.mon.argo.grnet.gr`) |
 | `check.argo-federation-tenant` | ARGO federation tenant for `CheckCoreIntegrations` (default `EOSC-BEYOND-FEDERATION`) |
+| `check.catalogue.capability-order` | Capability types to read a node's services from, in order of preference; default `Service Catalogue,Resource Catalogue` — see [Check Catalogue Services](CHECK_CATALOGUE_SERVICES.md) |
 | `check.api-key-argo` | Fallback ARGO API key for `CheckServiceUptime`'s legacy-API source only |
 | `check.check-all.scheduled.enabled` | Run Check All on a schedule (default `false`) — see [Dashboard](DASHBOARD_README.md#scheduled-check-all) |
 | `check.check-all.scheduled.cron`    | Cron expression for the scheduled run (default: daily at 03:00) |

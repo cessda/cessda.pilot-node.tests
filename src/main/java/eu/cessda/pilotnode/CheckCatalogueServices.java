@@ -30,10 +30,14 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Duration;
 import java.time.Instant;
+import java.util.List;
 import java.util.logging.Level;
 import java.util.logging.Logger;
 
 import com.fasterxml.jackson.databind.JsonNode;
+import eu.cessda.pilotnode.catalogue.CatalogueSelector;
+import eu.cessda.pilotnode.catalogue.CatalogueList;
+import eu.cessda.pilotnode.catalogue.CatalogueContext;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
@@ -142,7 +146,7 @@ public class CheckCatalogueServices {
      * {@code url}, then appends {@code /api/service/all}, ensuring
      * exactly one {@code /} between the base and the path.
      */
-    static URI buildApiServiceUrl(URI url) {
+    public static URI buildApiServiceUrl(URI url) {
         String base = url.toString();
         // Some nodes advertise the service list itself (…/api/service/all) as their Resource Catalogue
         // endpoint; appending the path again would ask for …/api/service/all/api/service/all.
@@ -185,22 +189,10 @@ public class CheckCatalogueServices {
             URI fallbackBase)
             throws IOException, URISyntaxException, InterruptedException {
 
-        // ── Output paths ──────────────────────────────────────────────
-        Path outputDir      = dashboardDir.resolve(nodeName);
-        Files.createDirectories(outputDir);
-        Path reportFileJson =
-                outputDir.resolve("catalogue_services_report.json");
-
-        // ── Build primary API URL ─────────────────────────────────────
-
-        // When calling the node's own Resource Catalogue endpoint the
-        // API returns all services for that node without filtering.
-        // Filter arguments (keyword, quantity, order) are only needed
-        // when falling back to FALLBACK_BASE_URL, which aggregates
-        // services across multiple nodes.
+        // When calling the node's own Resource Catalogue endpoint the API returns all services for that node
+        // without filtering. The Sandbox fallback aggregates the services of many nodes, so it is filtered.
         URI apiUrl = buildApiServiceUrl(apiBaseUrl);
 
-        // ── Header ────────────────────────────────────────────────────
         log.log(Level.INFO, """
                         Service Catalogue Resource Availability Report
                         Generated : {0}
@@ -209,63 +201,177 @@ public class CheckCatalogueServices {
                 new Object[]{Instant.now(), nodeName, apiUrl}
         );
 
-        // ── Fetch data ────────────────────────────────────────────────────────
         log.info("Fetching service data from API");
-
-        InputStream apiResponse;
-        String fallbackReason = null;
+        Source source;
         try {
-            apiResponse = fetchData(httpClient, apiUrl);
+            source = Source.of(readList(httpClient, mapper, apiUrl), apiUrl, nodePid);
         } catch (IOException e) {
-            // The node's own catalogue could not be read. The Sandbox lists the services of every node, so it
-            // can only stand in if it is asked for this node and nothing else.
-            if (nodePid == null || nodePid.isBlank()) {
-                throw new IOException("Failed to fetch Catalogue Services data from the node's own catalogue ("
-                        + apiUrl + ") and there is no node_pid to look the node up in the Sandbox", e);
-            }
+            source = sandboxSource(httpClient, mapper, nodePid, apiUrl.toString(), describe(e), quantity, fallbackBase, e);
+        }
+        checkAndReport(dashboardDir, nodeName, source, httpClient, mapper);
+    }
 
-            URI fallbackUrl = buildNodeFilterUrl(buildApiServiceUrl(fallbackBase), nodePid, quantity);
-            fallbackReason = describe(e);
-            log.log(Level.WARNING, "Primary URL failed ({0}). Retrying with the Sandbox, filtered to {1}: {2}",
-                    new Object[]{fallbackReason, nodePid, fallbackUrl});
+    /**
+     * Reads the node's services from whichever of its catalogue endpoints can be read best (see
+     * {@link CatalogueSelector}), falling back to the Sandbox, filtered to the node, if none can.
+     *
+     * @param nodePid the node's PID; if blank it is read from the node's {@code endpoint_report.json}
+     */
+    public static void runSelected(Path dashboardDir, String nodeName, String nodePid, int quantity,
+                                   CatalogueSelector selector, HttpClient httpClient, ObjectMapper mapper)
+            throws IOException, InterruptedException {
+        runSelected(dashboardDir, nodeName, nodePid, quantity, selector, httpClient, mapper, FALLBACK_BASE_URL);
+    }
 
-            try {
-                apiResponse = fetchData(httpClient, fallbackUrl);
-                apiUrl = fallbackUrl;
-            } catch (IOException fallbackException) {
-                fallbackException.addSuppressed(e);
-                throw new IOException("Failed to fetch Catalogue Services data from the node's own catalogue and"
-                        + " from the Sandbox", fallbackException);
-            }
+    static void runSelected(Path dashboardDir, String nodeName, String nodePid, int quantity,
+                            CatalogueSelector selector, HttpClient httpClient, ObjectMapper mapper, URI fallbackBase)
+            throws IOException, InterruptedException {
+
+        Path endpointReportPath = dashboardDir.resolve(nodeName).resolve("endpoint_report.json");
+        JsonNode endpointReport = mapper.readTree(endpointReportPath.toFile());
+        String pid = nodePid == null || nodePid.isBlank() ? endpointReport.path("node_pid").asText(null) : nodePid;
+
+        log.log(Level.INFO, "Service Catalogue Resource Availability Report for {0} ({1}); choosing among {2}",
+                new Object[]{nodeName, Instant.now(), selector.candidates(endpointReport)});
+
+        if (selector.candidates(endpointReport).isEmpty()) {
+            String error = endpointReport.path("error").asText("");
+            throw new NoCatalogueEndpointException(error.isBlank()
+                    ? "no Service Catalogue or Resource Catalogue endpoint in endpoint_report.json"
+                    : "no Service Catalogue or Resource Catalogue endpoint: endpoint_report.json records an error ("
+                            + error + ")");
         }
 
-        // ── Parse JSON ────────────────────────────────────────────────────────
+        CatalogueSelector.Result result = selector.select(endpointReport, new CatalogueContext(pid));
+        ArrayNode tried = mapper.createArrayNode();
+        for (CatalogueSelector.Attempt attempt : result.attempts()) {
+            ObjectNode a = tried.addObject();
+            a.put("capability_type", attempt.candidate().capabilityType());
+            a.put("endpoint", attempt.candidate().endpoint());
+            a.put("outcome", attempt.outcome());
+        }
+
+        Source source;
+        if (result.selection().isPresent()) {
+            CatalogueSelector.Selection chosen = result.selection().get();
+            ObjectNode provenance = mapper.createObjectNode();
+            provenance.put("capability_type", chosen.candidate().capabilityType());
+            provenance.put("endpoint", chosen.candidate().endpoint());
+            provenance.put("protocol", chosen.candidate().protocol());
+            provenance.put("adapter", chosen.adapterId());
+            provenance.put("format", chosen.format());
+            provenance.put("converted", chosen.list().converted());
+            log.log(Level.INFO, "Using {0} ({1})", new Object[]{chosen.candidate(), chosen.format()});
+            source = new Source(chosen.list().root(), URI.create(chosen.candidate().endpoint()), null, pid, provenance,
+                    tried, chosen.list().invalid(), chosen.list().warnings());
+        } else {
+            String reason = result.attempts().isEmpty()
+                    ? "no Service Catalogue or Resource Catalogue endpoint"
+                    : "no catalogue endpoint could be read (" + result.attempts().stream()
+                            .map(a -> a.candidate().endpoint() + ": " + a.outcome()).collect(java.util.stream.Collectors.joining("; ")) + ")";
+            source = sandboxSource(httpClient, mapper, pid, endpointReport.path("node_endpoint").asText(""), reason,
+                    quantity, fallbackBase, null);
+            source = new Source(source.root(), source.apiUrl(), source.fallbackReason(), source.nodePid(), null, tried,
+                    List.of(), List.of());
+        }
+        checkAndReport(dashboardDir, nodeName, source, httpClient, mapper);
+    }
+
+    /** The node's {@code endpoint_report.json} lists no catalogue endpoint at all, so there is nothing to read. */
+    public static final class NoCatalogueEndpointException extends IOException {
+        private static final long serialVersionUID = 1L;
+
+        NoCatalogueEndpointException(String message) {
+            super(message);
+        }
+    }
+
+    // ── where the services come from ──────────────────────────────────────
+
+    /** The services to check, and how they were obtained. */
+    private record Source(JsonNode root, URI apiUrl, String fallbackReason, String nodePid, ObjectNode provenance,
+                          ArrayNode tried, List<CatalogueList.InvalidRecord> invalid, List<String> warnings) {
+
+        static Source of(JsonNode root, URI apiUrl, String nodePid) {
+            return new Source(root, apiUrl, null, nodePid, null, null, List.of(), List.of());
+        }
+    }
+
+    private static JsonNode readList(HttpClient httpClient, ObjectMapper mapper, URI url)
+            throws IOException, InterruptedException {
+        try (InputStream in = fetchData(httpClient, url)) {
+            return mapper.readTree(in);
+        }
+    }
+
+    /**
+     * The Sandbox lists the services of every node, so it can only stand in for the node's own catalogue if it is
+     * asked for this node and nothing else.
+     */
+    private static Source sandboxSource(HttpClient httpClient, ObjectMapper mapper, String nodePid, String triedSource,
+                                        String reason, int quantity, URI fallbackBase, Exception cause)
+            throws IOException, InterruptedException {
+        if (nodePid == null || nodePid.isBlank()) {
+            throw new IOException("Failed to fetch Catalogue Services data from the node's own catalogue ("
+                    + triedSource + ") and there is no node_pid to look the node up in the Sandbox", cause);
+        }
+
+        URI fallbackUrl = buildNodeFilterUrl(buildApiServiceUrl(fallbackBase), nodePid, quantity);
+        log.log(Level.WARNING, "Own catalogue could not be read ({0}). Retrying with the Sandbox, filtered to {1}: {2}",
+                new Object[]{reason, nodePid, fallbackUrl});
+
         JsonNode root;
-        try (InputStream jsonData = apiResponse) {
-            root = mapper.readTree(jsonData);
+        try {
+            root = readList(httpClient, mapper, fallbackUrl);
+        } catch (IOException fallbackException) {
+            if (cause != null) {
+                fallbackException.addSuppressed(cause);
+            }
+            throw new IOException("Failed to fetch Catalogue Services data from the node's own catalogue and"
+                    + " from the Sandbox", fallbackException);
         }
+
+        // Belt and braces: even if the Sandbox ignored the filter, never report another node's services.
+        JsonNode results = root.path("results");
+        ArrayNode own = mapper.createArrayNode();
+        for (JsonNode service : results) {
+            if (nodePid.equalsIgnoreCase(service.path("nodePID").asText())) {
+                own.add(service);
+            }
+        }
+        ObjectNode filtered = mapper.createObjectNode();
+        if (own.size() != results.size()) {
+            log.log(Level.WARNING, "The Sandbox returned {0} service(s) of other nodes; ignoring them",
+                    results.size() - own.size());
+            filtered.put("total", own.size());
+        } else {
+            filtered.put("total", root.path("total").asLong(0));
+        }
+        filtered.set("results", own);
+        if (root.has("error")) {
+            filtered.set("error", root.get("error"));
+        }
+        return new Source(filtered, fallbackUrl, reason, nodePid, null, null, List.of(), List.of());
+    }
+
+    // ── checking and reporting ────────────────────────────────────────────
+
+    private static void checkAndReport(Path dashboardDir, String nodeName, Source source, HttpClient httpClient,
+                                       ObjectMapper mapper) throws IOException {
+        Path outputDir = dashboardDir.resolve(nodeName);
+        Files.createDirectories(outputDir);
+        Path reportFileJson = outputDir.resolve("catalogue_services_report.json");
+
+        JsonNode root = source.root();
+        URI apiUrl = source.apiUrl();
+        String fallbackReason = source.fallbackReason();
+        String nodePid = source.nodePid();
 
         if (root.has("error")) {
             log.log(Level.WARNING, "API response contains an 'error' field.");
         }
-
         long total = root.path("total").asLong(0);
         JsonNode results = root.path("results");
-        if (fallbackReason != null) {
-            // Belt and braces: even if the Sandbox ignored the filter, never report another node's services.
-            ArrayNode own = mapper.createArrayNode();
-            for (JsonNode service : results) {
-                if (nodePid.equalsIgnoreCase(service.path("nodePID").asText())) {
-                    own.add(service);
-                }
-            }
-            if (own.size() != results.size()) {
-                log.log(Level.WARNING, "The Sandbox returned {0} service(s) of other nodes; ignoring them",
-                        results.size() - own.size());
-                total = own.size();
-            }
-            results = own;
-        }
         log.log(Level.INFO, "Total services found: {0}", total);
         // ── Check each service webpage ────────────────────────────────
         // Metric 13 (Proposed Validation Metrics doc): automated
@@ -398,9 +504,28 @@ public class CheckCatalogueServices {
         if (fallbackReason != null) {
             report.put("fallback", true);
             report.put("fallback_reason", fallbackReason);
-            report.put("note", "The node's own Resource Catalogue could not be read (" + fallbackReason
+            report.put("note", "The node's own catalogue could not be read (" + fallbackReason
                     + "). These are the services the Sandbox has registered for " + nodePid + "; the node may"
                     + " publish others.");
+        }
+        if (source.provenance() != null) {
+            report.set("source", source.provenance());
+        }
+        if (source.tried() != null && !source.tried().isEmpty()) {
+            report.set("tried", source.tried());
+        }
+        if (!source.invalid().isEmpty()) {
+            report.put("invalid_records", source.invalid().size());
+            ArrayNode details = report.putArray("invalid_details");
+            for (CatalogueList.InvalidRecord r : source.invalid()) {
+                ObjectNode d = details.addObject();
+                d.put("id", r.id());
+                d.put("problems", String.join("; ", r.messages()));
+            }
+        }
+        if (!source.warnings().isEmpty()) {
+            ArrayNode w = report.putArray("warnings");
+            source.warnings().forEach(w::add);
         }
         report.put("total_services", total);
         report.put("healthy_services", healthyCount);

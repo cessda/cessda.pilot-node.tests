@@ -59,6 +59,12 @@
             <artifactId>jsoup</artifactId>
             <version>1.23.2</version>
         </dependency>
+        <!-- Validates the records of a Lot-1 catalogue against the bundled EOSC-Lot-1 OpenAPI schemas -->
+        <dependency>
+            <groupId>com.networknt</groupId>
+            <artifactId>json-schema-validator</artifactId>
+            <version>1.5.6</version>
+        </dependency>
     </dependencies>
 
     <build>

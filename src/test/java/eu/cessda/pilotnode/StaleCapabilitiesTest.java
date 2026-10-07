@@ -227,8 +227,9 @@ class StaleCapabilitiesTest {
     void exchangeServicesSkipNamesTheNodeEndpointError() throws IOException {
         nodeStatus = 502;
         run();           // no previous data, so the report is empty and flagged
-        var ex = assertThrows(Exception.class, () -> CheckAll.runCatalogueServices(dataDir, "Node", MAPPER,
-                HttpClient.newHttpClient()));
+        var ex = assertThrows(Exception.class, () -> CheckAll.runCatalogueServices(dataDir, "Node",
+                eu.cessda.pilotnode.catalogue.CatalogueSelector.standard(List.of("Service Catalogue", "Resource Catalogue"),
+                        HttpClient.newHttpClient(), MAPPER), MAPPER, HttpClient.newHttpClient()));
         assertTrue(ex.getMessage().contains("502"), ex.getMessage());
     }
 }

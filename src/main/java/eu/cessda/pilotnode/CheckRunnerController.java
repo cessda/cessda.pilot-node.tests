@@ -42,6 +42,7 @@ import org.springframework.web.bind.annotation.ResponseStatus;
 import org.springframework.web.bind.annotation.RestController;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import eu.cessda.pilotnode.catalogue.CatalogueSelector;
 
 /**
  * REST controller that triggers the three data-collection checks
@@ -100,6 +101,7 @@ public class CheckRunnerController {
     private final String argoApiKey;
     private final String nodeApiKey;
     private final CheckCoreIntegrations.Source coreSource;
+    private final CatalogueSelector catalogueSelector;
     private final JobRunner jobRunner;
     private final HttpClient httpClient;
     private final ObjectMapper mapper;
@@ -119,6 +121,7 @@ public class CheckRunnerController {
             @Value("${check.argo-status-api-base:" + CheckCoreIntegrations.Source.DEFAULT_API_BASE + "}") String argoStatusApiBase,
             @Value("${check.argo-federation-tenant:" + CheckCoreIntegrations.Source.DEFAULT_TENANT + "}") String argoFederationTenant,
             @Value("${check.argo-status-ui-base:" + CheckCoreIntegrations.Source.DEFAULT_UI_BASE + "}") String argoStatusUiBase,
+            @Value("${check.catalogue.capability-order:Service Catalogue,Resource Catalogue}") List<String> catalogueCapabilityOrder,
             JobRunner jobRunner,
             HttpClient httpClient,
             ObjectMapper mapper) {
@@ -131,6 +134,7 @@ public class CheckRunnerController {
         this.jobRunner = jobRunner;
         this.httpClient = httpClient;
         this.mapper = mapper;
+        this.catalogueSelector = CatalogueSelector.standard(catalogueCapabilityOrder, httpClient, mapper);
     }
 
     // ── Trigger endpoints ─────────────────────────────────────────────────────
@@ -230,17 +234,21 @@ public class CheckRunnerController {
         if (targetNode.isBlank()) {
             throw new IllegalArgumentException("No node specified in request body and check.node-name is not configured");
         }
-        if (catalogueUrlString.isBlank()) {
-            throw new IllegalArgumentException("catalogueUrl is required — it must be the Resource Catalogue endpoint for this node");
-        }
 
-        URI catalogueUrl = new URI(catalogueUrlString);
+        // With a catalogueUrl that one endpoint is read (as before). Without one, the node's endpoint_report.json
+        // decides which of its catalogue endpoints to read.
+        URI catalogueUrl = catalogueUrlString.isBlank() ? null : new URI(catalogueUrlString);
 
         JobRecord rec = jobRunner.start("catalogue-services", record -> {
-                // Arg order: NODE_NAME, node_pid, api_base_url, [quantity]
-                CheckCatalogueServices.run(dataDirPath, targetNode,
-                        nodePid.isBlank() ? null : nodePid,
-                        catalogueUrl, 10, httpClient, mapper);
+                if (catalogueUrl == null) {
+                    CheckCatalogueServices.runSelected(dataDirPath, targetNode,
+                            nodePid.isBlank() ? null : nodePid, 10, catalogueSelector, httpClient, mapper);
+                } else {
+                    // Arg order: NODE_NAME, node_pid, api_base_url, [quantity]
+                    CheckCatalogueServices.run(dataDirPath, targetNode,
+                            nodePid.isBlank() ? null : nodePid,
+                            catalogueUrl, 10, httpClient, mapper);
+                }
                 record.markDone("catalogue_services_report.json written for " + targetNode);
             }
         );
@@ -344,7 +352,7 @@ public class CheckRunnerController {
         }
 
         JobRecord rec = jobRunner.start("check-all", record -> {
-            CheckAll.Result result = CheckAll.run(dataDirPath, nodeApiKey, argoApiKey, coreSource, httpClient, mapper);
+            CheckAll.Result result = CheckAll.run(dataDirPath, nodeApiKey, argoApiKey, coreSource, catalogueSelector, httpClient, mapper);
             record.markDone(result.summary());
         });
 

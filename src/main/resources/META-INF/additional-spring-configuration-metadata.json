@@ -1,4 +1,10 @@
 {"properties": [{
+  "name": "check.catalogue.capability-order",
+  "type": "java.util.List<java.lang.String>",
+  "description": "Capability types to read a node's services from, in order of preference. The first with an endpoint the dashboard can read is used.",
+  "defaultValue": "Service Catalogue,Resource Catalogue"
+},
+{
   "name": "check.api-key-argo",
   "type": "java.lang.String",
   "description": "A description for 'check.api-key-argo'"

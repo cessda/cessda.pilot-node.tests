@@ -818,7 +818,20 @@ function renderCataloguePanel(data) {
       </div>`;
   }
 
-  const catalogueNote = data.note ? `<div class="panel-missing" style="padding:0.5rem 0.9rem;">ⓘ ${data.note}</div>` : '';
+  const s = data.source;
+  const catalogueSource = s
+    ? `<div class="panel-missing" style="padding:0.5rem 0.9rem;">Source: ${s.capability_type} · ${s.format}${s.converted ? ' (converted to the Beyond format)' : ''} · ${s.endpoint}</div>`
+    : '';
+  const skipped = (data.tried || []).filter(a => !String(a.outcome).startsWith('used'));
+  const catalogueTried = skipped.length
+    ? `<details style="padding:0 0.9rem 0.5rem;"><summary style="cursor:pointer;font-size:0.75rem;">${skipped.length} other endpoint(s) not used</summary>${
+        skipped.map(a => `<div class="fom-alias-note">${a.capability_type}: ${a.endpoint} — ${a.outcome}</div>`).join('')}</details>`
+    : '';
+  const catalogueWarn = (data.invalid_records || (data.warnings || []).length)
+    ? `<div class="panel-missing" style="padding:0.5rem 0.9rem;">⚠ ${data.invalid_records ? data.invalid_records + ' record(s) left out because they do not follow the source format. ' : ''}${(data.warnings || []).join(' ')}</div>`
+    : '';
+  const catalogueNote = (data.note ? `<div class="panel-missing" style="padding:0.5rem 0.9rem;">ⓘ ${data.note}</div>` : '')
+    + catalogueSource + catalogueWarn + catalogueTried;
 
   if (services.length === 0) {
     return `<div class="panel">
@@ -1442,8 +1455,8 @@ function handleAboutOverlayClick(e) {
 }
 
 // ── Exchange Services check (no API key needed) ─────────────────────────────
-// Reads the Resource Catalogue endpoint from this node's endpoint_report.json,
-// then POSTs { node, catalogueUrl } to the backend. No credentials required.
+// POSTs { node, nodePid } to the backend, which reads the node's endpoint_report.json and chooses the
+// catalogue endpoint itself. No credentials required.
 
 // Runs this node's four checks one after another (same order as the menu).
 // Each check reports its own progress/failure toast, and a failed or skipped
@@ -1470,29 +1483,17 @@ async function runCatalogueCheck() {
   if (btn) { btn.disabled = true; btn.textContent = '…'; }
   showToast('info', 'Exchange Services', `Starting for ${nodeName}…`);
 
-  // Fetch the endpoint report for the current node and find the
-  // Resource Catalogue URL. Pass the raw endpoint value; the Java
-  // class strips any trailing /api or /api/ and appends
-  // /api/service/all itself.
+  // The backend chooses which of the node's catalogue endpoints to read (a Service Catalogue first, then a
+  // Resource Catalogue, in whichever format it can read); the page only names the node and its PID.
   const epData = await tryFetchJSON(`/api/data/${encodeURIComponent(nodeName)}/endpoint_report.json`);
-  const catalogueUrl = epData?.capabilities
-    ?.find(c => c.capability_type === 'Resource Catalogue')
-    ?.endpoint || null;
   const nodePid = epData?.node_pid || null;
-
-  if (!catalogueUrl) {
-    showToast('err', 'Exchange Services',
-      'No Resource Catalogue endpoint found in endpoint_report.json for this node.');
-    resetBtn(btn);
-    return;
-  }
 
   let jobId;
   try {
     const res  = await fetch('/api/run/catalogue-services', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ node: nodeName, catalogueUrl, nodePid }),
+      body: JSON.stringify({ node: nodeName, nodePid }),
     });
     const data = await res.json();
     if (!res.ok) { showToast('err', 'Exchange Services', data.error || 'HTTP ' + res.status); resetBtn(btn); return; }
