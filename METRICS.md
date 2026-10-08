@@ -28,7 +28,7 @@ It resolves every PID and Front Office endpoint it needs — including the
 Sandbox's — from `node_registry_summary.json` and each node's
 `endpoint_report.json`, so `CheckNodeCapabilities` must be run first (or
 already be up to date). See the check's own Javadoc, or
-[About_detail.md](src/main/resources/static/About_detail.md)'s Federated
+[About_detail.md](src/main/resources/static/about_detail.html)'s Federated
 Search Report section, for what each of the six metrics specifically
 checks; in short:
 

@@ -1,0 +1,227 @@
+<h1 id="eosc-beyond-node-detail-page">EOSC Beyond Node Detail Page</h1>
+<h2 id="overview">Overview</h2>
+<p>The Node Detail page shows all collected monitoring data for a
+    single pilot node. It presents four panels — endpoint connectivity,
+    catalogue services, ARGO uptime, and Federated Search — together with
+    an overview strip summarising key metrics and a page header carrying
+    the node&#39;s registry status and contact metadata.</p>
+<p>The page is addressed by appending the node name as a URL fragment,
+    for example <code>node.html#My-Node-Name</code>. The node switcher in the top
+    bar allows navigation between nodes without returning to the
+    dashboard.</p>
+<h2 id="header">Header</h2>
+<p>The page header shows the selected node&#39;s name alongside:</p>
+<ul>
+    <li><strong>Registry</strong> — a chip confirming the node&#39;s presence in the Node
+        Registry (evidence for the Core compliance dimension&#39;s C1
+        indicator &quot;Present in Node Registry&quot;), shown as Registered,
+        Not registered, or Registered — checking… while registry data is
+        still loading.
+    </li>
+    <li><strong>Provider</strong>, <strong>Endpoint</strong>, and <strong>PID</strong>, where reported.</li>
+</ul>
+<h2 id="overview-strip">Overview Strip</h2>
+<p>The strip below the page header displays four summary values for
+    the selected node.</p>
+<ul>
+    <li><strong>Endpoints available</strong> — the number of capabilities whose status
+        is Available, expressed as a fraction of the total reported (for
+        example, 2/8).
+    </li>
+    <li><strong>Catalogue services</strong> — the count of active services found in the
+        Resource Catalogue report, or the total if no status field is
+        present.
+    </li>
+    <li><strong>Avg ARGO uptime</strong> — the mean uptime percentage across all
+        services in the ARGO report.
+    </li>
+    <li><strong>Compliance tier</strong> — the highest compliance tier fully satisfied
+        by this node (see Compliance Tiers below).
+    </li>
+</ul>
+<p>The strip does not currently summarise Federated Search visibility;
+    that panel carries its own summary badge instead (see below).</p>
+<h2 id="compliance-tiers">Compliance Tiers</h2>
+<p>The compliance tier represents the level of federation capability
+    the node has achieved. Tiers are cumulative: a node must fully
+    satisfy each tier before it can be credited with the next.</p>
+<table>
+    <thead>
+    <tr>
+        <th>Tier</th>
+        <th>Label</th>
+        <th>Required capabilities</th>
+    </tr>
+    </thead>
+    <tbody>
+    <tr>
+        <td>1</td>
+        <td>MVP</td>
+        <td>AAI, Resource Catalogue</td>
+    </tr>
+    <tr>
+        <td>2</td>
+        <td>Standard</td>
+        <td>Helpdesk, Service Monitoring</td>
+    </tr>
+    <tr>
+        <td>3</td>
+        <td>Advanced</td>
+        <td>Service Accounting, Research Product</td>
+    </tr>
+    <tr>
+        <td></td>
+        <td></td>
+        <td>Accounting, Order Management, Application</td>
+    </tr>
+    <tr>
+        <td></td>
+        <td></td>
+        <td>Deployment Management</td>
+    </tr>
+    </tbody>
+</table>
+<p>The compliance tier shown in the overview strip uses colour coding:
+    amber for Tier 1 (MVP), orange for Tier 2 (Standard), and green for
+    Tier 3 (Advanced). A node that does not satisfy Tier 1 is shown in
+    red as Below MVP.</p>
+<h2 id="endpoint-connectivity-report">Endpoint Connectivity Report</h2>
+<p>This panel shows the results of the most recent
+    <code>CheckNodeCapabilities</code> run for this node. The capabilities are
+    grouped by compliance tier so it is straightforward to see which
+    tier requirements are met and which are outstanding.</p>
+<p>Within each tier section, a badge shows how many of that tier&#39;s
+    capabilities are currently Available. Each capability card displays:</p>
+<ul>
+    <li>The capability type name.</li>
+    <li>The endpoint URL that was tested.</li>
+    <li>The status (Available or the error returned) and HTTP response
+        code.
+    </li>
+    <li>The version string reported by the endpoint, if present.</li>
+</ul>
+<p>Capability types that are not present in the report at all are shown
+    as greyed-out Not reported cards so that gaps are visible rather
+    than simply absent.</p>
+<p>Any capabilities in the report that do not belong to a defined tier
+    are shown in an Other capabilities section below the three tier
+    groups.</p>
+<p>The data comes from:</p>
+<pre><code class="lang-text">/api/<span class="hljs-class"><span class="hljs-keyword">data</span>/{<span
+        class="hljs-title">node_name</span>}/endpoint_report.json</span>
+</code></pre>
+<h2 id="catalogue-services-report">Catalogue Services Report</h2>
+<p>This panel lists the services published in the node&#39;s Resource
+    Catalogue. Each row shows the service name, a link to its catalogue
+    entry or landing page, and — where the service has a webpage —
+    the results of an automated health check against it (Metric 13 in
+    the Proposed Validation Metrics document):</p>
+<ul>
+    <li><strong>Response</strong> — the time taken to fetch the webpage, in
+        milliseconds.
+    </li>
+    <li><strong>Content</strong> — the response&#39;s content type, with a ✓ or ✕
+        indicating whether the body passed validation (a non-empty,
+        parseable JSON body for API-style content types; a non-empty body
+        otherwise).
+    </li>
+    <li><strong>Status</strong> — Available for a full pass; a qualified
+        Available (…) status such as Available (content check failed) or
+        Available (slow: …ms) for a service that responds but doesn&#39;t
+        fully pass; Not found or No webpage defined where nothing was
+        checked; otherwise Not available.
+    </li>
+</ul>
+<p>The panel header shows a healthy/total count (for example, 7/9
+    healthy), coloured green, amber, or red, plus the average response
+    time across all checked services. Reports written before this
+    enhancement — with no per-service response time or content data —
+    still display correctly: the header falls back to a plain service
+    count, and each row shows an em dash in place of the missing detail.</p>
+<p>The Resource Catalogue endpoint URL is read from the node&#39;s
+    <code>endpoint_report.json</code> and then queried directly. If the endpoint
+    report is absent or does not contain a Resource Catalogue capability,
+    this panel will show a not-available message.</p>
+<p>The data comes from:</p>
+<pre><code class="lang-text">/api/<span class="hljs-class"><span class="hljs-keyword">data</span>/{<span
+        class="hljs-title">node_name</span>}/catalogue_services_report.json</span>
+</code></pre>
+<h2 id="argo-uptime-report">ARGO Uptime Report</h2>
+<p>This panel shows service availability as measured by the ARGO
+    monitoring infrastructure. Each service card shows Availability,
+    Reliability, and Uptime as three separate percentages, each with its
+    own proportional bar coloured green (≥ 90 %), amber (≥ 60 %), or red
+    (below 60 %), plus how long the service was monitored for and the
+    reporting period.</p>
+<p>The &quot;monitored for&quot; period is shown in months when the report came
+    from the default capability-metrics API (which reports monthly), or
+    in days for the dashboard-scrape and legacy-API fallback sources.</p>
+<p>The data comes from:</p>
+<pre><code class="lang-text">/api/<span class="hljs-class"><span class="hljs-keyword">data</span>/{<span
+        class="hljs-title">node_name</span>}/argo_uptime_report.json</span>
+</code></pre>
+<h2 id="federated-search-report">Federated Search Report</h2>
+<p>This panel covers the cross-node visibility metrics from the
+    Proposed Validation Metrics document — Metrics 4, 5, 6, 9, 10 and
+    11 — which together evidence the Exchange (E) maturity dimension,
+    distinct from the Core compliance tiers above.</p>
+<p>Each metric renders as its own card, in numerical order:</p>
+<ul>
+    <li><strong>Metric 4</strong> — this node&#39;s own resources appear in its own Front
+        Office.
+    </li>
+    <li><strong>Metric 5</strong> — an Exchange service from another networked Pilot
+        Node is visible in this node&#39;s Front Office. Shown as a visible
+        peers / total peers summary behind an expandable detail list,
+        since the result is per peer node.
+    </li>
+    <li><strong>Metric 6</strong> — one or more of this node&#39;s Exchange services are
+        visible and accessible from the Sandbox Front Office.
+    </li>
+    <li><strong>Metric 9</strong> — at least one of this node&#39;s Research Outputs is
+        visible in the Sandbox Discovery Hub.
+    </li>
+    <li><strong>Metric 10</strong> — rendered as an alias of Metric 4 rather than
+        queried separately: the two metrics were only distinct while
+        services were onboarded centrally and propagated out to each
+        node&#39;s Front Office; now that onboarding is local to each node,
+        they are mechanically identical.
+    </li>
+    <li><strong>Metric 11</strong> — this node&#39;s own Exchange service is visible in
+        another networked Pilot Node&#39;s Front Office. Shown the same way
+        as Metric 5, per peer node.
+    </li>
+</ul>
+<p>The panel header shows a count of visible metrics out of all six
+    cards shown below it, Metric 10&#39;s alias card included — its
+    &quot;visible&quot; value simply mirrors Metric 4&#39;s, so the header total
+    always matches the number of cards on screen.</p>
+<p>The data comes from:</p>
+<pre><code class="lang-text">/api/<span class="hljs-class"><span class="hljs-keyword">data</span>/{<span
+        class="hljs-title">node_name</span>}/front_office_metrics_report.json</span>
+</code></pre>
+<h2 id="running-checks">Running Checks</h2>
+<p>The <strong>Run checks</strong> menu in the top bar triggers on-demand data
+    collection for the currently selected node. None of the checks
+    require any credentials to be entered. The available checks are:</p>
+<ul>
+    <li><strong>Exchange Services</strong> — runs <code>CheckCatalogueServices</code> and
+        refreshes <code>catalogue_services_report.json</code> for this node, using the
+        Resource Catalogue endpoint read from <code>endpoint_report.json</code>.
+    </li>
+    <li><strong>Service Monitoring</strong> — runs <code>CheckServiceUptime</code> and refreshes
+        <code>argo_uptime_report.json</code> for this node against the public ARGO
+        capability-metrics API (falling back to a dashboard scrape, then a
+        legacy API, if needed) — no API key prompt, since the default
+        source is public.
+    </li>
+    <li><strong>Federated Search</strong> — runs <code>CheckOtherMetrics</code> and refreshes
+        <code>front_office_metrics_report.json</code> for this node. No credentials or
+        additional input are required: the check resolves every PID and
+        Front Office endpoint it needs, including the Sandbox&#39;s, from data
+        already collected by Node Capabilities.
+    </li>
+</ul>
+<p>The page must be served from an HTTP server with an active backend
+    for the Run checks menu to work; it will not function when the file
+    is opened directly from disk.</p>
