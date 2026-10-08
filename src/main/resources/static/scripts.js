@@ -577,7 +577,7 @@ function buildOverview(ep, cat, argo) {
 
 // ── Endpoint Report panel ─────────────────────────────────────────────────────
 
-function renderEndpointPanel(data) {
+function renderEndpointPanel(data, core) {
     if (!data) {
         return `<div class="panel">
       <div class="panel-header"><div class="panel-header-left"><span class="panel-icon">🔌</span> Core Services Integration Report</div>
@@ -598,6 +598,13 @@ function renderEndpointPanel(data) {
     const pct   = Math.round(avail / caps.length * 100);
     const bCls  = pct === 100 ? 'badge-ok' : pct >= 50 ? 'badge-warn' : 'badge-error';
 
+    const coreMatches = core ? caps.map(c => findCoreStatus(core, c)).filter(Boolean) : [];
+    const coreOk = coreMatches.filter(m => m.status === 'OK').length;
+    const coreHeader = coreMatches.length
+        ? `<span class="badge ${coreOk === coreMatches.length ? 'badge-ok' : coreOk > 0 ? 'badge-warn' : 'badge-error'}" title="Status of each endpoint from the ARGO federation tenant monitoring">ARGO ${coreOk}/${coreMatches.length} OK</span>`
+        : '';
+
+
     const byType = new Map(caps.map(c => [c.capability_type, c]));
     const { tiers } = computeComplianceTiers(data);
 
@@ -609,6 +616,7 @@ function renderEndpointPanel(data) {
         <div class="ep-url">${cap.endpoint || ''}</div>
         <span class="status-tag ${sc}">${cap.status} (${cap.http_code ?? '?'})</span>
         ${cap.version ? `<div class="ep-version">Version: ${cap.version}</div>` : ''}
+        ${coreStatusBadge(findCoreStatus(core, cap))}
       </div>`;
     };
 
@@ -682,9 +690,12 @@ function renderCataloguePanel(data) {
       </div>`;
     }
 
+    const catalogueNote = data.note ? `<div class="panel-missing" style="padding:0.5rem 0.9rem;">ⓘ ${data.note}</div>` : '';
+
     if (services.length === 0) {
         return `<div class="panel">
       <div class="panel-header"><div class="panel-header-left"><span class="panel-icon">📚</span> Exchange Services Report</div></div>
+      ${catalogueNote}
       <div class="panel-missing">No services listed in this report.</div>
     </div>`;
     }
@@ -751,6 +762,7 @@ function renderCataloguePanel(data) {
         <div class="panel-header-left"><span class="panel-icon">📚</span> Exchange Services Report</div>
         <div style="display:flex;align-items:center;gap:0.6rem;">${avgResponse}${headerBadge}</div>
       </div>
+      ${catalogueNote}
       <div class="panel-body">
         <table class="cat-table">
           <thead><tr><th>Name</th><th>URL</th><th>Response</th><th>Content</th><th>Status</th></tr></thead>
@@ -939,11 +951,16 @@ function fomHeaderBadge(m) {
     return fomStatusTag(m);
 }
 
+// Tooltip text for a result: the backend's error and/or how the result was reached.
+function fomDetail(p) {
+    return [p.error ? 'Error: ' + p.error : '', p.note || ''].filter(Boolean).join(' — ').replace(/"/g, '&quot;');
+}
+
 function renderFomPeerTable(peers) {
     const rows = peers.map(p => `
     <tr>
       <td>${p.peer_node}</td>
-      <td>${fomStatusTag(p)}</td>
+      <td title="${fomDetail(p)}">${fomStatusTag(p)}${p.note || p.error ? ' <span class="fom-alias-note">ⓘ</span>' : ''}</td>
       <td>${p.result_count ?? '—'}</td>
     </tr>`).join('');
     return `
@@ -996,6 +1013,8 @@ function renderFomCard(m) {
         ${m.query_url ? `<a href="${m.query_url}" target="_blank" rel="noreferrer">${m.query_url}</a>` : '—'}
       </div>
       ${m.result_count != null ? `<div class="fom-alias-note">${m.result_count} result(s)</div>` : ''}
+      ${m.error ? `<div class="fom-alias-note">Error: ${m.error}</div>` : ''}
+      ${m.note ? `<div class="fom-alias-note">${m.note}</div>` : ''}
     </div>`;
 }
 
@@ -1138,6 +1157,7 @@ document.addEventListener('keydown', e => {
 const NODE_CHECK_LABELS = {
     'catalogue-services': 'Exchange Services',
     'service-uptime':     'Service Uptime',
+    'core-integrations':  'Core Service integrations',
     'other-metrics':      'Federated Search',
 };
 
@@ -1168,6 +1188,24 @@ document.addEventListener('keydown', e => {
 // ── Exchange Services check (no API key needed) ─────────────────────────────
 // Reads the Resource Catalogue endpoint from this node's endpoint_report.json,
 // then POSTs { node, catalogueUrl } to the backend. No credentials required.
+
+// Runs this node's four checks one after another (same order as the menu).
+// Each check reports its own progress/failure toast, and a failed or skipped
+// check (e.g. no Resource Catalogue endpoint) does not stop the others.
+async function runAllNodeChecks() {
+    document.getElementById('run-menu').setAttribute('aria-expanded', 'false');
+    const btn      = document.getElementById('btn-run-all-node');
+    const nodeName = decodeURIComponent(window.location.hash.substring(1));
+    if (btn) { btn.disabled = true; btn.textContent = '…'; }
+    showToast('info', 'Run All Node Checks', `Starting all checks for ${nodeName}…`);
+
+    for (const check of [runCatalogueCheck, runServiceUptimeCheck, runCoreIntegrationsCheck, runOtherMetricsCheck]) {
+        try { await check(); } catch (e) { showToast('err', 'Run All Node Checks', 'Check failed: ' + e.message); }
+    }
+
+    showToast('ok', 'Run All Node Checks', `All checks finished for ${nodeName}`);
+    if (btn) { btn.disabled = false; btn.textContent = 'Run all'; }
+}
 
 async function runCatalogueCheck() {
     document.getElementById('run-menu').setAttribute('aria-expanded', 'false');
@@ -1212,6 +1250,35 @@ async function runCatalogueCheck() {
     const result = await pollJobStatus(jobId);
     if (result.status === 'DONE') { showToast('ok', 'Exchange Services', result.message || 'Completed'); init(); }
     else                          { showToast('err', 'Exchange Services', result.message || 'Check failed'); }
+    resetBtn(btn);
+}
+
+async function runCoreIntegrationsCheck() {
+    document.getElementById('run-menu').setAttribute('aria-expanded', 'false');
+    const btn      = document.getElementById('btn-core-integrations');
+    const nodeName = decodeURIComponent(window.location.hash.substring(1));
+    if (btn) { btn.disabled = true; btn.textContent = '…'; }
+    showToast('info', 'Core Service integrations', `Starting for ${nodeName}…`);
+
+    let jobId;
+    try {
+        const res  = await fetch('/api/run/core-integrations', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ node: nodeName }),
+        });
+        const data = await res.json();
+        if (!res.ok) { showToast('err', 'Core Service integrations', data.error || 'HTTP ' + res.status); resetBtn(btn); return; }
+        jobId = data.jobId;
+    } catch (e) {
+        showToast('err', 'Core Service integrations', 'Request failed: ' + e.message);
+        resetBtn(btn); return;
+    }
+
+    showToast('info', 'Core Service integrations', 'Running… (job ' + jobId + ')');
+    const result = await pollJobStatus(jobId);
+    if (result.status === 'DONE') { showToast('ok', 'Core Service integrations', result.message || 'Completed'); init(); }
+    else                          { showToast('err', 'Core Service integrations', result.message || 'Check failed'); }
     resetBtn(btn);
 }
 
@@ -1279,4 +1346,68 @@ async function runServiceUptimeCheck() {
     if (result.status === 'DONE') { showToast('ok', 'Service Uptime', result.message || 'Completed'); init(); }
     else                          { showToast('err', 'Service Uptime', result.message || 'Check failed'); }
     resetBtn(btn);
+}
+
+// ARGO federation-tenant status (core_integrations_report.json) for one
+// capability: matched on capability type, preferring the same endpoint URL.
+function findCoreStatus(core, cap) {
+    if (!core || !Array.isArray(core.endpoints)) return null;
+    const norm = u => (u || '').replace(/\/+$/, '').toLowerCase();
+    const sameType = core.endpoints.filter(e => e.capability_type === cap.capability_type);
+    const match = sameType.find(e => norm(e.url) === norm(cap.endpoint)) || sameType[0] || null;
+    return match ? { ...match, argo_ui_url: core.argo_ui_url || null } : null;
+}
+
+// Friendly names for the ARGO probes seen in the federation tenant; any other
+// probe is shown under its raw ARGO metric name.
+const ARGO_PROBE_LABELS = {
+    'generic.http.connect':        'HTTP connection',
+    'generic.certificate.validity': 'TLS certificate validity',
+    'generic.tcp.connect':         'TCP connection',
+};
+
+function argoBadgeClass(v) {
+    return v === 'OK' ? 'badge-ok' : v === 'WARNING' ? 'badge-warn'
+        : v === 'CRITICAL' ? 'badge-error' : 'badge-missing';
+}
+
+function argoUiLink(cs) {
+    if (!cs.argo_ui_url) return '';
+    return `<div class="ep-probe-note" style="font-style:normal;"><a href="${cs.argo_ui_url}" target="_blank" rel="noreferrer">Open in the ARGO status UI &#8599;</a></div>`;
+}
+
+// The card's "ARGO monitoring" line. A non-OK status expands (click) to the
+// probes behind it, from core_integrations_report.json.
+function coreStatusBadge(cs) {
+    if (!cs) return '';
+    const worst = cs.worst_status && cs.worst_status !== cs.status ? ` (worst today: ${cs.worst_status})` : '';
+    const badge = `<span class="badge ${argoBadgeClass(cs.status)}">${cs.status}</span>`;
+    const probes = Array.isArray(cs.probes) ? cs.probes : [];
+    if (cs.status === 'OK' && cs.worst_status === 'OK') {
+        return `<div class="ep-version" style="margin-top:0.4rem;">ARGO monitoring: ${badge}</div>`;
+    }
+    if (probes.length === 0) {
+        return `<div class="ep-version" style="margin-top:0.4rem;">ARGO monitoring: ${badge}${worst}
+      <span title="ARGO probe detail was not available when this report was generated. Re-run Core Service integrations.">(no detail)</span>
+      ${argoUiLink(cs)}</div>`;
+    }
+    const time = ts => ts ? ts.slice(11, 16) + 'Z' : '';
+    const stamp = ts => ts ? `${ts.slice(0, 10)} ${time(ts)}` : '';
+    const rows = probes.map(pr => {
+        const label = ARGO_PROBE_LABELS[pr.name] || pr.name;
+        const since = pr.first_non_ok ? `, first at ${stamp(pr.first_non_ok)}` : '';
+        const detail = pr.non_ok_checks > 0
+            ? `${pr.non_ok_checks} of ${pr.total_checks} checks not OK${since}`
+            : `all ${pr.total_checks} checks OK`;
+        return `<li><span class="badge ${argoBadgeClass(pr.status)}">${pr.status}</span>
+      <strong>${label}</strong>${ARGO_PROBE_LABELS[pr.name] ? ` <code>${pr.name}</code>` : ''}<br>
+      <span class="ep-probe-detail">${detail}</span></li>`;
+    }).join('');
+    return `
+    <details class="ep-argo-details">
+      <summary>ARGO monitoring: ${badge}${worst} <span class="ep-argo-more">why?</span></summary>
+      <ul class="ep-probes">${rows}</ul>
+      <div class="ep-probe-note">Probe results from the ARGO federation tenant, last checked ${stamp(cs.last_checked)} (period: the current UTC day). ARGO reports which probe is failing, not the error message.</div>
+      ${argoUiLink(cs)}
+    </details>`;
 }

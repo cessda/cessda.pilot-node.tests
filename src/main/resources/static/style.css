@@ -1647,3 +1647,55 @@ main {
     letter-spacing: 0.08em;
     margin-top: 0.5rem;
 }
+
+.ep-argo-details {
+    margin-top: 0.4rem;
+    font-size: 0.6rem;
+    font-family: var(--mono);
+    color: var(--grey-400);
+}
+
+.ep-argo-details > summary {
+    cursor: pointer;
+    list-style: none;
+}
+
+.ep-argo-details > summary::-webkit-details-marker {
+    display: none;
+}
+
+.ep-argo-more {
+    text-decoration: underline;
+    color: var(--grey-600);
+}
+
+.ep-argo-details[open] .ep-argo-more {
+    display: none;
+}
+
+.ep-probes {
+    list-style: none;
+    margin: 0.5rem 0 0;
+    padding: 0;
+}
+
+.ep-probes li {
+    margin-bottom: 0.45rem;
+    color: var(--grey-600);
+    line-height: 1.5;
+}
+
+.ep-probes code {
+    font-size: 0.55rem;
+    color: var(--grey-400);
+}
+
+.ep-probe-detail {
+    color: var(--grey-400);
+}
+
+.ep-probe-note {
+    margin-top: 0.4rem;
+    color: var(--grey-400);
+    font-style: italic;
+}

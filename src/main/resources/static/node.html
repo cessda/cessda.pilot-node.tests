@@ -46,6 +46,13 @@
         <div class="run-dropdown-header">Node-specific checks</div>
         <div class="run-item" role="menuitem">
           <div class="run-item-info">
+            <div class="run-item-label">Run All Node Checks</div>
+            <div class="run-item-desc">All four checks below, one after another, for this node</div>
+          </div>
+          <button class="run-btn" id="btn-run-all-node" onclick="runAllNodeChecks()">Run all</button>
+        </div>
+        <div class="run-item" role="menuitem">
+          <div class="run-item-info">
             <div class="run-item-label">Exchange Services</div>
             <div class="run-item-desc">CheckCatalogueServices · catalogue_services_report.json</div>
           </div>
@@ -57,6 +64,13 @@
             <div class="run-item-desc">CheckServiceUptime · argo_uptime_report.json</div>
           </div>
           <button class="run-btn" id="btn-service-uptime" onclick="runServiceUptimeCheck()">Run</button>
+        </div>
+        <div class="run-item" role="menuitem">
+          <div class="run-item-info">
+            <div class="run-item-label">Core Service integrations</div>
+            <div class="run-item-desc">CheckCoreIntegrations · core_integrations_report.json</div>
+          </div>
+          <button class="run-btn" id="btn-core-integrations" onclick="runCoreIntegrationsCheck()">Run</button>
         </div>
         <div class="run-item" role="menuitem">
           <div class="run-item-info">
@@ -114,12 +128,13 @@
 
     const base = `/api/data/${encodeURIComponent(nodeName)}`;
 
-    const [ep, cat, argo, fom] = await Promise.all([
+    const [ep, cat, argo, fom, core] = await Promise.all([
       tryFetchJSON(`${base}/endpoint_report.json`),
       tryFetchJSON(`${base}/catalogue_services_report.json`),
       tryFetchJSON(`${base}/argo_uptime_report.json`),
       tryFetchJSON(`${base}/front_office_metrics_report.json`),
-    ]);
+    tryFetchJSON(`${base}/core_integrations_report.json`),
+  ]);
 
     if (!ep && !cat && !argo && !fom) {
       main.innerHTML = `
@@ -134,7 +149,7 @@
 
     main.innerHTML = `
     ${buildOverview(ep, cat, argo)}
-    ${renderEndpointPanel(ep)}
+    ${renderEndpointPanel(ep, core)}
     ${renderCataloguePanel(cat)}
     ${renderArgoPanel(argo)}
     ${renderFrontOfficeMetricsPanel(fom)}
@@ -155,8 +170,8 @@ loadSwitcher();
   <div class="footer-left">
     <a href="https://cessda.eu" class="footer-link"
        target="_blank" rel="noopener">Powered by CESSDA ERIC</a>
-    <a href="https://github.com/cessda/cessda.pilot-node.tests/releases/tag/1.5.0"
-       class="footer-link" target="_blank" rel="noopener">Version 1.5.0</a>
+    <a href="https://github.com/cessda/cessda.pilot-node.tests/releases/tag/1.8.0"
+       class="footer-link" target="_blank" rel="noopener">Version 1.8.0</a>
   </div>
   <nav class="footer-centre" aria-label="Footer links">
     <a href="https://www.cessda.eu/Privacy-Policy"

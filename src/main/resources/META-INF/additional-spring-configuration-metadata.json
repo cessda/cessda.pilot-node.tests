@@ -9,6 +9,24 @@
   "description": "A description for 'check.api-key-argo'"
 },
 {
+  "name": "check.argo-status-api-base",
+  "type": "java.lang.String",
+  "description": "Base URL of the ARGO status API used for Core Service integrations.",
+  "defaultValue": "https://api-status.devel.mon.argo.grnet.gr"
+},
+{
+  "name": "check.argo-federation-tenant",
+  "type": "java.lang.String",
+  "description": "ARGO federation tenant that monitors each Node's Core Service integration endpoints.",
+  "defaultValue": "EOSC-BEYOND-FEDERATION"
+},
+{
+  "name": "check.argo-status-ui-base",
+  "type": "java.lang.String",
+  "description": "Base URL of the ARGO status web UI linked to from non-OK Core Service integration statuses.",
+  "defaultValue": "https://status.devel.mon.argo.grnet.gr"
+},
+{
   "name": "check.node-name",
   "type": "java.lang.String",
   "description": "A description for 'check.node-name'"

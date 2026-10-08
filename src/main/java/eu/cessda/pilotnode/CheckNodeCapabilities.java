@@ -64,6 +64,11 @@ public class CheckNodeCapabilities {
             "https://node-devel.eosc.grnet.gr/federation-backend/tenants/eosc-beyond/nodes";
 
     private static final Duration CAPABILITY_CHECK_TIMEOUT = Duration.ofSeconds(10);
+
+    /** Attempts at fetching a node's capability list; a failed attempt other than a 4xx is retried. */
+    private static final int MAX_FETCH_ATTEMPTS = 3;
+    /** Base delay between attempts (attempt number times this). */
+    private static final Duration DEFAULT_RETRY_DELAY = Duration.ofSeconds(1);
     private static final String BROWSER_USER_AGENT =
             "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 " +
             "(KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36";
@@ -74,12 +79,15 @@ public class CheckNodeCapabilities {
 
     // ── Fields ────────────────────────────────────────────────────────────────
 
-    private CheckNodeCapabilities(EnumSet<OutputFormat> format, Path dashboardDir, HttpClient http, ObjectMapper mapper) {
+    private CheckNodeCapabilities(EnumSet<OutputFormat> format, Path dashboardDir, HttpClient http, ObjectMapper mapper,
+                                  Duration retryDelay) {
+        this.retryDelay = retryDelay;
         this.dashboardDir = dashboardDir;
         this.http = http;
         this.mapper = mapper;
         this.format = format;
     }
+    private final Duration retryDelay;
     private final Path dashboardDir;
     private final HttpClient http;
     private final ObjectMapper mapper;
@@ -123,8 +131,49 @@ public class CheckNodeCapabilities {
         run(apiKey, format, dashboardDir, http, mapper);
     }
 
+    /**
+     * Outcome of a run: how many nodes the registry listed, and which of them could not be
+     * processed. A node that failed is still listed in {@code node_registry_summary.json}, with an
+     * {@code error} field and no capabilities, so that it stays visible on the dashboard.
+     */
+    public record Result(int totalNodes, List<NodeProblem> problems) {
+        public Result {
+            problems = List.copyOf(problems);
+        }
+
+        /** A short human-readable message, suitable for {@code JobRecord.markDone(...)}. */
+        public String message() {
+            if (problems.isEmpty()) {
+                return "node_registry_summary.json written: %d node(s)".formatted(totalNodes);
+            }
+            var sb = new StringBuilder("node_registry_summary.json written: %d node(s), %d with problems: "
+                    .formatted(totalNodes, problems.size()));
+            for (int i = 0; i < problems.size(); i++) {
+                if (i > 0) {
+                    sb.append("; ");
+                }
+                sb.append(problems.get(i).node()).append(" (").append(problems.get(i).reason()).append(')');
+            }
+            return sb.toString();
+        }
+    }
+
+    /** A node that the registry listed but whose capabilities could not be checked. */
+    public record NodeProblem(String node, String reason) {}
+
     @SuppressWarnings("java:S6201")
-    public static void run(String apiKey, Set<OutputFormat> format, Path dashboardDir, HttpClient http, ObjectMapper mapper) throws IOException {
+    public static Result run(String apiKey, Set<OutputFormat> format, Path dashboardDir, HttpClient http, ObjectMapper mapper) throws IOException {
+        return run(apiKey, format, dashboardDir, http, mapper, URI.create(NODE_REGISTRY_URL));
+    }
+
+    static Result run(String apiKey, Set<OutputFormat> format, Path dashboardDir, HttpClient http, ObjectMapper mapper,
+                      URI registry) throws IOException {
+        return run(apiKey, format, dashboardDir, http, mapper, registry, DEFAULT_RETRY_DELAY);
+    }
+
+    @SuppressWarnings("java:S6201")
+    static Result run(String apiKey, Set<OutputFormat> format, Path dashboardDir, HttpClient http, ObjectMapper mapper,
+                      URI registry, Duration retryDelay) throws IOException {
 
         printBanner();
 
@@ -136,7 +185,7 @@ public class CheckNodeCapabilities {
             formatEnumSet = EnumSet.copyOf(format);
         }
 
-        new CheckNodeCapabilities(formatEnumSet, dashboardDir, http, mapper).check(apiKey);
+        return new CheckNodeCapabilities(formatEnumSet, dashboardDir, http, mapper, retryDelay).check(apiKey, registry);
     }
 
     // ── Main logic ────────────────────────────────────────────────────────────
@@ -195,13 +244,13 @@ public class CheckNodeCapabilities {
         Files.writeString(path, entry, java.nio.file.StandardOpenOption.APPEND);
     }
 
-    private void check(String apiKey) throws IOException {
+    private Result check(String apiKey, URI registry) throws IOException {
         // ── Fetch node list ───────────────────────────────────────────────────
 
         log.info("Fetching node list from registry...");
 
         HttpRequest registryRequest = HttpRequest.newBuilder()
-                .uri(URI.create(NODE_REGISTRY_URL))
+                .uri(registry)
                 .header("X-Api-Key", apiKey)
                 .header("User-Agent", BROWSER_USER_AGENT)
                 .header("Accept", "application/json")
@@ -219,7 +268,7 @@ public class CheckNodeCapabilities {
             }
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
-            return;
+            throw new IOException("Interrupted while fetching the node list", e);
         }
 
         JsonNode root;
@@ -247,6 +296,7 @@ public class CheckNodeCapabilities {
         }
 
         List<ObjectNode> nodeSummaries = new ArrayList<>();
+        List<NodeProblem> problems = new ArrayList<>();
 
         // ── Process each node ─────────────────────────────────────────────────
 
@@ -261,24 +311,35 @@ public class CheckNodeCapabilities {
             String legalEntityName = nodeJson.path("legal_entity").path("name").asText();
             String legalEntityRor = nodeJson.path("legal_entity").path("ror_id").asText();
 
+            ObjectNode summary;
             try {
-                URI nodeEndpoint = new URI(nodeEndpointString);
-
-
-                ObjectNode summary = checkNodeCapabilities(
-                        nodeName, nodeId, nodePid, nodeEndpoint,
+                summary = checkNodeCapabilities(
+                        nodeName, nodeId, nodePid, new URI(nodeEndpointString),
                         nodeLogo, legalEntityName, legalEntityRor);
-
-                nodeSummaries.add(summary);
-
-                if (format.contains(OutputFormat.TEXT)) {
-                    appendTextSummaryEntry(summaryTxtPath, summary);
-                }
-            } catch (URISyntaxException e) {
-                log.log(Level.SEVERE, "Node {0} - node_endpoint is an invalid URI: {1}", new Object[]{nodeName, e.getMessage()});
             } catch (InterruptedException e) {
                 Thread.currentThread().interrupt();
-                return;
+                throw new IOException("Interrupted while checking node " + nodeName, e);
+            } catch (URISyntaxException | IOException | RuntimeException e) {
+                // One bad node must not hide the others, nor stop the summary being written:
+                // record it with an error so that it stays visible.
+                String reason = describe(e);
+                log.log(Level.SEVERE, "Node {0} could not be checked: {1}", new Object[]{nodeName, reason});
+                summary = failedNodeSummary(nodeName, nodeId, nodePid, nodeEndpointString, nodeLogo,
+                        legalEntityName, legalEntityRor, reason);
+                writeFailureReport(nodeName, summary);
+            }
+
+            if (summary.hasNonNull("error")) {
+                String reason = summary.get("error").asText();
+                if (summary.path("capabilities_stale").asBoolean(false)) {
+                    reason += "; showing capabilities last fetched " + summary.path("capabilities_last_fetched").asText("earlier");
+                }
+                problems.add(new NodeProblem(nodeName, reason));
+            }
+            nodeSummaries.add(summary);
+
+            if (format.contains(OutputFormat.TEXT)) {
+                appendTextSummaryEntry(summaryTxtPath, summary);
             }
         }
 
@@ -302,6 +363,8 @@ public class CheckNodeCapabilities {
             summaryMessage += "\n  JSON: " + summaryJsonPath;
         }
         log.info(summaryMessage);
+
+        return new Result(nodeSummaries.size(), problems);
     }
 
     // ── Text report helpers ───────────────────────────────────────────────────
@@ -331,33 +394,26 @@ public class CheckNodeCapabilities {
         log.log(Level.INFO, "Fetching capabilities for {0}...", nodeName);
 
         JsonNode capsRoot;
+        String staleReason = null;
+        String lastFetched = null;
 
-        HttpRequest req = HttpRequest.newBuilder()
-                .uri(nodeEndpoint)
-                .header("User-Agent", BROWSER_USER_AGENT)
-                .header("Accept", "application/json")
-                .GET()
-                .build();
-        try {
-            HttpResponse<InputStream> resp = http.send(req, HttpResponse.BodyHandlers.ofInputStream());
+        Fetch fetched = fetchCapabilities(nodeEndpoint);
+        if (fetched.root() != null) {
+            capsRoot = fetched.root();
+        } else {
+            log.log(Level.WARNING, "Failed to fetch capabilities from {0}: {1}", new Object[]{nodeEndpoint, fetched.failure()});
 
-            if (resp.statusCode() != 200) {
-                log.log(Level.WARNING, "Failed to fetch capabilities from {0} (HTTP {1})", new Object[]{nodeEndpoint, resp.statusCode()});
-
-                // Return an empty summary for this node
-                return buildNodeSummary(nodeName, nodeId, nodePid, nodeEndpoint,
-                        legalEntityName, legalEntityRor, 0, 0, mapper.createArrayNode(), reportJsonPath);
+            // A failed fetch must not throw away what we last knew about the node: keep its last
+            // capability list, re-probe those endpoints, and flag the report as stale.
+            Previous previous = readPreviousCapabilities(reportJsonPath);
+            if (previous == null) {
+                return unreachableNode(nodeName, nodeId, nodePid, nodeEndpoint, nodeLogo, legalEntityName, legalEntityRor,
+                        reportJsonPath, fetched.failure());
             }
-
-            try (InputStream capabilitiesBody = resp.body()) {
-                capsRoot = mapper.readTree(capabilitiesBody);
-            }
-        } catch (IOException e) {
-            log.log(Level.WARNING, "Failed to fetch capabilities from {0}: {1}", new Object[]{nodeEndpoint, e});
-
-            // Return an empty summary for this node
-            return buildNodeSummary(nodeName, nodeId, nodePid, nodeEndpoint,
-                    legalEntityName, legalEntityRor, 0, 0, mapper.createArrayNode(), reportJsonPath);
+            capsRoot = previous.capsRoot();
+            staleReason = fetched.failure();
+            lastFetched = previous.lastFetched();
+            log.log(Level.WARNING, "Using the capabilities of {0} last fetched {1}", new Object[]{nodeName, lastFetched});
         }
 
         log.info("Checking capabilities...");
@@ -381,7 +437,12 @@ public class CheckNodeCapabilities {
              for (JsonNode cap : capsArray) {
                  String capType = cap.path("capability_type").asText();
                  String endpoint = cap.path("endpoint").asText();
-                 String version = cap.path("version").asText();
+                 String version = optionalText(cap, "version");
+                 String apiSpec = optionalText(cap, "api_spec");
+                 String protocol = optionalText(cap, "protocol");
+                 // The node's own claim about the capability (e.g. OPERATIONAL). Kept apart from
+                 // "status", which is the result of our own availability probe.
+                 String declaredStatus = optionalText(cap, "status");
 
                  System.out.printf("  %-35s ", capType);
 
@@ -400,7 +461,7 @@ public class CheckNodeCapabilities {
                          }
 
                      if (reportTxtPathWriter != null) {
-                         String capability = appendCapabilityToText(capType, endpoint, version, status);
+                         String capability = appendCapabilityToText(capType, endpoint, version, protocol, apiSpec, status);
                          reportTxtPathWriter.write(capability);
                      }
 
@@ -408,6 +469,9 @@ public class CheckNodeCapabilities {
                      capOut.put("capability_type", capType);
                      capOut.put("endpoint", endpoint);
                      capOut.put("version", version);
+                     capOut.put("api_spec", apiSpec);
+                     capOut.put("protocol", protocol);
+                     capOut.put("declared_status", declaredStatus);
                      capOut.put("status", status.label());
                      capOut.put("http_code", status.httpCode());
                      capabilitiesOut.add(capOut);
@@ -422,8 +486,17 @@ public class CheckNodeCapabilities {
 
              // ── Write per-node JSON report ────────────────────────────────────────
 
-             ObjectNode nodeReport = buildNodeSummary(nodeName, nodeId, nodePid, nodeEndpoint,
+             ObjectNode nodeReport = buildNodeSummary(nodeName, nodeId, nodePid, nodeEndpoint.toString(), nodeLogo,
                      legalEntityName, legalEntityRor, total, available, capabilitiesOut, reportJsonPath);
+             // Free-form description some nodes publish about themselves; kept as returned.
+             if (capsRoot.path("node_details").isObject()) {
+                 nodeReport.set("node_details", capsRoot.get("node_details"));
+             }
+             if (staleReason != null) {
+                 nodeReport.put("error", staleReason);
+                 nodeReport.put("capabilities_stale", true);
+                 nodeReport.put("capabilities_last_fetched", lastFetched);
+             }
 
 
             if (format.contains(OutputFormat.JSON)) {
@@ -443,40 +516,205 @@ public class CheckNodeCapabilities {
         }
     }
 
-    private CapabilityStatus probeEndpoint(URI url) {
+    /** Outcome of fetching a node's capability list: the parsed body, or why it could not be had. */
+    private record Fetch(JsonNode root, String failure) {}
+
+    /**
+     * Fetches the node's capability list. Network errors and 5xx responses are usually momentary
+     * (a gateway restarting, a cold start), so they are retried; other statuses, such as 404, are not.
+     */
+    private Fetch fetchCapabilities(URI nodeEndpoint) throws InterruptedException {
+        HttpRequest req = HttpRequest.newBuilder()
+                .uri(nodeEndpoint)
+                .header("User-Agent", BROWSER_USER_AGENT)
+                .header("Accept", "application/json")
+                .GET()
+                .build();
+
+        String failure = "no attempt made";
+        for (int attempt = 1; attempt <= MAX_FETCH_ATTEMPTS; attempt++) {
+            boolean transientFailure;
+            try {
+                HttpResponse<InputStream> resp = http.send(req, HttpResponse.BodyHandlers.ofInputStream());
+                try (InputStream body = resp.body()) {
+                    if (resp.statusCode() == 200) {
+                        try {
+                            return new Fetch(mapper.readTree(body), null);
+                        } catch (IOException e) {
+                            return new Fetch(null, "node_endpoint returned invalid JSON: " + describe(e));
+                        }
+                    }
+                }
+                failure = "node_endpoint returned HTTP " + resp.statusCode();
+                transientFailure = resp.statusCode() >= 500;
+            } catch (IOException e) {
+                failure = "node_endpoint unreachable: " + describe(e);
+                transientFailure = true;
+            }
+
+            if (!transientFailure || attempt == MAX_FETCH_ATTEMPTS) {
+                break;
+            }
+            log.log(Level.INFO, "{0} (attempt {1} of {2}); retrying", new Object[]{failure, attempt, MAX_FETCH_ATTEMPTS});
+            Thread.sleep(retryDelay.toMillis() * attempt);
+        }
+        return new Fetch(null, failure);
+    }
+
+    /** The last known capability list of a node, rebuilt in the shape the node itself returns it. */
+    private record Previous(ObjectNode capsRoot, String lastFetched) {}
+
+    /**
+     * Reads the capabilities from the node's existing {@code endpoint_report.json}, if there are any.
+     * Our own probe result is not carried over (it is measured again); the node's own declared status is.
+     */
+    private Previous readPreviousCapabilities(Path reportJsonPath) {
+        if (!Files.isRegularFile(reportJsonPath)) {
+            return null;
+        }
         try {
-            // Unlike the registry and per-node capabilities requests above,
-            // this HEAD probe was sending no User-Agent/Accept at all, so it
-            // got the JDK's default "Java-http-client/..." UA — the same
-            // thing that made CheckCatalogueServices misreport healthy
-            // services as unavailable when a CDN/WAF fast-rejects it.
-            //
-            // Unlike those two requests, though, a capability endpoint here
-            // isn't necessarily a JSON API — e.g. an AAI capability is
-            // typically an HTML login/account portal (Keycloak and similar
-            // often do strict content negotiation and will hand back a
-            // non-2xx for a representation they don't have). This is a
-            // bare availability probe with a discarded body, so accept
-            // anything rather than asserting a content type we don't need.
-            HttpRequest req = HttpRequest.newBuilder()
-                    .uri(url)
-                    .method("HEAD", HttpRequest.BodyPublishers.noBody())
-                    .header("User-Agent", BROWSER_USER_AGENT)
-                    .header("Accept", "*/*")
-                    .timeout(CAPABILITY_CHECK_TIMEOUT)
-                    .build();
-            HttpResponse<Void> resp = http.send(req, HttpResponse.BodyHandlers.discarding());
-            return CapabilityStatus.of(resp.statusCode());
+            JsonNode previous = mapper.readTree(reportJsonPath.toFile());
+            JsonNode caps = previous.path("capabilities");
+            if (!caps.isArray() || caps.isEmpty()) {
+                return null;
+            }
+            ObjectNode root = mapper.createObjectNode();
+            ArrayNode out = root.putArray("capabilities");
+            for (JsonNode c : caps) {
+                ObjectNode o = out.addObject();
+                for (String field : new String[]{"capability_type", "endpoint", "version", "api_spec", "protocol"}) {
+                    if (c.has(field)) {
+                        o.set(field, c.get(field));
+                    }
+                }
+                if (c.hasNonNull("declared_status")) {
+                    o.set("status", c.get("declared_status"));
+                }
+            }
+            if (previous.path("node_details").isObject()) {
+                root.set("node_details", previous.get("node_details"));
+            }
+            // A report that is itself stale keeps pointing at the last successful fetch.
+            String lastFetched = previous.hasNonNull("capabilities_last_fetched")
+                    ? previous.get("capabilities_last_fetched").asText()
+                    : previous.path("generated").asText(null);
+            return new Previous(root, lastFetched);
+        } catch (IOException | RuntimeException e) {
+            log.log(Level.WARNING, "Could not read the previous report {0}: {1}", new Object[]{reportJsonPath, e});
+            return null;
+        }
+    }
+
+    private CapabilityStatus probeEndpoint(URI url) {
+        return probe(http, url);
+    }
+
+    /**
+     * Probes a capability endpoint with a {@code HEAD} request, retrying with {@code GET} if the
+     * server does not handle {@code HEAD}.
+     *
+     * <p>Some APIs only route {@code GET}: FastAPI-based service catalogues answer {@code HEAD}
+     * with 405, and others with 404 (a route that exists for {@code GET} only), so a bare
+     * {@code HEAD} reported working endpoints as "Not available". The retry is triggered by 404,
+     * 405 and 501 only; for a genuinely missing endpoint the {@code GET} returns 404 again, so
+     * the result is unchanged and it costs one extra request. Any other status is taken at face
+     * value.</p>
+     */
+    static CapabilityStatus probe(HttpClient http, URI url) {
+        try {
+            int code = send(http, url, "HEAD");
+            if (code == 404 || code == 405 || code == 501) {
+                code = send(http, url, "GET");
+            }
+            return CapabilityStatus.of(code);
         } catch (IOException e) {
             return CapabilityStatus.exceptionally(e);
+        } catch (IllegalArgumentException e) {
+            // A URL the JDK cannot send a request to (no scheme, not http/https): report this
+            // capability as not available rather than failing the whole run.
+            return CapabilityStatus.exceptionally(new IOException("Invalid endpoint URL: " + e.getMessage(), e));
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
             return CapabilityStatus.of(-1);
         }
     }
 
+    private static int send(HttpClient http, URI url, String method) throws IOException, InterruptedException {
+        // Unlike the registry and per-node capabilities requests above,
+        // this probe was sending no User-Agent/Accept at all, so it
+        // got the JDK's default "Java-http-client/..." UA — the same
+        // thing that made CheckCatalogueServices misreport healthy
+        // services as unavailable when a CDN/WAF fast-rejects it.
+        //
+        // Unlike those two requests, though, a capability endpoint here
+        // isn't necessarily a JSON API — e.g. an AAI capability is
+        // typically an HTML login/account portal (Keycloak and similar
+        // often do strict content negotiation and will hand back a
+        // non-2xx for a representation they don't have). This is a
+        // bare availability probe with a discarded body, so accept
+        // anything rather than asserting a content type we don't need.
+        HttpRequest req = HttpRequest.newBuilder()
+                .uri(url)
+                .method(method, HttpRequest.BodyPublishers.noBody())
+                .header("User-Agent", BROWSER_USER_AGENT)
+                .header("Accept", "*/*")
+                .timeout(CAPABILITY_CHECK_TIMEOUT)
+                .build();
+        return http.send(req, HttpResponse.BodyHandlers.discarding()).statusCode();
+    }
+
+    /**
+     * The summary entry for a node whose capabilities could not be fetched, also written as the
+     * node's own {@code endpoint_report.json} so that its detail page shows the failure.
+     */
+    private ObjectNode unreachableNode(
+            String nodeName, String nodeId, String nodePid, URI nodeEndpoint, String nodeLogo,
+            String legalEntityName, String legalEntityRor, Path reportJsonPath, String reason) throws IOException {
+        ObjectNode report = failedNodeSummary(nodeName, nodeId, nodePid, nodeEndpoint.toString(), nodeLogo,
+                legalEntityName, legalEntityRor, reason);
+        if (format.contains(OutputFormat.JSON)) {
+            mapper.writerWithDefaultPrettyPrinter().writeValue(reportJsonPath.toFile(), report);
+        }
+        return report;
+    }
+
+    /** A node entry with no capabilities and an {@code error} explaining why. */
+    private ObjectNode failedNodeSummary(
+            String nodeName, String nodeId, String nodePid, String nodeEndpoint, String nodeLogo,
+            String legalEntityName, String legalEntityRor, String reason) {
+        Path reportPath = dashboardDir.resolve(nodeName).resolve("endpoint_report.json");
+        ObjectNode n = buildNodeSummary(nodeName, nodeId, nodePid, nodeEndpoint, nodeLogo,
+                legalEntityName, legalEntityRor, 0, 0, mapper.createArrayNode(), reportPath);
+        n.put("error", reason);
+        return n;
+    }
+
+    /**
+     * Replaces the node's own {@code endpoint_report.json} with the failure, so that its detail page
+     * does not keep showing the result of an earlier, successful run. Best effort: if the report
+     * cannot be written the summary entry still records the problem.
+     */
+    private void writeFailureReport(String nodeName, ObjectNode report) {
+        if (!format.contains(OutputFormat.JSON) || nodeName.isBlank()) {
+            return;
+        }
+        try {
+            Path nodeDir = dashboardDir.resolve(nodeName);
+            Files.createDirectories(nodeDir);
+            mapper.writerWithDefaultPrettyPrinter().writeValue(nodeDir.resolve("endpoint_report.json").toFile(), report);
+        } catch (IOException | RuntimeException e) {
+            log.log(Level.WARNING, "Could not write the failure report for {0}: {1}", new Object[]{nodeName, e});
+        }
+    }
+
+    private static String describe(Exception e) {
+        String message = e.getMessage();
+        String type = e.getClass().getSimpleName();
+        return message == null || message.isBlank() ? type : type + ": " + message;
+    }
+
     private ObjectNode buildNodeSummary(
-            String nodeName, String nodeId, String nodePid, URI nodeEndpoint,
+            String nodeName, String nodeId, String nodePid, String nodeEndpoint, String nodeLogo,
             String legalEntityName, String legalEntityRor,
             int total, int available, ArrayNode capabilities, Path reportPath) {
 
@@ -485,7 +723,8 @@ public class CheckNodeCapabilities {
         n.put("node_name", nodeName);
         n.put("node_id", nodeId);
         n.put("node_pid", nodePid);
-        n.put("node_endpoint", nodeEndpoint.toString());
+        n.put("node_endpoint", nodeEndpoint);
+        n.put("logo", nodeLogo == null || nodeLogo.isBlank() ? null : nodeLogo);
         ObjectNode le = n.putObject("legal_entity");
         le.put("name", legalEntityName);
         le.put("ror_id", legalEntityRor);
@@ -497,9 +736,14 @@ public class CheckNodeCapabilities {
     }
 
     private String appendCapabilityToText(String capType, String endpoint,
-            String version, CapabilityStatus status) {
-        return "%-40s %s (HTTP %s)%n  └─ Endpoint: %s%n  └─ Version: %s%n%n"
-                .formatted(capType, status.label(), status.httpCode(), endpoint, version);
+            String version, String protocol, String apiSpec, CapabilityStatus status) {
+        return "%-40s %s (HTTP %s)%n  └─ Endpoint: %s%n  └─ Version: %s%n  └─ Protocol: %s%n  └─ API spec: %s%n%n"
+                .formatted(capType, status.label(), status.httpCode(), endpoint,
+                        orDash(version), orDash(protocol), orDash(apiSpec));
+    }
+
+    private static String orDash(String value) {
+        return value == null ? "-" : value;
     }
 
     private String buildNodeTextHeader(
@@ -522,6 +766,16 @@ public class CheckNodeCapabilities {
 
     private static String text(JsonNode node, String field) {
         return node.path(field).asText();
+    }
+
+    /** The field's text, or null if it is missing, JSON null or blank (never the string "null"). */
+    private static String optionalText(JsonNode node, String field) {
+        JsonNode value = node.path(field);
+        if (value.isMissingNode() || value.isNull() || !value.isValueNode()) {
+            return null;
+        }
+        String s = value.asText().trim();
+        return s.isEmpty() ? null : s;
     }
 
     private static String nowIso() {
