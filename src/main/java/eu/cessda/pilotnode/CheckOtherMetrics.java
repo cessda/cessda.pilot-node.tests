@@ -206,6 +206,21 @@ public class CheckOtherMetrics {
             HttpClient httpClient,
             ObjectMapper mapper)
             throws IOException, InterruptedException {
+        run(dashboardDir, nodeName, httpClient, mapper, Map.of());
+    }
+
+    /**
+     * @param discoveryHubNodeAliases Node name to the name the Sandbox Discovery Hub uses for
+     *                                that Node (Metric 9); a Node with no, or a blank, entry is
+     *                                queried by its own name. See {@link #parseDiscoveryHubNodeAliases}.
+     */
+    public static void run(
+            Path dashboardDir,
+            String nodeName,
+            HttpClient httpClient,
+            ObjectMapper mapper,
+            Map<String, String> discoveryHubNodeAliases)
+            throws IOException, InterruptedException {
 
         Path outputDir = dashboardDir.resolve(nodeName);
         Files.createDirectories(outputDir);
@@ -297,7 +312,8 @@ public class CheckOtherMetrics {
 
         // ── Metric 9: own Research Output visible in Sandbox Discovery Hub
         ArrayNode metric9Collections = mapper.createArrayNode();
-        MetricResult metric9 = queryResearchOutputVisibility(httpClient, nodeName, metric9Collections, mapper);
+        String discoveryHubNodeName = discoveryHubNodeName(discoveryHubNodeAliases, nodeName);
+        MetricResult metric9 = queryResearchOutputVisibility(httpClient, discoveryHubNodeName, metric9Collections, mapper);
         printLine(9, "Own Research Output in Sandbox Discovery Hub", metric9);
         ObjectNode metric9Entry = buildMetricEntry(mapper, 9,
                 withNodeName("At least one <NODE_NAME> Research Output is visible "
@@ -307,6 +323,11 @@ public class CheckOtherMetrics {
         // (see queryResearchOutputVisibility) — record that explicitly
         // instead of the (inapplicable) target_pid field.
         metric9Entry.put("target_node_name", nodeName);
+        // The name the Discovery Hub knows this Node by, when it differs from the registry name.
+        metric9Entry.put("discovery_hub_node_name", discoveryHubNodeName);
+        // The search endpoint only accepts POST (a GET, e.g. from a browser, returns 405).
+        metric9Entry.put("method", "POST");
+        metric9Entry.putObject("request_body");
         metric9Entry.set("collection_results", metric9Collections);
 
         // ── Metric 10: alias of Metric 4 ────────────────────────────────
@@ -448,11 +469,50 @@ public class CheckOtherMetrics {
     }
 
     /**
+     * The name the Sandbox Discovery Hub uses for {@code nodeName} in its {@code node} filter
+     * (Metric 9): the configured alias, or {@code nodeName} itself when there is no alias or it
+     * is blank. A Node's name in the Federation Registry doesn't always match the Hub's, e.g.
+     * {@code LifeWatch-ERIC} is {@code LifeWatch} there.
+     */
+    static String discoveryHubNodeName(Map<String, String> aliases, String nodeName) {
+        String alias = aliases == null ? null : aliases.get(nodeName);
+        return alias == null || alias.isBlank() ? nodeName : alias.strip();
+    }
+
+    /**
+     * Parses {@code check.discovery-hub-node-aliases}: comma-separated {@code Node=HubName}
+     * pairs. A pair with a blank (or no) {@code HubName} means "no alias" and is ignored, so
+     * every Node can be listed, with only the ones that differ given a value.
+     */
+    static Map<String, String> parseDiscoveryHubNodeAliases(String raw) {
+        Map<String, String> aliases = new LinkedHashMap<>();
+        if (raw == null) {
+            return aliases;
+        }
+        for (String pair : raw.split(",")) {
+            int eq = pair.indexOf('=');
+            if (eq < 0) {
+                continue;
+            }
+            String node = pair.substring(0, eq).strip();
+            String alias = pair.substring(eq + 1).strip();
+            if (!node.isEmpty() && !alias.isEmpty()) {
+                aliases.put(node, alias);
+            }
+        }
+        return aliases;
+    }
+
+    /**
      * Metric 9: builds the Discovery Hub search query URL for one
      * Research Output collection (one of {@link #RESEARCH_OUTPUT_COLLECTIONS})
      * filtered to {@code nodeName}, against
      * {@link #SANDBOX_DISCOVERY_HUB_SEARCH_BASE_URL}:
      * <pre>{@code {base}/api/web/search-results?rows=0&collection={collection}&q=*&sort_ui=default&fq=node:(%22{url-encoded node name}%22)&cursor=*&standard=true&exact=false&qf={url-encoded qf}}</pre>
+     *
+     * <p>The endpoint only accepts {@code POST} (with a {@code {}} body — see
+     * {@link #executeDiscoveryHubSearch}); opening this URL in a browser sends a GET
+     * and returns 405 Method Not Allowed.</p>
      *
      * <p>This replaces an earlier, since-removed
      * {@code buildResearchOutputQueryUrl(URI, String)} that queried
@@ -601,6 +661,8 @@ public class CheckOtherMetrics {
             ObjectNode collectionEntry = mapper.createObjectNode();
             collectionEntry.put("collection", collection);
             collectionEntry.put("query_url", queryUrl.toString());
+            collectionEntry.put("method", "POST");
+            collectionEntry.putObject("request_body");
             collectionEntry.put("result_count", result.resultCount());
             collectionEntry.put("visible", result.visible());
             collectionEntry.put("status", result.status());

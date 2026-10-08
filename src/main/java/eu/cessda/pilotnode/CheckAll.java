@@ -26,6 +26,7 @@ import java.time.LocalDate;
 import java.util.ArrayList;
 import java.util.EnumSet;
 import java.util.List;
+import java.util.Map;
 import java.util.logging.Level;
 import java.util.logging.Logger;
 
@@ -80,6 +81,8 @@ public class CheckAll {
      *
      * @param dashboardDir Node Registry / report output directory
      * @param nodeApiKey   API key for {@code CheckNodeCapabilities}
+     * @param discoveryHubNodeAliases Node name to Sandbox Discovery Hub name, for Metric 9
+     *                     (a Node with no entry is queried by its own name)
      * @param coreSource   ARGO federation tenant used for the Core Service
      *                     integrations status
      * @param argoApiKey   optional legacy-ARGO-API fallback key for
@@ -94,6 +97,7 @@ public class CheckAll {
      */
     public static Result run(Path dashboardDir, String nodeApiKey, String argoApiKey,
                               CheckCoreIntegrations.Source coreSource,
+                              Map<String, String> discoveryHubNodeAliases,
                               HttpClient http, ObjectMapper mapper) throws IOException {
 
         log.info("Check All — starting with CheckNodeCapabilities");
@@ -176,7 +180,7 @@ public class CheckAll {
             }
 
             try {
-                CheckOtherMetrics.run(dashboardDir, nodeName, http, mapper);
+                CheckOtherMetrics.run(dashboardDir, nodeName, http, mapper, discoveryHubNodeAliases);
                 result.metricsOk++;
             } catch (InterruptedException e) {
                 Thread.currentThread().interrupt();

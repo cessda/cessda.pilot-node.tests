@@ -167,7 +167,10 @@ Each metric renders as its own card, in numerical order:
 - **Metric 6** — one or more of this node's Exchange services are
   visible and accessible from the Sandbox Front Office.
 - **Metric 9** — at least one of this node's Research Outputs is
-  visible in the Sandbox Discovery Hub.
+  visible in the Sandbox Discovery Hub. The Hub knows some nodes by a
+  different name from the registry (for example `LifeWatch`), which is
+  configured per node. Its search only accepts POST requests, so the
+  query is shown with a `curl` command rather than as a link.
 - **Metric 10** — rendered as an alias of Metric 4 rather than
   queried separately: the two metrics were only distinct while
   services were onboarded centrally and propagated out to each
