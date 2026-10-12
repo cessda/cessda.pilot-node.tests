@@ -21,6 +21,8 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
+import eu.cessda.pilotnode.strict.CheckMode;
+import eu.cessda.pilotnode.strict.StrictNodeCheck;
 
 import java.io.BufferedWriter;
 import java.io.IOException;
@@ -81,14 +83,17 @@ public class CheckNodeCapabilities {
     // ── Fields ────────────────────────────────────────────────────────────────
 
     private CheckNodeCapabilities(EnumSet<OutputFormat> format, Path dashboardDir, HttpClient http, ObjectMapper mapper,
-                                  Duration retryDelay) {
+                                  Duration retryDelay, CheckMode mode) {
         this.retryDelay = retryDelay;
-        this.dashboardDir = dashboardDir;
+        this.mode = mode;
+        // Each mode keeps its results in its own directory, so that one never overwrites the other.
+        this.dashboardDir = mode.resolve(dashboardDir);
         this.http = http;
         this.mapper = mapper;
         this.format = format;
     }
     private final Duration retryDelay;
+    private final CheckMode mode;
     private final Path dashboardDir;
     private final HttpClient http;
     private final ObjectMapper mapper;
@@ -172,9 +177,20 @@ public class CheckNodeCapabilities {
         return run(apiKey, format, dashboardDir, http, mapper, registry, DEFAULT_RETRY_DELAY);
     }
 
-    @SuppressWarnings("java:S6201")
+    /** Runs the check in the given mode against the Node Registry. */
+    public static Result run(String apiKey, Set<OutputFormat> format, Path dashboardDir, HttpClient http,
+                             ObjectMapper mapper, CheckMode mode) throws IOException {
+        return run(apiKey, format, dashboardDir, http, mapper, URI.create(NODE_REGISTRY_URL), DEFAULT_RETRY_DELAY, mode);
+    }
+
     static Result run(String apiKey, Set<OutputFormat> format, Path dashboardDir, HttpClient http, ObjectMapper mapper,
                       URI registry, Duration retryDelay) throws IOException {
+        return run(apiKey, format, dashboardDir, http, mapper, registry, retryDelay, CheckMode.LENIENT);
+    }
+
+    @SuppressWarnings("java:S6201")
+    static Result run(String apiKey, Set<OutputFormat> format, Path dashboardDir, HttpClient http, ObjectMapper mapper,
+                      URI registry, Duration retryDelay, CheckMode mode) throws IOException {
 
         printBanner();
 
@@ -186,7 +202,7 @@ public class CheckNodeCapabilities {
             formatEnumSet = EnumSet.copyOf(format);
         }
 
-        return new CheckNodeCapabilities(formatEnumSet, dashboardDir, http, mapper, retryDelay).check(apiKey, registry);
+        return new CheckNodeCapabilities(formatEnumSet, dashboardDir, http, mapper, retryDelay, mode).check(apiKey, registry);
     }
 
     // ── Main logic ────────────────────────────────────────────────────────────
@@ -289,10 +305,13 @@ public class CheckNodeCapabilities {
 
         // ── Initialise summary files ──────────────────────────────────────────
 
+        Files.createDirectories(dashboardDir);
         Path summaryJsonPath = dashboardDir.resolve("node_registry_summary.json");
         Path summaryTxtPath  = dashboardDir.resolve("node_registry_summary.txt");
+        StrictNodeCheck strictCheck = new StrictNodeCheck(http, mapper, dashboardDir, retryDelay,
+                format.contains(OutputFormat.JSON));
 
-        if (format.contains(OutputFormat.TEXT)) {
+        if (format.contains(OutputFormat.TEXT) && !mode.strict()) {
             writeTextHeader(summaryTxtPath);
         }
 
@@ -314,9 +333,12 @@ public class CheckNodeCapabilities {
 
             ObjectNode summary;
             try {
-                summary = checkNodeCapabilities(
-                        nodeName, nodeId, nodePid, new URI(nodeEndpointString),
-                        nodeLogo, legalEntityName, legalEntityRor);
+                summary = mode.strict()
+                        ? strictCheck.check(new StrictNodeCheck.Node(nodeName, nodeId, nodePid, nodeEndpointString,
+                                nodeLogo, legalEntityName, legalEntityRor))
+                        : checkNodeCapabilities(
+                                nodeName, nodeId, nodePid, new URI(nodeEndpointString),
+                                nodeLogo, legalEntityName, legalEntityRor);
             } catch (InterruptedException e) {
                 Thread.currentThread().interrupt();
                 throw new IOException("Interrupted while checking node " + nodeName, e);
@@ -337,9 +359,12 @@ public class CheckNodeCapabilities {
                 }
                 problems.add(new NodeProblem(nodeName, reason));
             }
+            if (!summary.hasNonNull("error") && "FAIL".equals(summary.path("strict_result").asText())) {
+                problems.add(new NodeProblem(nodeName, strictReason(summary)));
+            }
             nodeSummaries.add(summary);
 
-            if (format.contains(OutputFormat.TEXT)) {
+            if (format.contains(OutputFormat.TEXT) && !mode.strict()) {
                 appendTextSummaryEntry(summaryTxtPath, summary);
             }
         }
@@ -350,6 +375,7 @@ public class CheckNodeCapabilities {
             ObjectNode summaryJson = mapper.createObjectNode();
             summaryJson.put("generated", nowIso());
             summaryJson.put("registry_source", NODE_REGISTRY_URL);
+            summaryJson.put("mode", mode.label());
             ArrayNode nodesOut = summaryJson.putArray("nodes");
             nodeSummaries.forEach(nodesOut::add);
             mapper.writerWithDefaultPrettyPrinter().writeValue(summaryJsonPath.toFile(), summaryJson);
@@ -712,6 +738,19 @@ public class CheckNodeCapabilities {
         }
     }
 
+    /** One line saying why a strict check failed: how many errors, and the first. */
+    private static String strictReason(ObjectNode summary) {
+        long errors = summary.path("findings_error").asLong();
+        String first = "";
+        for (JsonNode finding : summary.path("findings")) {
+            if ("ERROR".equals(finding.path("severity").asText())) {
+                first = ", first: " + finding.path("message").asText();
+                break;
+            }
+        }
+        return "strict check failed with " + errors + " error finding(s)" + first;
+    }
+
     private static String describe(Exception e) {
         String message = e.getMessage();
         String type = e.getClass().getSimpleName();
@@ -725,6 +764,7 @@ public class CheckNodeCapabilities {
 
         ObjectNode n = mapper.createObjectNode();
         n.put("generated", nowIso());
+        n.put("mode", mode.label());
         n.put("node_name", nodeName);
         n.put("node_id", nodeId);
         n.put("node_pid", nodePid);

@@ -32,6 +32,9 @@ to `<dashboard_dir>/node_registry_summary.json`. `dashboard_dir` defaults to
 `dashboard/data` when run directly, or to `dashboard.data-dir` from
 `application.properties` when triggered from the dashboard.
 
+> **Strict mode.** The check can also run in strict mode, which uses every URL as published and reports
+> deviations from the Node Endpoint capabilities model as findings. See [Strict Mode](STRICT_MODE.md).
+
 ## Node Registry API
 
 - Endpoint: `https://node-devel.eosc.grnet.gr/federation-backend/tenants/eosc-beyond/nodes`
