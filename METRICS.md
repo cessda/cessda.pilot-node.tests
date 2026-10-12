@@ -38,7 +38,13 @@ checks; in short:
 - Metric 6 — this node's Exchange service is visible from the Sandbox
   Front Office.
 - Metric 9 — this node's Research Output is visible in the Sandbox
-  Discovery Hub.
+  Discovery Hub. The Hub's search endpoint only accepts `POST` (a `GET`,
+  e.g. opening the query URL in a browser, returns 405), so the report
+  records `method` and `request_body`, and the Node page shows a `curl`
+  command rather than a link. The search filters on the Node's name as the
+  Hub knows it, which can differ from the registry name (e.g.
+  `LifeWatch-ERIC` is `LifeWatch` there); see
+  `check.discovery-hub-node-aliases`.
 - Metric 10 — reported as an alias of Metric 4 (not queried separately —
   see the check's Javadoc for why).
 - Metric 11 — this node's Exchange service is visible in a peer node's

@@ -69,6 +69,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
  *   check.api-key-argo   =                     # optional legacy-ARGO-API fallback key for CheckServiceUptime
  *   check.argo-status-api-base     = https://api-status.devel.mon.argo.grnet.gr  # ARGO status API for Core Service integrations
  *   check.argo-federation-tenant   = EOSC-BEYOND-FEDERATION                      # ARGO tenant monitoring the Core Service integrations
+ *   check.discovery-hub-node-aliases = Node=HubName,...   # Metric 9: Node name as the Discovery Hub knows it (blank = same name)
  *   check.argo-status-ui-base      = https://status.devel.mon.argo.grnet.gr      # ARGO web UI linked to from non-OK statuses
  * </pre>
  *
@@ -100,6 +101,7 @@ public class CheckRunnerController {
     private final String argoApiKey;
     private final String nodeApiKey;
     private final CheckCoreIntegrations.Source coreSource;
+    private final Map<String, String> discoveryHubNodeAliases;
     private final JobRunner jobRunner;
     private final HttpClient httpClient;
     private final ObjectMapper mapper;
@@ -119,6 +121,7 @@ public class CheckRunnerController {
             @Value("${check.argo-status-api-base:" + CheckCoreIntegrations.Source.DEFAULT_API_BASE + "}") String argoStatusApiBase,
             @Value("${check.argo-federation-tenant:" + CheckCoreIntegrations.Source.DEFAULT_TENANT + "}") String argoFederationTenant,
             @Value("${check.argo-status-ui-base:" + CheckCoreIntegrations.Source.DEFAULT_UI_BASE + "}") String argoStatusUiBase,
+            @Value("${check.discovery-hub-node-aliases:}") String discoveryHubNodeAliases,
             JobRunner jobRunner,
             HttpClient httpClient,
             ObjectMapper mapper) {
@@ -128,6 +131,7 @@ public class CheckRunnerController {
         this.nodeApiKey  = nodeApiKey;
         this.coreSource  = new CheckCoreIntegrations.Source(
                 argoStatusApiBase.strip(), argoFederationTenant.strip(), argoStatusUiBase.strip());
+        this.discoveryHubNodeAliases = CheckOtherMetrics.parseDiscoveryHubNodeAliases(discoveryHubNodeAliases);
         this.jobRunner = jobRunner;
         this.httpClient = httpClient;
         this.mapper = mapper;
@@ -198,7 +202,7 @@ public class CheckRunnerController {
         }
 
         JobRecord rec = jobRunner.start("other-metrics", record -> {
-            CheckOtherMetrics.run(dataDirPath, targetNode, httpClient, mapper);
+            CheckOtherMetrics.run(dataDirPath, targetNode, httpClient, mapper, discoveryHubNodeAliases);
             record.markDone("front_office_metrics_report.json written for " + targetNode);
         });
 
@@ -344,7 +348,7 @@ public class CheckRunnerController {
         }
 
         JobRecord rec = jobRunner.start("check-all", record -> {
-            CheckAll.Result result = CheckAll.run(dataDirPath, nodeApiKey, argoApiKey, coreSource, httpClient, mapper);
+            CheckAll.Result result = CheckAll.run(dataDirPath, nodeApiKey, argoApiKey, coreSource, discoveryHubNodeAliases, httpClient, mapper);
             record.markDone(result.summary());
         });
 

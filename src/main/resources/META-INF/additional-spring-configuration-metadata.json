@@ -27,6 +27,11 @@
   "defaultValue": "https://status.devel.mon.argo.grnet.gr"
 },
 {
+  "name": "check.discovery-hub-node-aliases",
+  "type": "java.lang.String",
+  "description": "Comma-separated Node=HubName pairs: the name the Sandbox Discovery Hub uses for a Node (Metric 9). Blank or missing means the Node's own name."
+},
+{
   "name": "check.node-name",
   "type": "java.lang.String",
   "description": "A description for 'check.node-name'"
