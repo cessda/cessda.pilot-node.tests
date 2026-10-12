@@ -970,26 +970,6 @@ function renderFomPeerTable(peers) {
     </table>`;
 }
 
-// The query behind a metric. Most are plain GETs, shown as a link. Metric 9's
-// Discovery Hub search only accepts POST (a GET, e.g. clicking a link, returns
-// 405 Method Not Allowed), so it is shown as text with its request body and a
-// curl command to reproduce it instead.
-function renderFomQuery(m) {
-  if (!m.query_url) return '—';
-  const method = (m.method || 'GET').toUpperCase();
-  if (method === 'GET') {
-    return `<a href="${m.query_url}" target="_blank" rel="noreferrer">${m.query_url}</a>`;
-  }
-  const esc = t => String(t).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-  const body = JSON.stringify(m.request_body ?? {});
-  const curl = `curl -X ${method} -H 'content-type: application/json' -H 'accept: application/json' -d '${body}' '${m.query_url}'`;
-  return `<span class="badge badge-warn">${esc(method)}</span> <code style="word-break:break-all;">${esc(m.query_url)}</code>
-    <details><summary class="fom-peer-summary">Request body and curl</summary>
-      <div class="fom-alias-note">Body: <code>${esc(body)}</code> &mdash; this endpoint does not accept GET, so it cannot be opened as a link.</div>
-      <div class="raw-panel">${esc(curl)}</div>
-    </details>`;
-}
-
 function renderFomCard(m) {
     const header = `
     <div class="fom-card-head">
@@ -1030,10 +1010,8 @@ function renderFomCard(m) {
       <div class="fom-desc">${m.description || ''}</div>
       <div class="fom-target">
         ${m.front_office_owner ? `Front Office: ${m.front_office_owner}<br>` : ''}
-        ${renderFomQuery(m)}
+        ${m.query_url ? `<a href="${m.query_url}" target="_blank" rel="noreferrer">${m.query_url}</a>` : '—'}
       </div>
-      ${m.discovery_hub_node_name && m.discovery_hub_node_name !== m.target_node_name
-        ? `<div class="fom-alias-note">Queried as &ldquo;${m.discovery_hub_node_name}&rdquo; (the Discovery Hub's name for this Node)</div>` : ''}
       ${m.result_count != null ? `<div class="fom-alias-note">${m.result_count} result(s)</div>` : ''}
       ${m.error ? `<div class="fom-alias-note">Error: ${m.error}</div>` : ''}
       ${m.note ? `<div class="fom-alias-note">${m.note}</div>` : ''}

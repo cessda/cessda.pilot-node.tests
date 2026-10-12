@@ -245,7 +245,6 @@ Set the following properties in `application.properties`:
 | `check.node-name`     | Default node name for `CheckNodeCapabilities` |
 | `check.api-key-node`  | API key for `CheckNodeCapabilities` (also required for **Check All**) |
 | `check.argo-status-api-base` / `check.argo-federation-tenant` | ARGO status API and federation tenant used by `CheckCoreIntegrations` (defaults: `https://api-status.devel.mon.argo.grnet.gr`, `EOSC-BEYOND-FEDERATION`) |
-| `check.discovery-hub-node-aliases` | Metric 9: comma-separated `Node=HubName` pairs, the name the Sandbox Discovery Hub uses for a Node. Blank or missing means the Node's own name; all registered Nodes are listed, only `LifeWatch-ERIC=LifeWatch` currently differs |
 | `check.api-key-argo`  | Fallback ARGO API key for `CheckServiceUptime`'s legacy-API source only; the default capability-metrics API and dashboard-scrape sources are public and need no key |
 
 ### Scheduled Check All
