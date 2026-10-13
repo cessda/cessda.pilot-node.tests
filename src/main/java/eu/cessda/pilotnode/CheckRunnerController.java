@@ -53,6 +53,10 @@ import com.fasterxml.jackson.databind.ObjectMapper;
  *   POST /api/run/node-capabilities   – run CheckNodeCapabilities
  *   POST /api/run/catalogue-services  – run CheckCatalogueServices
  *   POST /api/run/service-uptime      – run CheckServiceUptime
+ *   POST /api/run/core-integrations   – run CheckCoreIntegrations
+ *   POST /api/run/other-metrics       – run CheckOtherMetrics
+ *   POST /api/run/check-all           – run CheckNodeCapabilities, then all of the
+ *                                        above for every Node in turn (see {@link CheckAll})
  *   GET  /api/run/{jobId}/status      – poll the status of any job
  *   GET  /api/run/status              – list all recent job statuses
  * </pre>
@@ -62,8 +66,16 @@ import com.fasterxml.jackson.databind.ObjectMapper;
  *   dashboard.data-dir   = ../dashboard/data   # already used by DashboardDataController
  *   check.node-name      = CESSDA              # NODE_NAME arg for all three checks
  *   check.api-key-node   =                     # API key for CheckNodeCapabilities
- *   check.api-key-argo   =                     # fallback ARGO key if not supplied in request
+ *   check.api-key-argo   =                     # optional legacy-ARGO-API fallback key for CheckServiceUptime
+ *   check.argo-status-api-base     = https://api-status.devel.mon.argo.grnet.gr  # ARGO status API for Core Service integrations
+ *   check.argo-federation-tenant   = EOSC-BEYOND-FEDERATION                      # ARGO tenant monitoring the Core Service integrations
+ *   check.discovery-hub-node-aliases = Node=HubName,...   # Metric 9: Node name as the Discovery Hub knows it (blank = same name)
+ *   check.argo-status-ui-base      = https://status.devel.mon.argo.grnet.gr      # ARGO web UI linked to from non-OK statuses
  * </pre>
+ *
+ * <p>Check All can also be run on a schedule instead of (or as well as) by
+ * hand — see {@link CheckAllScheduler} for its
+ * {@code check.check-all.scheduled.*} settings.</p>
  *
  * <p>Jobs run asynchronously on a dedicated single-thread executor so that
  * only one job of each type can run at a time, and the HTTP request returns
@@ -88,6 +100,8 @@ public class CheckRunnerController {
     private final String nodeName;
     private final String argoApiKey;
     private final String nodeApiKey;
+    private final CheckCoreIntegrations.Source coreSource;
+    private final Map<String, String> discoveryHubNodeAliases;
     private final JobRunner jobRunner;
     private final HttpClient httpClient;
     private final ObjectMapper mapper;
@@ -104,6 +118,10 @@ public class CheckRunnerController {
             @Value("${check.node-name:}")     String nodeName,
             @Value("${check.api-key-argo:}")  String argoApiKey,
             @Value("${check.api-key-node:}") String nodeApiKey,
+            @Value("${check.argo-status-api-base:" + CheckCoreIntegrations.Source.DEFAULT_API_BASE + "}") String argoStatusApiBase,
+            @Value("${check.argo-federation-tenant:" + CheckCoreIntegrations.Source.DEFAULT_TENANT + "}") String argoFederationTenant,
+            @Value("${check.argo-status-ui-base:" + CheckCoreIntegrations.Source.DEFAULT_UI_BASE + "}") String argoStatusUiBase,
+            @Value("${check.discovery-hub-node-aliases:}") String discoveryHubNodeAliases,
             JobRunner jobRunner,
             HttpClient httpClient,
             ObjectMapper mapper) {
@@ -111,6 +129,9 @@ public class CheckRunnerController {
         this.nodeName    = nodeName;
         this.argoApiKey  = argoApiKey;
         this.nodeApiKey  = nodeApiKey;
+        this.coreSource  = new CheckCoreIntegrations.Source(
+                argoStatusApiBase.strip(), argoFederationTenant.strip(), argoStatusUiBase.strip());
+        this.discoveryHubNodeAliases = CheckOtherMetrics.parseDiscoveryHubNodeAliases(discoveryHubNodeAliases);
         this.jobRunner = jobRunner;
         this.httpClient = httpClient;
         this.mapper = mapper;
@@ -138,13 +159,51 @@ public class CheckRunnerController {
         }
 
         JobRecord rec = jobRunner.start("node-capabilities", record -> {
-            CheckNodeCapabilities.run(
+            CheckNodeCapabilities.Result result = CheckNodeCapabilities.run(
                     nodeApiKey,
                     EnumSet.of(CheckNodeCapabilities.OutputFormat.JSON),
                     dataDirPath,
                     httpClient,
                     mapper);
-            record.markDone("node_registry_summary.json written");
+            record.markDone(result.message());
+        });
+
+        jobs.put(rec.getJobId(), rec);
+
+        return rec;
+    }
+
+    /**
+     * Triggers {@link CheckOtherMetrics}.
+     *
+     * <p>Accepts an optional JSON body: {@code { "node": "..." } }.
+     * {@code node} is the target node name (overrides {@code check.node-name}).</p>
+     *
+     * <p>Unlike {@code CheckCatalogueServices} and {@code CheckServiceUptime},
+     * no endpoint URL needs to be supplied by the caller: this check resolves
+     * every Front Office endpoint and Node PID it needs (including the
+     * Sandbox's) from {@code node_registry_summary.json} and the per-Node
+     * {@code endpoint_report.json} files already written by
+     * {@code CheckNodeCapabilities}. Run {@code /api/run/node-capabilities}
+     * first — or whenever the registry may have changed — so those PIDs and
+     * endpoints are current before triggering this check.</p>
+     *
+     * @param body optional JSON body containing {@code node}
+     */
+    @PostMapping("/other-metrics")
+    @ResponseStatus(HttpStatus.ACCEPTED)
+    public JobRecord runOtherMetrics(
+            @RequestBody(required = false) Map<String, String> body) {
+
+        String targetNode = (body != null ? body.getOrDefault("node", nodeName) : nodeName).strip();
+
+        if (targetNode.isBlank()) {
+            throw new IllegalArgumentException("No node specified in request body and check.node-name is not configured");
+        }
+
+        JobRecord rec = jobRunner.start("other-metrics", record -> {
+            CheckOtherMetrics.run(dataDirPath, targetNode, httpClient, mapper, discoveryHubNodeAliases);
+            record.markDone("front_office_metrics_report.json written for " + targetNode);
         });
 
         jobs.put(rec.getJobId(), rec);
@@ -198,34 +257,99 @@ public class CheckRunnerController {
     /**
      * Triggers {@link CheckServiceUptime}.
      *
-     * <p>Accepts a JSON body: {@code { "node": "...", "apiKey": "..." }}.
-     * {@code node} is the target node name (overrides {@code check.node-name});
-     * {@code apiKey} is the ARGO API key entered by the user in the dashboard
-     * modal — it is used only for this invocation and never persisted.
-     * Falls back to {@code check.api-key-argo} from config if not supplied.</p>
+     * <p>Accepts an optional JSON body: {@code { "node": "...", "apiKey": "..." }}.
+     * {@code node} is the target node name (overrides {@code check.node-name}).
+     * No API key is required — the default capability-metrics API and the
+     * dashboard scrape are both public. {@code apiKey} is optional and only
+     * used if both of those sources are unavailable and this falls back to
+     * the legacy ARGO API; it falls back to {@code check.api-key-argo} from
+     * config if not supplied, and may be left blank entirely.</p>
      *
-     * @param body JSON body containing {@code node} and {@code apiKey}
+     * @param body optional JSON body containing {@code node} and/or {@code apiKey}
      */
     @PostMapping("/service-uptime")
     @ResponseStatus(HttpStatus.ACCEPTED)
-    public JobRecord runServiceUptime(@RequestBody Map<String, String> body) {
+    public JobRecord runServiceUptime(@RequestBody(required = false) Map<String, String> body) {
 
-        String targetNode   = body.getOrDefault("node", nodeName).strip();
-        // User-supplied key takes precedence; config value is the fallback
-        String targetArgoApiKey = body.getOrDefault("apiKey", argoApiKey).strip();
+        String targetNode = (body != null ? body.getOrDefault("node", nodeName) : nodeName).strip();
+        // Optional: only used by the legacy ARGO API fallback. User-supplied
+        // key takes precedence; config value is the fallback; blank is fine.
+        String targetArgoApiKey = (body != null ? body.getOrDefault("apiKey", argoApiKey) : argoApiKey).strip();
 
         if (targetNode.isBlank()) {
             throw new IllegalArgumentException("No node specified in request body and check.node-name is not configured");
         }
-        if (targetArgoApiKey.isBlank()) {
-            throw new IllegalArgumentException("No ARGO API key provided in request body and check.api-key-argo is not configured");
-        }
 
         JobRecord rec = jobRunner.start("service-uptime", record -> {
-            LocalDate start = LocalDate.now().minusDays(6);
+            LocalDate start = LocalDate.now().minusMonths(1);
             LocalDate end = LocalDate.now();
             CheckServiceUptime.run(targetNode, targetArgoApiKey, start, end, dataDirPath, httpClient, mapper);
             record.markDone("argo_uptime_report.json written for " + targetNode);
+        });
+
+        jobs.put(rec.getJobId(), rec);
+
+        return rec;
+    }
+
+    /**
+     * Triggers {@link CheckCoreIntegrations}.
+     *
+     * <p>Accepts an optional JSON body: {@code { "node": "..." } }.
+     * {@code node} is the target node name (overrides {@code check.node-name}).
+     * No credentials are required; the ARGO status API and federation tenant
+     * come from {@code check.argo-status-api-base} and
+     * {@code check.argo-federation-tenant}.</p>
+     *
+     * @param body optional JSON body containing {@code node}
+     */
+    @PostMapping("/core-integrations")
+    @ResponseStatus(HttpStatus.ACCEPTED)
+    public JobRecord runCoreIntegrations(@RequestBody(required = false) Map<String, String> body) {
+
+        String targetNode = (body != null ? body.getOrDefault("node", nodeName) : nodeName).strip();
+
+        if (targetNode.isBlank()) {
+            throw new IllegalArgumentException("No node specified in request body and check.node-name is not configured");
+        }
+
+        JobRecord rec = jobRunner.start("core-integrations", record -> {
+            CheckCoreIntegrations.run(dataDirPath, targetNode, coreSource, httpClient, mapper);
+            record.markDone("core_integrations_report.json written for " + targetNode);
+        });
+
+        jobs.put(rec.getJobId(), rec);
+
+        return rec;
+    }
+
+    /**
+     * Triggers {@link CheckAll}: runs {@link CheckNodeCapabilities} once for
+     * the whole Node Registry, then Exchange Services, Service Monitoring,
+     * Core Service integrations and Federated Search for every Node it just wrote a summary for, one
+     * Node at a time.
+     *
+     * <p>Requires {@code check.api-key-node} to be set, same as
+     * {@link #runNodeCapabilities()}. {@code check.api-key-argo} is used the
+     * same way it is for {@link #runServiceUptime}: optional, only needed if
+     * the legacy ARGO API fallback is reached.</p>
+     *
+     * <p>A failure checking one Node (or one of its three checks) does not
+     * stop the run — see {@link CheckAll} for how failures and skips are
+     * counted and reported in the job's final message.</p>
+     *
+     * @throws IllegalStateException if {@code check.api-key-node} is unset
+     */
+    @PostMapping("/check-all")
+    @ResponseStatus(HttpStatus.ACCEPTED)
+    public JobRecord runCheckAll() {
+        if (nodeApiKey.isBlank()) {
+            throw new IllegalStateException("check.api-key-node is not configured");
+        }
+
+        JobRecord rec = jobRunner.start("check-all", record -> {
+            CheckAll.Result result = CheckAll.run(dataDirPath, nodeApiKey, argoApiKey, coreSource, discoveryHubNodeAliases, httpClient, mapper);
+            record.markDone(result.summary());
         });
 
         jobs.put(rec.getJobId(), rec);

@@ -5,417 +5,10 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Node Detail — EOSC Beyond Pilot Node Dashboard</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="style.css" rel="stylesheet">
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=Source+Serif+4:opsz,wght@8..60,300;8..60,400&family=Figtree:wght@400;500;600;700;800&display=swap" rel="stylesheet">
-<style>
-  :root {
-    --orange:    #E8572A; --orange-dk: #C44520; --orange-lt: #FDF1EC;
-    --black:     #111111; --white:     #ffffff;
-    --grey-100:  #f5f5f5; --grey-200:  #e8e8e8; --grey-400:  #999999; --grey-600:  #555555;
-    --green:     #2E7D32; --green-lt:  #E8F5E9;
-    --amber:     #B45309; --amber-lt:  #FEF3C7;
-    --red:       #B91C1C; --red-lt:    #FEE2E2;
-    --blue:      #1565C0; --blue-lt:   #E3F0FF;
-    --sans:      'Figtree', sans-serif;
-    --mono:      'IBM Plex Mono', monospace;
-  }
-
-  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
-  body { background: var(--grey-100); color: var(--black); font-family: var(--sans); min-height: 100vh; }
-
-  /* ── Topbar ── */
-  .topbar {
-    background: var(--black); padding: 0 2rem; height: 48px;
-    display: flex; align-items: center; justify-content: space-between; gap: 1rem;
-  }
-  .topbar-logo { height: 26px; width: auto; display: block; }
-
-  /* ── Node switcher ── */
-  .node-switcher { position: relative; }
-
-  .ns-btn {
-    display: flex; align-items: center; gap: 0.5rem;
-    background: rgba(255,255,255,0.1); color: var(--white);
-    border: 1px solid rgba(255,255,255,0.2);
-    padding: 0 0.85rem; height: 30px;
-    font-family: var(--mono); font-size: 0.62rem; font-weight: 500;
-    letter-spacing: 0.06em; text-transform: uppercase;
-    cursor: pointer; transition: background 0.15s; white-space: nowrap;
-  }
-  .ns-btn:hover { background: rgba(255,255,255,0.2); }
-  .ns-btn svg { width: 9px; height: 9px; transition: transform 0.2s; flex-shrink: 0; }
-  .node-switcher[aria-expanded="true"] .ns-btn { background: var(--orange); border-color: var(--orange); }
-  .node-switcher[aria-expanded="true"] .ns-btn svg { transform: rotate(180deg); }
-
-  .ns-dropdown {
-    display: none; position: absolute; top: calc(100% + 6px); right: 0;
-    min-width: 220px; max-height: 340px; overflow-y: auto;
-    background: var(--white); border: 1.5px solid var(--black);
-    z-index: 300; box-shadow: 4px 4px 0 rgba(0,0,0,0.15);
-  }
-  .node-switcher[aria-expanded="true"] .ns-dropdown { display: block; }
-
-  .ns-header {
-    font-family: var(--mono); font-size: 0.55rem; color: var(--grey-400);
-    text-transform: uppercase; letter-spacing: 0.1em;
-    padding: 0.55rem 0.9rem 0.4rem; border-bottom: 1px solid var(--grey-200);
-    position: sticky; top: 0; background: var(--white); z-index: 1;
-  }
-
-  .ns-item {
-    display: flex; align-items: center; gap: 0.6rem;
-    padding: 0.65rem 0.9rem; border-bottom: 1px solid var(--grey-200);
-    text-decoration: none; color: var(--black);
-    font-size: 0.82rem; font-weight: 500; transition: background 0.1s;
-  }
-  .ns-item:last-child { border-bottom: none; }
-  .ns-item:hover { background: var(--grey-100); }
-  .ns-item.current { background: var(--orange-lt); color: var(--orange); pointer-events: none; }
-  .ns-item.current .ns-check { display: block; }
-  .ns-check { display: none; margin-left: auto; font-size: 0.7rem; color: var(--orange); }
-
-  .ns-dot { width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0; background: var(--grey-400); }
-  .ns-dot.green { background: var(--green); }
-
-  .ns-loading { padding: 1rem 0.9rem; font-family: var(--mono); font-size: 0.65rem; color: var(--grey-400); }
-
-  /* ── Header ── */
-  header { border-bottom: 2px solid var(--black); background: var(--white); }
-  .header-inner { max-width: 1280px; margin: 0 auto; padding: 2rem 2rem 1.75rem; }
-
-  .breadcrumb { font-family: var(--mono); font-size: 0.62rem; color: var(--grey-400); margin-bottom: 1rem; text-transform: uppercase; }
-  .breadcrumb a { color: var(--orange); text-decoration: none; }
-  .breadcrumb a:hover { text-decoration: underline; }
-
-  h1 { font-size: clamp(1.6rem, 3vw, 2.5rem); font-weight: 800; letter-spacing: -0.03em; margin-bottom: 0.5rem; }
-
-  .node-meta { font-family: var(--mono); font-size: 0.65rem; color: var(--grey-600); line-height: 1.8; }
-  .node-meta a { color: var(--orange); text-decoration: none; }
-  .node-meta a:hover { text-decoration: underline; }
-
-  /* ── Overview stat strip ── */
-  .overview-strip {
-    display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
-    border: 1px solid var(--grey-200); background: var(--white); margin-bottom: 1.5rem;
-  }
-  .ov-card { padding: 1.5rem; border-right: 1px solid var(--grey-200); }
-  .ov-card:last-child { border-right: none; }
-  .ov-value { font-size: 2rem; font-weight: 800; letter-spacing: -0.04em; color: var(--black); line-height: 1; }
-  .ov-value.green  { color: var(--green); }
-  .ov-value.amber  { color: var(--amber); }
-  .ov-value.red    { color: var(--red); }
-  .ov-value.orange { color: var(--orange); }
-  .ov-label { font-family: var(--mono); font-size: 0.6rem; color: var(--grey-400); text-transform: uppercase; letter-spacing: 0.08em; margin-top: 0.5rem; }
-
-  /* ── Panels ── */
-  main { max-width: 1280px; margin: 0 auto; padding: 2rem; }
-
-  .panel { border: 1px solid var(--grey-200); margin-bottom: 1.25rem; background: var(--white); }
-  .panel-header {
-    background: var(--grey-100); padding: 1rem 1.25rem;
-    font-weight: 700; text-transform: uppercase; font-size: 0.72rem; letter-spacing: 0.08em;
-    display: flex; align-items: center; justify-content: space-between; gap: 0.75rem;
-    border-bottom: 1px solid var(--grey-200);
-  }
-  .panel-header-left { display: flex; align-items: center; gap: 0.6rem; }
-  .panel-icon { font-size: 0.9rem; }
-  .panel-body { padding: 1.5rem; }
-  .panel-missing {
-    padding: 2rem 1.5rem; font-family: var(--mono); font-size: 0.72rem;
-    color: var(--grey-400); text-align: center; border-top: 1px solid var(--grey-200);
-  }
-
-  /* ── Endpoint cards ── */
-  .ep-tier { margin-bottom: 1.5rem; }
-  .ep-tier:last-child { margin-bottom: 0; }
-  .ep-tier-header {
-    display: flex; align-items: center; justify-content: space-between; gap: 0.75rem;
-    margin-bottom: 0.75rem; padding-bottom: 0.4rem; border-bottom: 1px solid var(--grey-200);
-  }
-  .ep-tier-label { font-family: var(--mono); font-size: 0.68rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.06em; color: var(--grey-600); }
-  .ep-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(290px, 1fr)); gap: 1rem; }
-  .ep-card { border: 1px solid var(--grey-200); padding: 1rem; }
-  .ep-card-missing { background: var(--grey-100); opacity: 0.75; }
-  .ep-cap-type { font-weight: 700; font-size: 0.88rem; margin-bottom: 0.4rem; }
-  .ep-url { font-family: var(--mono); font-size: 0.68rem; color: var(--grey-600); word-break: break-all; margin-bottom: 0.5rem; }
-  .status-tag { display: inline-block; font-family: var(--mono); font-size: 0.6rem; padding: 0.2rem 0.5rem; border-radius: 3px; }
-  .status-available { background: var(--green-lt); color: var(--green); }
-  .status-error     { background: var(--red-lt);   color: var(--red);   }
-  .ep-version { font-size: 0.6rem; color: var(--grey-400); margin-top: 0.5rem; font-family: var(--mono); }
-
-  /* ── Catalogue table ── */
-  .cat-table { width: 100%; border-collapse: collapse; font-size: 0.82rem; }
-  .cat-table th { font-family: var(--mono); font-size: 0.6rem; text-transform: uppercase; letter-spacing: 0.08em; color: var(--grey-400); text-align: left; padding: 0.5rem 0.75rem; border-bottom: 2px solid var(--grey-200); }
-  .cat-table td { padding: 0.65rem 0.75rem; border-bottom: 1px solid var(--grey-200); vertical-align: top; }
-  .cat-table tr:last-child td { border-bottom: none; }
-  .cat-table tr:hover td { background: var(--grey-100); }
-  .cat-name { font-weight: 600; }
-  .cat-url  { font-family: var(--mono); font-size: 0.65rem; color: var(--grey-600); word-break: break-all; }
-  .cat-url a { color: var(--orange); text-decoration: none; }
-  .cat-url a:hover { text-decoration: underline; }
-
-  /* ── ARGO services ── */
-  .argo-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 1rem; }
-  .argo-card { border: 1px solid var(--grey-200); padding: 1rem; }
-  .argo-name { font-weight: 700; font-size: 0.88rem; margin-bottom: 0.5rem; }
-  .argo-uptime-row { display: flex; align-items: center; gap: 0.5rem; margin-top: 0.35rem; }
-  .argo-bar-track { flex: 1; height: 4px; background: var(--grey-200); border-radius: 2px; overflow: hidden; }
-  .argo-bar-fill  { height: 100%; border-radius: 2px; transition: width 0.6s ease; }
-  .argo-bar-fill.high   { background: var(--green); }
-  .argo-bar-fill.medium { background: var(--amber); }
-  .argo-bar-fill.low    { background: var(--red); }
-  .argo-pct { font-family: var(--mono); font-size: 0.7rem; font-weight: 600; min-width: 3rem; text-align: right; }
-  .argo-pct.high   { color: var(--green); }
-  .argo-pct.medium { color: var(--amber); }
-  .argo-pct.low    { color: var(--red); }
-  .argo-meta { font-family: var(--mono); font-size: 0.6rem; color: var(--grey-400); margin-top: 0.4rem; }
-
-  /* ── JSON raw fallback ── */
-  .raw-panel { background: var(--grey-100); border: 1px solid var(--grey-200); padding: 1rem 1.25rem; font-family: var(--mono); font-size: 0.68rem; color: var(--grey-600); overflow-x: auto; white-space: pre; max-height: 400px; overflow-y: auto; }
-
-  /* ── Badge pill ── */
-  .badge { font-family: var(--mono); font-size: 0.58rem; padding: 0.2rem 0.55rem; border-radius: 3px; font-weight: 500; text-transform: uppercase; letter-spacing: 0.04em; }
-  .badge-ok      { background: var(--green-lt); color: var(--green); }
-  .badge-warn    { background: var(--amber-lt); color: var(--amber); }
-  .badge-error   { background: var(--red-lt);   color: var(--red);   }
-  .badge-missing { background: var(--grey-200); color: var(--grey-600); }
-
-  /* ── State messages ── */
-  .state-msg { text-align: center; padding: 5rem; font-family: var(--mono); color: var(--grey-400); }
-
-  /* ── Run-checks menu (node page) ── */
-  .run-menu { position: relative; }
-
-  .run-menu-btn {
-    display: flex; align-items: center; gap: 0.45rem;
-    background: var(--orange); color: var(--white); border: none;
-    padding: 0 0.85rem; height: 30px;
-    font-family: var(--mono); font-size: 0.62rem; font-weight: 500;
-    letter-spacing: 0.06em; text-transform: uppercase;
-    cursor: pointer; transition: background 0.15s; white-space: nowrap;
-  }
-  .run-menu-btn:hover { background: var(--orange-dk); }
-  .run-menu-btn svg { width: 10px; height: 10px; transition: transform 0.2s; flex-shrink: 0; }
-  .run-menu[aria-expanded="true"] .run-menu-btn svg { transform: rotate(180deg); }
-
-  .run-dropdown {
-    display: none; position: absolute; top: calc(100% + 4px); right: 0;
-    min-width: 280px; background: var(--white); border: 1.5px solid var(--black);
-    z-index: 200; box-shadow: 4px 4px 0 rgba(0,0,0,0.15);
-  }
-  .run-menu[aria-expanded="true"] .run-dropdown { display: block; }
-
-  .run-dropdown-header {
-    font-family: var(--mono); font-size: 0.55rem; color: var(--grey-400);
-    text-transform: uppercase; letter-spacing: 0.1em;
-    padding: 0.6rem 0.9rem 0.4rem; border-bottom: 1px solid var(--grey-200);
-  }
-
-  .run-item {
-    display: flex; align-items: center; justify-content: space-between;
-    padding: 0.7rem 0.9rem; border-bottom: 1px solid var(--grey-200);
-    gap: 1rem; cursor: default;
-  }
-  .run-item:last-child { border-bottom: none; }
-  .run-item-info { flex: 1; min-width: 0; }
-  .run-item-label { font-size: 0.78rem; font-weight: 600; color: var(--black); margin-bottom: 0.1rem; }
-  .run-item-desc  { font-family: var(--mono); font-size: 0.57rem; color: var(--grey-400); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-
-  .run-btn {
-    background: var(--black); color: var(--white); border: none;
-    font-family: var(--mono); font-size: 0.6rem; font-weight: 500;
-    text-transform: uppercase; letter-spacing: 0.05em; padding: 0.3rem 0.65rem;
-    cursor: pointer; flex-shrink: 0; transition: background 0.15s; white-space: nowrap;
-  }
-  .run-btn:hover    { background: var(--orange); }
-  .run-btn:disabled { background: var(--grey-200); color: var(--grey-400); cursor: not-allowed; }
-
-  /* ── API key modal ── */
-  .apikey-overlay {
-    display: none; position: fixed; inset: 0;
-    background: rgba(0,0,0,0.55); z-index: 1000;
-    align-items: center; justify-content: center;
-  }
-  .apikey-overlay.open { display: flex; }
-
-  .apikey-modal {
-    background: var(--white); border: 2px solid var(--black);
-    box-shadow: 6px 6px 0 rgba(0,0,0,0.2);
-    padding: 2rem; width: 100%; max-width: 420px; position: relative;
-  }
-  .apikey-modal-title {
-    font-size: 0.85rem; font-weight: 700; letter-spacing: -0.01em;
-    margin-bottom: 0.35rem;
-  }
-  .apikey-modal-sub {
-    font-family: var(--mono); font-size: 0.6rem; color: var(--grey-600);
-    margin-bottom: 1.25rem; line-height: 1.6;
-  }
-  .apikey-modal-sub strong { color: var(--orange); }
-  .apikey-label {
-    font-family: var(--mono); font-size: 0.6rem; color: var(--grey-400);
-    text-transform: uppercase; letter-spacing: 0.08em; display: block; margin-bottom: 0.35rem;
-  }
-  .apikey-input {
-    width: 100%; border: 1.5px solid var(--grey-200); padding: 0.55rem 0.75rem;
-    font-family: var(--mono); font-size: 0.78rem; color: var(--black);
-    background: var(--grey-100); outline: none;
-    transition: border-color 0.15s;
-  }
-  .apikey-input:focus { border-color: var(--orange); background: var(--white); }
-  .apikey-actions {
-    display: flex; gap: 0.75rem; margin-top: 1.25rem; justify-content: flex-end;
-  }
-  .apikey-cancel {
-    background: none; border: 1.5px solid var(--grey-200); color: var(--grey-600);
-    font-family: var(--mono); font-size: 0.62rem; text-transform: uppercase;
-    letter-spacing: 0.05em; padding: 0.4rem 0.9rem; cursor: pointer;
-    transition: border-color 0.15s;
-  }
-  .apikey-cancel:hover { border-color: var(--grey-400); }
-  .apikey-confirm {
-    background: var(--black); border: none; color: var(--white);
-    font-family: var(--mono); font-size: 0.62rem; text-transform: uppercase;
-    letter-spacing: 0.05em; padding: 0.4rem 0.9rem; cursor: pointer;
-    transition: background 0.15s;
-  }
-  .apikey-confirm:hover { background: var(--orange); }
-  .apikey-confirm:disabled { background: var(--grey-200); color: var(--grey-400); cursor: not-allowed; }
-
-  /* ── Toast (node page) ── */
-  #toast-container {
-    position: fixed; bottom: 1.5rem; right: 1.5rem;
-    display: flex; flex-direction: column; gap: 0.5rem;
-    z-index: 9999; pointer-events: none;
-  }
-  .toast {
-    font-family: var(--mono); font-size: 0.7rem; padding: 0.65rem 1rem;
-    border-left: 3px solid var(--orange); background: var(--white);
-    border-top: 1px solid var(--grey-200); border-right: 1px solid var(--grey-200); border-bottom: 1px solid var(--grey-200);
-    box-shadow: 4px 4px 0 rgba(0,0,0,0.08); max-width: 320px;
-    pointer-events: all; animation: toastIn 0.2s ease;
-    display: flex; gap: 0.6rem; align-items: flex-start;
-  }
-  .toast.toast-ok  { border-left-color: var(--green); }
-  .toast.toast-err { border-left-color: var(--red); }
-  .toast-icon { font-size: 0.8rem; flex-shrink: 0; margin-top: 0.05rem; }
-  .toast-body { flex: 1; line-height: 1.5; color: var(--black); }
-  .toast-title { font-weight: 600; margin-bottom: 0.15rem; }
-  .toast-msg   { color: var(--grey-600); font-size: 0.63rem; }
-
-  /* ── About modal ── */
-  .about-btn {
-    background: none; border: 1px solid rgba(255,255,255,0.3); color: var(--white);
-    font-family: var(--mono); font-size: 0.62rem; font-weight: 500;
-    letter-spacing: 0.06em; text-transform: uppercase;
-    padding: 0 0.85rem; height: 30px; cursor: pointer;
-    transition: border-color 0.15s; white-space: nowrap;
-  }
-  .about-btn:hover { border-color: var(--white); }
-
-  .about-overlay {
-    display: none; position: fixed; inset: 0;
-    background: rgba(0,0,0,0.55); z-index: 500;
-    align-items: center; justify-content: center;
-  }
-  .about-overlay.open { display: flex; }
-
-  .about-modal {
-    background: var(--white); border: 2px solid var(--black);
-    max-width: 740px; width: calc(100% - 2rem);
-    max-height: calc(100vh - 4rem); display: flex; flex-direction: column;
-    box-shadow: 6px 6px 0 rgba(0,0,0,0.18);
-  }
-  .about-modal-header {
-    display: flex; align-items: center; justify-content: space-between;
-    padding: 0.9rem 1.25rem; border-bottom: 1px solid var(--grey-200);
-    background: var(--grey-100); flex-shrink: 0;
-  }
-  .about-modal-title {
-    font-family: var(--mono); font-size: 0.68rem; font-weight: 700;
-    text-transform: uppercase; letter-spacing: 0.08em; color: var(--black);
-  }
-  .about-modal-close {
-    background: none; border: none; cursor: pointer; font-size: 1.1rem;
-    color: var(--grey-400); line-height: 1; padding: 0.1rem 0.3rem;
-  }
-  .about-modal-close:hover { color: var(--black); }
-  .about-modal-body {
-    overflow-y: auto; padding: 1.75rem 2rem; flex: 1;
-    font-family: var(--serif); font-size: 0.92rem; line-height: 1.7;
-    color: var(--black);
-  }
-  .about-modal-body h1 {
-    font-size: 1.35rem; font-weight: 700; margin-bottom: 1.25rem;
-    padding-bottom: 0.5rem; border-bottom: 2px solid var(--black);
-  }
-  .about-modal-body h2 {
-    font-size: 1rem; font-weight: 700; margin-top: 1.5rem;
-    margin-bottom: 0.75rem; font-family: var(--sans);
-    text-transform: uppercase; letter-spacing: 0.04em; color: var(--grey-600);
-  }
-  .about-modal-body h3 {
-    font-size: 0.88rem; font-weight: 700; margin-top: 1.25rem;
-    margin-bottom: 0.5rem; font-family: var(--mono); color: var(--orange);
-  }
-  .about-modal-body p { margin-bottom: 0.9rem; }
-  .about-modal-body ul, .about-modal-body ol {
-    margin: 0.75rem 0 0.9rem 1.25rem;
-  }
-  .about-modal-body li { margin-bottom: 0.3rem; }
-  .about-modal-body code {
-    font-family: var(--mono); font-size: 0.78em;
-    background: var(--grey-100); padding: 0.1em 0.35em;
-    border: 1px solid var(--grey-200);
-  }
-  .about-modal-body pre {
-    background: var(--grey-100); border: 1px solid var(--grey-200);
-    padding: 0.85rem 1rem; overflow-x: auto; margin: 0.75rem 0 0.9rem;
-    font-family: var(--mono); font-size: 0.75rem; line-height: 1.5;
-  }
-  .about-modal-body pre code { background: none; border: none; padding: 0; }
-  .about-modal-body table {
-    border-collapse: collapse; width: 100%; margin: 0.75rem 0 0.9rem;
-    font-size: 0.82rem;
-  }
-  .about-modal-body th {
-    font-family: var(--mono); font-size: 0.6rem; text-transform: uppercase;
-    letter-spacing: 0.08em; color: var(--grey-400); text-align: left;
-    padding: 0.4rem 0.7rem; border-bottom: 2px solid var(--grey-200);
-  }
-  .about-modal-body td {
-    padding: 0.5rem 0.7rem; border-bottom: 1px solid var(--grey-200);
-    vertical-align: top;
-  }
-
-  @keyframes toastIn { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
-
-  /* ── FOOTER ── */
-  .site-footer {
-    border-top: 2px solid var(--black); background: var(--black);
-    padding: 1.25rem 2rem;
-    display: grid;
-    grid-template-columns: 1fr auto 1fr;
-    align-items: center;
-    gap: 1rem;
-  }
-  .footer-left  { display: flex; flex-direction: column; gap: 0.25rem; }
-  .footer-centre { display: flex; gap: 1.25rem; justify-content: center; flex-wrap: wrap; }
-  .footer-right { display: flex; justify-content: flex-end; }
-  .footer-link {
-    font-family: var(--mono); font-size: 0.62rem;
-    color: rgba(255,255,255,0.5); text-decoration: none;
-    white-space: nowrap;
-  }
-  .footer-link:hover { color: var(--white); text-decoration: underline; }
-  @media (max-width: 720px) {
-    .site-footer {
-      grid-template-columns: 1fr;
-      text-align: center;
-    }
-    .footer-left  { align-items: center; }
-    .footer-right { justify-content: center; }
-  }
-</style>
+  <script src="scripts.js"></script>
+  <script src="matomo.js"></script>
 </head>
 <body>
 
@@ -440,7 +33,7 @@
   </a>
 
   <div style="display:flex;align-items:center;gap:0.75rem;">
-    <button class="about-btn" onclick="openAbout('About_detail.md')">
+    <button class="about-btn" onclick="openAbout('About_detail.html')">
       About
     </button>
     <!-- Run checks menu -->
@@ -453,17 +46,38 @@
         <div class="run-dropdown-header">Node-specific checks</div>
         <div class="run-item" role="menuitem">
           <div class="run-item-info">
-            <div class="run-item-label">Catalogue Services</div>
+            <div class="run-item-label">Run All Node Checks</div>
+            <div class="run-item-desc">All four checks below, one after another, for this node</div>
+          </div>
+          <button class="run-btn" id="btn-run-all-node" onclick="runAllNodeChecks()">Run all</button>
+        </div>
+        <div class="run-item" role="menuitem">
+          <div class="run-item-info">
+            <div class="run-item-label">Exchange Services</div>
             <div class="run-item-desc">CheckCatalogueServices · catalogue_services_report.json</div>
           </div>
           <button class="run-btn" id="btn-catalogue-services" onclick="runCatalogueCheck()">Run</button>
         </div>
         <div class="run-item" role="menuitem">
           <div class="run-item-info">
-            <div class="run-item-label">Service Uptime</div>
+            <div class="run-item-label">Service Monitoring</div>
             <div class="run-item-desc">CheckServiceUptime · argo_uptime_report.json</div>
           </div>
-          <button class="run-btn" id="btn-service-uptime" onclick="promptAndRun()">Run</button>
+          <button class="run-btn" id="btn-service-uptime" onclick="runServiceUptimeCheck()">Run</button>
+        </div>
+        <div class="run-item" role="menuitem">
+          <div class="run-item-info">
+            <div class="run-item-label">Core Service integrations</div>
+            <div class="run-item-desc">CheckCoreIntegrations · core_integrations_report.json</div>
+          </div>
+          <button class="run-btn" id="btn-core-integrations" onclick="runCoreIntegrationsCheck()">Run</button>
+        </div>
+        <div class="run-item" role="menuitem">
+          <div class="run-item-info">
+            <div class="run-item-label">Federated Search</div>
+            <div class="run-item-desc">CheckOtherMetrics · front_office_metrics_report.json</div>
+          </div>
+          <button class="run-btn" id="btn-other-metrics" onclick="runOtherMetricsCheck()">Run</button>
         </div>
       </div>
     </div>
@@ -478,26 +92,6 @@
         <div class="ns-header">All nodes</div>
         <div id="ns-list"><div class="ns-loading">Loading…</div></div>
       </div>
-    </div>
-  </div>
-</div>
-
-<!-- API key modal -->
-<div class="apikey-overlay" id="apikey-overlay" role="dialog" aria-modal="true" aria-labelledby="apikey-title">
-  <div class="apikey-modal">
-    <div class="apikey-modal-title" id="apikey-title">API Key Required</div>
-    <div class="apikey-modal-sub">
-      Enter your API key to run <strong id="apikey-check-label">this check</strong> against
-      <strong id="apikey-node-label">the selected node</strong>.<br>
-      The key is used only for this request and is <strong>never saved or stored</strong>.
-    </div>
-    <label class="apikey-label" for="apikey-input">API Key</label>
-    <input class="apikey-input" id="apikey-input" type="password"
-           autocomplete="off" autocorrect="off" spellcheck="false"
-           placeholder="Paste your API key here…">
-    <div class="apikey-actions">
-      <button class="apikey-cancel" onclick="closeApiKeyModal()">Cancel</button>
-      <button class="apikey-confirm" id="apikey-confirm-btn" onclick="confirmApiKey()">Run check</button>
     </div>
   </div>
 </div>
@@ -517,763 +111,53 @@
 </main>
 
 <script>
-// ── Fetch helper ──────────────────────────────────────────────────────────────
 
-async function tryFetchJSON(url) {
-  try {
-    const r = await fetch(url);
-    return r.ok ? r.json() : null;
-  } catch { return null; }
-}
+  // ── Main init ─────────────────────────────────────────────────────────────────
 
-// ── Colour helpers ────────────────────────────────────────────────────────────
+  async function init() {
+    const main     = document.getElementById('main-content');
+    const nodeName = decodeURIComponent(window.location.hash.substring(1));
 
-function uptimeClass(pct) {
-  if (pct >= 90) return 'high';
-  if (pct >= 60) return 'medium';
-  return 'low';
-}
-
-function uptimeColour(pct) {
-  if (pct >= 90) return 'green';
-  if (pct >= 60) return 'amber';
-  return 'red';
-}
-
-// ── Capability compliance tiers ─────────────────────────────────────────────
-// Tier 1 (MVP, required): AAI, Resource Catalogue
-// Tier 2 (Standard):      Helpdesk, Service Monitoring
-// Tier 3 (Advanced):      Service Accounting, Research Product Accounting,
-//                         Order Management, Application Deployment Management
-const COMPLIANCE_TIERS = [
-  { key: 'mvp',      level: 1, label: 'MVP',      types: ['AAI', 'Resource Catalogue'] },
-  { key: 'standard', level: 2, label: 'Standard', types: ['Helpdesk', 'Monitoring'] },
-  { key: 'advanced', level: 3, label: 'Advanced', types: ['Service Accounting', 'Research Product Accounting', 'Order Management', 'Application Deployment Management'] },
-];
-
-// Returns per-tier counts plus the highest fully-satisfied tier.
-// { tiers: [{ key, label, level, total, avail, met }], highest: {key,label,level} | null }
-function computeComplianceTiers(endpointReport) {
-  const caps  = (endpointReport && Array.isArray(endpointReport.capabilities)) ? endpointReport.capabilities : [];
-  const avail = new Set(caps.filter(c => c.status === 'Available').map(c => c.capability_type));
-
-  const tiers = COMPLIANCE_TIERS.map(t => {
-    const total = t.types.length;
-    const have  = t.types.filter(type => avail.has(type)).length;
-    return { ...t, total, avail: have, met: have === total };
-  });
-
-  // Highest tier reached: tiers must be satisfied in order (1 then 2 then 3)
-  let highest = null;
-  for (const t of tiers) {
-    if (t.met) highest = t;
-    else break;
-  }
-
-  return { tiers, highest };
-}
-
-// Back-compat helper: a node "meets MVP" if Tier 1 is satisfied.
-function meetsMvp(endpointReport) {
-  return computeComplianceTiers(endpointReport).tiers[0].met;
-}
-
-// ── Overview strip ────────────────────────────────────────────────────────────
-
-function buildOverview(ep, cat, argo) {
-  const cards = [];
-
-  // Endpoints
-  if (ep && Array.isArray(ep.capabilities)) {
-    const total = ep.capabilities.length;
-    const avail = ep.capabilities.filter(c => c.status === 'Available').length;
-    const pct   = total > 0 ? Math.round(avail / total * 100) : 0;
-    const cls   = pct === 100 ? 'green' : pct >= 50 ? 'amber' : 'red';
-    cards.push(`
-      <div class="ov-card">
-        <div class="ov-value ${cls}">${avail}/${total}</div>
-        <div class="ov-label">Endpoints available</div>
-      </div>`);
-  } else {
-    cards.push(`<div class="ov-card"><div class="ov-value" style="color:var(--grey-400)">—</div><div class="ov-label">Endpoints available</div></div>`);
-  }
-
-  // Catalogue services
-  if (cat) {
-    const total = typeof cat.total_services === 'number' ? cat.total_services
-                : Array.isArray(cat.services) ? cat.services.length : '—';
-    let active = null;
-    if (typeof cat.active_services === 'number') {
-      active = cat.active_services;
-    } else if (Array.isArray(cat.services) && cat.services.length > 0) {
-      const first = cat.services[0];
-      if (typeof first.status === 'string') {
-        const activeVals = new Set(['active','Active','ACTIVE','available','Available','ok','OK','published','Published']);
-        const n = cat.services.filter(s => activeVals.has(s.status)).length;
-        if (n > 0) active = n;
-      } else if (typeof first.active === 'boolean') {
-        active = cat.services.filter(s => s.active === true).length;
-      }
+    if (!nodeName) {
+      main.innerHTML = '<div class="state-msg">Error: No node specified in URL hash (e.g. node.html#CESSDA).</div>';
+      return;
     }
-    cards.push(`
-      <div class="ov-card">
-        <div class="ov-value orange">${active !== null ? active : total}</div>
-        <div class="ov-label">${active !== null ? 'Active catalogue services' : 'Catalogue services'}</div>
-      </div>`);
-  } else {
-    cards.push(`<div class="ov-card"><div class="ov-value" style="color:var(--grey-400)">—</div><div class="ov-label">Catalogue services</div></div>`);
-  }
 
-  // ARGO uptime
-  if (argo) {
-    let uptime = null;
-    if (typeof argo.uptime_percentage === 'number') {
-      uptime = Math.round(argo.uptime_percentage * 10) / 10;
-    } else {
-      const items = Array.isArray(argo.endpoints) ? argo.endpoints
-                  : Array.isArray(argo.services)  ? argo.services : [];
-      const vals = items.map(s => s.uptime_percentage ?? s.average_availability ?? s.availability ?? null).filter(v => v !== null);
-      if (vals.length) uptime = Math.round((vals.reduce((a, b) => a + b, 0) / vals.length) * 10) / 10;
-    }
-    if (uptime !== null) {
-      cards.push(`
-        <div class="ov-card">
-          <div class="ov-value ${uptimeColour(uptime)}">${uptime}%</div>
-          <div class="ov-label">Avg ARGO uptime</div>
-        </div>`);
-    }
-  } else {
-    cards.push(`<div class="ov-card"><div class="ov-value" style="color:var(--grey-400)">—</div><div class="ov-label">Avg ARGO uptime</div></div>`);
-  }
+    document.getElementById('display-node-name').textContent = nodeName;
+    document.title = `${nodeName} — EOSC Beyond Node Dashboard`;
 
-  // Compliance tier
-  const compliance = ep ? computeComplianceTiers(ep) : null;
-  cards.push(!compliance
-    ? `<div class="ov-card"><div class="ov-value" style="color:var(--grey-400)">—</div><div class="ov-label">Compliance tier</div></div>`
-    : compliance.highest
-      ? `<div class="ov-card"><div class="ov-value ${compliance.highest.level === 3 ? 'green' : compliance.highest.level === 2 ? 'orange' : 'amber'}">${compliance.highest.label}</div><div class="ov-label">Compliance tier</div></div>`
-      : `<div class="ov-card"><div class="ov-value red">✗</div><div class="ov-label">Compliance tier</div></div>`
-  );
+    const base = `/api/data/${encodeURIComponent(nodeName)}`;
 
-  return `<div class="overview-strip">${cards.join('')}</div>`;
-}
-
-// ── Endpoint Report panel ─────────────────────────────────────────────────────
-
-function renderEndpointPanel(data) {
-  if (!data) {
-    return `<div class="panel">
-      <div class="panel-header"><div class="panel-header-left"><span class="panel-icon">🔌</span> Endpoint Connectivity Report</div>
-        <span class="badge badge-missing">Not available</span></div>
-      <div class="panel-missing">endpoint_report.json was not found for this node.</div>
-    </div>`;
-  }
-
-  const caps = Array.isArray(data.capabilities) ? data.capabilities : [];
-  if (caps.length === 0) {
-    return `<div class="panel">
-      <div class="panel-header"><div class="panel-header-left"><span class="panel-icon">🔌</span> Endpoint Connectivity Report</div></div>
-      <div class="panel-missing">No capabilities listed in this report.</div>
-    </div>`;
-  }
-
-  const avail = caps.filter(c => c.status === 'Available').length;
-  const pct   = Math.round(avail / caps.length * 100);
-  const bCls  = pct === 100 ? 'badge-ok' : pct >= 50 ? 'badge-warn' : 'badge-error';
-
-  const byType = new Map(caps.map(c => [c.capability_type, c]));
-  const { tiers } = computeComplianceTiers(data);
-
-  const renderCard = (cap) => {
-    const sc = cap.status === 'Available' ? 'status-available' : 'status-error';
-    return `
-      <div class="ep-card">
-        <div class="ep-cap-type">${cap.capability_type || '(unknown type)'}</div>
-        <div class="ep-url">${cap.endpoint || ''}</div>
-        <span class="status-tag ${sc}">${cap.status} (${cap.http_code ?? '?'})</span>
-        ${cap.version ? `<div class="ep-version">Version: ${cap.version}</div>` : ''}
-      </div>`;
-  };
-
-  const renderMissingCard = (type) => `
-      <div class="ep-card ep-card-missing">
-        <div class="ep-cap-type">${type}</div>
-        <div class="ep-url">&mdash;</div>
-        <span class="status-tag status-error">Not reported</span>
-      </div>`;
-
-  const tierSections = tiers.map(tier => {
-    const tCls  = tier.met ? 'badge-ok' : tier.avail > 0 ? 'badge-warn' : 'badge-error';
-    const cards = tier.types
-      .map(type => byType.has(type) ? renderCard(byType.get(type)) : renderMissingCard(type))
-      .join('');
-    return `
-      <div class="ep-tier">
-        <div class="ep-tier-header">
-          <span class="ep-tier-label">Tier ${tier.level} &middot; ${tier.label}</span>
-          <span class="badge ${tCls}">${tier.avail}/${tier.total} available</span>
-        </div>
-        <div class="ep-grid">${cards}</div>
-      </div>`;
-  }).join('');
-
-  // Capabilities present in the report that don't map to a known tier
-  const knownTypes   = new Set(tiers.flatMap(t => t.types));
-  const otherCaps     = caps.filter(c => !knownTypes.has(c.capability_type));
-  const otherSection  = otherCaps.length
-    ? `<div class="ep-tier">
-         <div class="ep-tier-header"><span class="ep-tier-label">Other capabilities</span></div>
-         <div class="ep-grid">${otherCaps.map(renderCard).join('')}</div>
-       </div>`
-    : '';
-
-  return `
-    <div class="panel">
-      <div class="panel-header">
-        <div class="panel-header-left"><span class="panel-icon">🔌</span> Endpoint Connectivity Report</div>
-        <span class="badge ${bCls}">${avail}/${caps.length} available</span>
-      </div>
-      <div class="panel-body">${tierSections}${otherSection}</div>
-    </div>`;
-}
-
-// ── Catalogue Services panel ──────────────────────────────────────────────────
-
-function renderCataloguePanel(data) {
-  if (!data) {
-    return `<div class="panel">
-      <div class="panel-header"><div class="panel-header-left"><span class="panel-icon">📚</span> Catalogue Services Report</div>
-        <span class="badge badge-missing">Not available</span></div>
-      <div class="panel-missing">catalogue_services_report.json was not found for this node.</div>
-    </div>`;
-  }
-
-  let services = [];
-  if (Array.isArray(data.services)) {
-    services = data.services;
-  } else if (typeof data.total_services === 'number') {
-    return `
-      <div class="panel">
-        <div class="panel-header">
-          <div class="panel-header-left"><span class="panel-icon">📚</span> Catalogue Services Report</div>
-          <span class="badge badge-ok">${data.total_services} services</span>
-        </div>
-        <div class="panel-body">
-          <details><summary style="cursor:pointer;font-family:var(--mono);font-size:0.7rem;color:var(--grey-600);">Show raw JSON</summary>
-          <div class="raw-panel">${JSON.stringify(data, null, 2)}</div></details>
-        </div>
-      </div>`;
-  }
-
-  if (services.length === 0) {
-    return `<div class="panel">
-      <div class="panel-header"><div class="panel-header-left"><span class="panel-icon">📚</span> Catalogue Services Report</div></div>
-      <div class="panel-missing">No services listed in this report.</div>
-    </div>`;
-  }
-
-  const activeVals = new Set(['active','Active','ACTIVE','available','Available','ok','OK','published','Published']);
-  const rows = services.map(s => {
-    const name   = s.name || s.title || s.id || '(unnamed)';
-    const abbr   = s.abbreviation || null;
-    const url    = s.url || s.webpage || s.endpoint || s.landing_page || null;
-    const status = s.status ?? (s.active === true ? 'active' : s.active === false ? 'inactive' : null);
-    const isActive = status !== null ? activeVals.has(status) : null;
-    const statusBadge = status
-      ? `<span class="badge ${isActive ? 'badge-ok' : 'badge-missing'}">${status}</span>`
-      : '';
-    return `
-      <tr>
-        <td><div class="cat-name">${name}${abbr ? ` <span style="font-family:var(--mono);font-size:0.65rem;color:var(--grey-400);font-weight:400;">(${abbr})</span>` : ''}</div></td>
-        <td><div class="cat-url">${url ? `<a href="${url}" target="_blank" rel="noreferrer">${url}</a>` : '—'}</div></td>
-        <td>${statusBadge}</td>
-      </tr>`;
-  }).join('');
-
-  return `
-    <div class="panel">
-      <div class="panel-header">
-        <div class="panel-header-left"><span class="panel-icon">📚</span> Catalogue Services Report</div>
-        <span class="badge badge-ok">${services.length} services</span>
-      </div>
-      <div class="panel-body">
-        <table class="cat-table">
-          <thead><tr><th>Name</th><th>URL</th><th>Status</th></tr></thead>
-          <tbody>${rows}</tbody>
-        </table>
-      </div>
-    </div>`;
-}
-
-// ── ARGO Uptime panel ─────────────────────────────────────────────────────────
-
-function renderArgoPanel(data) {
-  if (!data) {
-    return `<div class="panel">
-      <div class="panel-header"><div class="panel-header-left"><span class="panel-icon">📡</span> ARGO Uptime Report</div>
-        <span class="badge badge-missing">Not available</span></div>
-      <div class="panel-missing">argo_uptime_report.json was not found for this node.</div>
-    </div>`;
-  }
-
-  // Normalise: 'endpoints' is the real key; 'services' kept as fallback
-  let services = [];
-  if (Array.isArray(data.endpoints)) {
-    services = data.endpoints;
-  } else if (Array.isArray(data.services)) {
-    services = data.services;
-  } else if (typeof data.uptime_percentage === 'number') {
-    services = [{ name: data.service_name || data.name || 'Overall', uptime_percentage: data.uptime_percentage }];
-  }
-
-  let avgUptime = null;
-  if (services.length > 0) {
-    const vals = services.map(s => s.uptime_percentage ?? s.average_availability ?? s.availability ?? null).filter(v => v !== null);
-    if (vals.length) avgUptime = Math.round((vals.reduce((a, b) => a + b, 0) / vals.length) * 10) / 10;
-  }
-
-  const headerBadge = avgUptime !== null
-    ? `<span class="badge badge-${avgUptime >= 90 ? 'ok' : avgUptime >= 60 ? 'warn' : 'error'}">${avgUptime}% avg</span>`
-    : `<span class="badge badge-missing">No uptime data</span>`;
-
-  // Extract report-level date range (used in both the normal and empty-services branches)
-  const reportStart = data.period?.start || data.start_date || data.start_time || data.period_start || data.from || null;
-  const reportEnd   = data.period?.end   || data.end_date   || data.end_time   || data.period_end   || data.to   || null;
-
-  function fmtDate(d) {
-    if (!d) return null;
-    // Already a nice string? Return as-is; otherwise try to parse
-    const parsed = new Date(d);
-    if (isNaN(parsed)) return String(d);
-    return parsed.toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' });
-  }
-
-  const dateRange = (reportStart || reportEnd)
-    ? `<span class="argo-meta" style="display:inline-flex;align-items:center;gap:0.3rem;">
-         🗓 ${reportStart ? fmtDate(reportStart) : '?'}&nbsp;→&nbsp;${reportEnd ? fmtDate(reportEnd) : '?'}
-       </span>`
-    : '';
-
-  if (services.length === 0) {
-    return `
-      <div class="panel">
-        <div class="panel-header">
-          <div class="panel-header-left"><span class="panel-icon">📡</span> ARGO Uptime Report</div>
-          <div style="display:flex;align-items:center;gap:0.75rem;flex-wrap:wrap;">${dateRange}${headerBadge}</div>
-        </div>
-        <div class="panel-body">
-          <details><summary style="cursor:pointer;font-family:var(--mono);font-size:0.7rem;color:var(--grey-600);">Show raw JSON</summary>
-          <div class="raw-panel">${JSON.stringify(data, null, 2)}</div></details>
-        </div>
-      </div>`;
-  }
-
-  const cards = services.map(s => {
-    const name  = s.name || s.service_name || s.id || '(unnamed)';
-    const pct   = s.uptime_percentage ?? s.average_availability ?? s.availability ?? null;
-    const cls   = pct !== null ? uptimeClass(pct) : 'low';
-    const width = pct !== null ? pct : 0;
-    const period = s.period || s.time_period || null;
-
-    // Per-service dates (fall back to report-level period)
-    const sStart = s.period?.start || s.start_date || s.start_time || s.period_start || s.from || reportStart || null;
-    const sEnd   = s.period?.end   || s.end_date   || s.end_time   || s.period_end   || s.to   || reportEnd   || null;
-    const sDateRange = (sStart || sEnd)
-      ? `<div class="argo-meta">📅 ${sStart ? fmtDate(sStart) : '?'} → ${sEnd ? fmtDate(sEnd) : '?'}</div>`
-      : '';
-
-    return `
-      <div class="argo-card">
-        <div class="argo-name">${name}</div>
-        ${pct !== null ? `
-        <div class="argo-uptime-row">
-          <div class="argo-bar-track"><div class="argo-bar-fill ${cls}" style="width:${width}%"></div></div>
-          <span class="argo-pct ${cls}">${pct}%</span>
-        </div>` : '<div class="argo-meta">No uptime value</div>'}
-        ${s.days_monitored ? `<div class="argo-meta">${s.days_monitored} days monitored</div>` : ''}
-        ${period ? `<div class="argo-meta">Period: ${period}</div>` : ''}
-        ${sDateRange}
-      </div>`;
-  }).join('');
-
-  return `
-    <div class="panel">
-      <div class="panel-header">
-        <div class="panel-header-left"><span class="panel-icon">📡</span> ARGO Uptime Report</div>
-        <div style="display:flex;align-items:center;gap:0.75rem;flex-wrap:wrap;">
-          ${dateRange}
-          ${headerBadge}
-        </div>
-      </div>
-      <div class="panel-body"><div class="argo-grid">${cards}</div></div>
-    </div>`;
-}
-
-// ── Header meta block ─────────────────────────────────────────────────────────
-
-function buildMeta(ep, cat, argo, nodeName) {
-  const source   = ep || cat || argo || {};
-  const name     = source.node_name || nodeName;
-  const provider = source.legal_entity?.name || source.provider || null;
-  const endpoint = source.node_endpoint || source.endpoint || null;
-  const pid      = source.node_pid || source.pid || null;
-
-  document.getElementById('display-node-name').textContent = name;
-  document.title = `${name} — EOSC Beyond Node Dashboard`;
-
-  const lines = [];
-  if (provider) lines.push(`<div><strong>Provider:</strong> ${provider}</div>`);
-  if (endpoint) lines.push(`<div><strong>Endpoint:</strong> <a href="${endpoint}" target="_blank" rel="noreferrer">${endpoint}</a></div>`);
-  if (pid)      lines.push(`<div><strong>PID:</strong> ${pid}</div>`);
-  document.getElementById('node-meta-info').innerHTML = lines.join('');
-}
-
-// ── Main init ─────────────────────────────────────────────────────────────────
-
-async function init() {
-  const main     = document.getElementById('main-content');
-  const nodeName = decodeURIComponent(window.location.hash.substring(1));
-
-  if (!nodeName) {
-    main.innerHTML = '<div class="state-msg">Error: No node specified in URL hash (e.g. node.html#CESSDA).</div>';
-    return;
-  }
-
-  document.getElementById('display-node-name').textContent = nodeName;
-  document.title = `${nodeName} — EOSC Beyond Node Dashboard`;
-
-  const base = `/api/data/${encodeURIComponent(nodeName)}`;
-
-  const [ep, cat, argo] = await Promise.all([
-    tryFetchJSON(`${base}/endpoint_report.json`),
-    tryFetchJSON(`${base}/catalogue_services_report.json`),
-    tryFetchJSON(`${base}/argo_uptime_report.json`),
+    const [ep, cat, argo, fom, core] = await Promise.all([
+      tryFetchJSON(`${base}/endpoint_report.json`),
+      tryFetchJSON(`${base}/catalogue_services_report.json`),
+      tryFetchJSON(`${base}/argo_uptime_report.json`),
+      tryFetchJSON(`${base}/front_office_metrics_report.json`),
+    tryFetchJSON(`${base}/core_integrations_report.json`),
   ]);
 
-  if (!ep && !cat && !argo) {
-    main.innerHTML = `
+    if (!ep && !cat && !argo && !fom) {
+      main.innerHTML = `
       <div class="state-msg">
         No report files found for <strong>${nodeName}</strong>.<br>
         Expected path: <code>${base}/</code>
       </div>`;
-    return;
-  }
+      return;
+    }
 
-  buildMeta(ep, cat, argo, nodeName);
+    buildMeta(ep, cat, argo, nodeName);
 
-  main.innerHTML = `
+    main.innerHTML = `
     ${buildOverview(ep, cat, argo)}
-    ${renderEndpointPanel(ep)}
+    ${renderEndpointPanel(ep, core)}
     ${renderCataloguePanel(cat)}
     ${renderArgoPanel(argo)}
+    ${renderFrontOfficeMetricsPanel(fom)}
   `;
 
-  // Highlight current node in the switcher now that we know which one is active
-  refreshSwitcher();
-}
-
-// ── Node switcher ─────────────────────────────────────────────────────────────
-
-async function loadSwitcher() {
-  const data = await tryFetchJSON('/api/data/node_registry_summary.json');
-  if (!data || !Array.isArray(data.nodes)) {
-    document.getElementById('ns-list').textContent = 'Could not load nodes';
-    return;
+    // Highlight current node in the switcher now that we know which one is active
+    refreshSwitcher();
   }
-  window._allNodes = data.nodes;
-  refreshSwitcher();
-}
-
-function refreshSwitcher() {
-  if (!window._allNodes) return;
-  const current = decodeURIComponent(window.location.hash.substring(1));
-  document.getElementById('ns-list').innerHTML = window._allNodes.map(n => {
-    const name  = n.node_name || n.name || '';
-    const isCur = name === current;
-    return `<a class="ns-item${isCur ? ' current' : ''}" role="menuitem"
-               href="node.html#${encodeURIComponent(name)}"
-               onclick="document.getElementById('node-switcher').setAttribute('aria-expanded','false')">
-              <span class="ns-dot green"></span>
-              ${name}
-              <span class="ns-check">✓</span>
-            </a>`;
-  }).join('');
-}
-
-function toggleSwitcher() {
-  const sw = document.getElementById('node-switcher');
-  sw.setAttribute('aria-expanded', sw.getAttribute('aria-expanded') !== 'true');
-}
-
-// Close on outside click or Escape
-document.addEventListener('click', e => {
-  const sw = document.getElementById('node-switcher');
-  if (sw && !sw.contains(e.target)) sw.setAttribute('aria-expanded', 'false');
-});
-document.addEventListener('keydown', e => {
-  if (e.key === 'Escape') document.getElementById('node-switcher')?.setAttribute('aria-expanded', 'false');
-});
-
-// ── Run-checks menu ───────────────────────────────────────────────────────────
-
-const NODE_CHECK_LABELS = {
-  'catalogue-services': 'Catalogue Services',
-  'service-uptime':     'Service Uptime',
-};
-
-function toggleRunMenu() {
-  const menu = document.getElementById('run-menu');
-  const isOpen = menu.getAttribute('aria-expanded') === 'true';
-  menu.setAttribute('aria-expanded', !isOpen);
-  // Close node switcher if open
-  if (!isOpen) document.getElementById('node-switcher').setAttribute('aria-expanded', 'false');
-}
-
-document.addEventListener('click', e => {
-  const menu = document.getElementById('run-menu');
-  if (menu && !menu.contains(e.target)) menu.setAttribute('aria-expanded', 'false');
-});
-document.addEventListener('keydown', e => {
-  if (e.key === 'Escape') {
-    document.getElementById('run-menu')?.setAttribute('aria-expanded', 'false');
-    closeApiKeyModal();
-    closeAbout();
-  }
-});
-
-// ── About modal ───────────────────────────────────────────────────────────────
-
-function mdToHtml(md) {
-  const lines  = md.split('\n');
-  const out    = [];
-  let inCode   = false, codeBuf = [];
-  let inTable  = false, tableRows = [];
-  let inList   = false, listBuf  = [];
-
-  const flushList = () => {
-    if (!inList) return;
-    out.push('<ul>' + listBuf.map(l => `<li>${inlineHtml(l)}</li>`).join('') + '</ul>');
-    listBuf = []; inList = false;
-  };
-  const flushTable = () => {
-    if (!inTable) return;
-    const rows = tableRows.filter(r => !/^\s*[-|: ]+$/.test(r));
-    if (rows.length === 0) { inTable = false; tableRows = []; return; }
-    const cells = r => r.split('|').map(c => c.trim()).filter((_, i, a) => i > 0 && i < a.length - 1);
-    const [hdr, ...body] = rows;
-    out.push('<table><thead><tr>' +
-      cells(hdr).map(c => `<th>${inlineHtml(c)}</th>`).join('') +
-      '</tr></thead><tbody>' +
-      body.map(r => '<tr>' + cells(r).map(c => `<td>${inlineHtml(c)}</td>`).join('') + '</tr>').join('') +
-      '</tbody></table>');
-    inTable = false; tableRows = [];
-  };
-
-  const inlineHtml = s => s
-    .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
-    .replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2" target="_blank" rel="noopener">$1</a>')
-    .replace(/`([^`]+)`/g, '<code>$1</code>')
-    .replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
-
-  for (let raw of lines) {
-    const line = raw.trimEnd();
-    if (/^```/.test(line)) {
-      if (!inCode) {
-        flushList(); flushTable();
-        inCode = true; codeBuf = [];
-      } else {
-        out.push(`<pre><code>${codeBuf.join('\n').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')}</code></pre>`);
-        inCode = false; codeBuf = [];
-      }
-      continue;
-    }
-    if (inCode) { codeBuf.push(line); continue; }
-    if (/^\|/.test(line)) { flushList(); inTable = true; tableRows.push(line); continue; }
-    if (inTable) flushTable();
-    const hm = line.match(/^(#{1,3})\s+(.*)/);
-    if (hm) {
-      flushList();
-      const lvl = hm[1].length;
-      out.push(`<h${lvl}>${inlineHtml(hm[2])}</h${lvl}>`);
-      continue;
-    }
-    if (/^- /.test(line)) { inList = true; listBuf.push(line.slice(2)); continue; }
-    flushList();
-    if (line === '') { out.push('<p></p>'); continue; }
-    out.push(`<p>${inlineHtml(line)}</p>`);
-  }
-  flushList(); flushTable();
-  return out.join('\n');
-}
-
-async function openAbout(file) {
-  document.getElementById('about-overlay').classList.add('open');
-  const body = document.getElementById('about-modal-body');
-  body.innerHTML = 'Loading…';
-  try {
-    const r = await fetch(file);
-    if (!r.ok) throw new Error('HTTP ' + r.status);
-    body.innerHTML = mdToHtml(await r.text());
-  } catch (e) {
-    body.innerHTML = `<p style="color:var(--red)">Could not load ${file}: ${e.message}</p>`;
-  }
-}
-
-function closeAbout() {
-  document.getElementById('about-overlay').classList.remove('open');
-}
-
-function handleAboutOverlayClick(e) {
-  if (e.target === document.getElementById('about-overlay')) closeAbout();
-}
-
-// ── Catalogue Services check (no API key needed) ─────────────────────────────
-// Reads the Resource Catalogue endpoint from this node's endpoint_report.json,
-// then POSTs { node, catalogueUrl } to the backend. No credentials required.
-
-async function runCatalogueCheck() {
-  document.getElementById('run-menu').setAttribute('aria-expanded', 'false');
-  const btn      = document.getElementById('btn-catalogue-services');
-  const nodeName = decodeURIComponent(window.location.hash.substring(1));
-  if (btn) { btn.disabled = true; btn.textContent = '…'; }
-  showToast('info', 'Catalogue Services', `Starting for ${nodeName}…`);
-
-  // Fetch the endpoint report for the current node and find the
-  // Resource Catalogue URL. Pass the raw endpoint value; the Java
-  // class strips any trailing /api or /api/ and appends
-  // /api/service/all itself.
-  const epData = await tryFetchJSON(`/api/data/${encodeURIComponent(nodeName)}/endpoint_report.json`);
-  const catalogueUrl = epData?.capabilities
-    ?.find(c => c.capability_type === 'Resource Catalogue')
-    ?.endpoint || null;
-  const nodePid = epData?.node_pid || null;
-
-  if (!catalogueUrl) {
-    showToast('err', 'Catalogue Services',
-      'No Resource Catalogue endpoint found in endpoint_report.json for this node.');
-    resetBtn(btn);
-    return;
-  }
-
-  let jobId;
-  try {
-    const res  = await fetch('/api/run/catalogue-services', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ node: nodeName, catalogueUrl, nodePid }),
-    });
-    const data = await res.json();
-    if (!res.ok) { showToast('err', 'Catalogue Services', data.error || 'HTTP ' + res.status); resetBtn(btn); return; }
-    jobId = data.jobId;
-  } catch (e) {
-    showToast('err', 'Catalogue Services', 'Request failed: ' + e.message);
-    resetBtn(btn); return;
-  }
-
-  showToast('info', 'Catalogue Services', 'Running… (job ' + jobId + ')');
-  const result = await pollJobStatus(jobId);
-  if (result.status === 'DONE') { showToast('ok', 'Catalogue Services', result.message || 'Completed'); init(); }
-  else                          { showToast('err', 'Catalogue Services', result.message || 'Check failed'); }
-  resetBtn(btn);
-}
-
-// ── Service Uptime check (ARGO API key required) ──────────────────────────────
-
-function promptAndRun() {
-  document.getElementById('run-menu').setAttribute('aria-expanded', 'false');
-  const nodeName = decodeURIComponent(window.location.hash.substring(1)) || 'this node';
-  document.getElementById('apikey-node-label').textContent = nodeName;
-
-  // Always start blank — key must never be pre-filled or persisted
-  const input = document.getElementById('apikey-input');
-  input.value = '';
-
-  document.getElementById('apikey-overlay').classList.add('open');
-  setTimeout(() => input.focus(), 50);
-}
-
-function closeApiKeyModal() {
-  document.getElementById('apikey-overlay').classList.remove('open');
-  // Clear immediately so the key does not linger in the DOM
-  document.getElementById('apikey-input').value = '';
-}
-
-// Close on backdrop click
-document.getElementById('apikey-overlay').addEventListener('click', e => {
-  if (e.target === document.getElementById('apikey-overlay')) closeApiKeyModal();
-});
-
-// Allow Enter to confirm
-document.getElementById('apikey-input').addEventListener('keydown', e => {
-  if (e.key === 'Enter') confirmApiKey();
-});
-
-function confirmApiKey() {
-  const apiKey = document.getElementById('apikey-input').value.trim();
-  if (!apiKey) { document.getElementById('apikey-input').focus(); return; }
-  closeApiKeyModal(); // clears the field before anything async happens
-  runUptimeCheck(apiKey);
-}
-
-async function runUptimeCheck(apiKey) {
-  const btn      = document.getElementById('btn-service-uptime');
-  const nodeName = decodeURIComponent(window.location.hash.substring(1));
-  if (btn) { btn.disabled = true; btn.textContent = '…'; }
-  showToast('info', 'Service Uptime', `Starting for ${nodeName}…`);
-
-  let jobId;
-  try {
-    const res  = await fetch('/api/run/service-uptime', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      // apiKey is passed in the request body and not stored anywhere
-      body: JSON.stringify({ node: nodeName, apiKey }),
-    });
-    const data = await res.json();
-    if (!res.ok) { showToast('err', 'Service Uptime', data.error || 'HTTP ' + res.status); resetBtn(btn); return; }
-    jobId = data.jobId;
-  } catch (e) {
-    showToast('err', 'Service Uptime', 'Request failed: ' + e.message);
-    resetBtn(btn); return;
-  }
-  // apiKey goes out of scope here — it is never written to any storage
-
-  showToast('info', 'Service Uptime', 'Running… (job ' + jobId + ')');
-  const result = await pollJobStatus(jobId);
-  if (result.status === 'DONE') { showToast('ok', 'Service Uptime', result.message || 'Completed'); init(); }
-  else                          { showToast('err', 'Service Uptime', result.message || 'Check failed'); }
-  resetBtn(btn);
-}
-
-async function pollJobStatus(jobId, intervalMs = 1500, maxWaitMs = 300_000) {
-  const deadline = Date.now() + maxWaitMs;
-  while (Date.now() < deadline) {
-    await new Promise(r => setTimeout(r, intervalMs));
-    try {
-      const r = await fetch(`/api/run/${encodeURIComponent(jobId)}/status`);
-      if (!r.ok) continue;
-      const d = await r.json();
-      if (d.status === 'DONE' || d.status === 'ERROR') return d;
-    } catch { /* retry */ }
-  }
-  return { status: 'ERROR', message: 'Timed out waiting for job ' + jobId };
-}
-
-function resetBtn(btn) { if (btn) { btn.disabled = false; btn.textContent = 'Run'; } }
-
-function showToast(kind, title, message, durationMs = 6000) {
-  const icons = { ok: '✓', err: '✕', info: '↻' };
-  const el = document.createElement('div');
-  el.className = `toast toast-${kind}`;
-  el.innerHTML = `
-    <span class="toast-icon">${icons[kind] || '·'}</span>
-    <div class="toast-body">
-      <div class="toast-title">${title}</div>
-      <div class="toast-msg">${message}</div>
-    </div>`;
-  document.getElementById('toast-container').appendChild(el);
-  setTimeout(() => { el.style.transition = 'opacity 0.3s'; el.style.opacity = '0'; setTimeout(() => el.remove(), 320); }, durationMs);
-}
 
 // ── Bootstrap ─────────────────────────────────────────────────────────────────
 
@@ -1286,15 +170,15 @@ loadSwitcher();
   <div class="footer-left">
     <a href="https://cessda.eu" class="footer-link"
        target="_blank" rel="noopener">Powered by CESSDA ERIC</a>
-    <a href="https://github.com/cessda/cessda.pilot-node.tests/releases/tag/1.2.0"
-       class="footer-link" target="_blank" rel="noopener">Version 1.2.0</a>
+    <a href="https://github.com/cessda/cessda.pilot-node.tests/releases/tag/1.9.0"
+       class="footer-link" target="_blank" rel="noopener">Version 1.9.0</a>
   </div>
   <nav class="footer-centre" aria-label="Footer links">
     <a href="https://www.cessda.eu/Privacy-Policy"
        class="footer-link" target="_blank" rel="noopener">Privacy Policy</a>
     <a href="https://www.cessda.eu/Acceptable-Use-Policy"
        class="footer-link" target="_blank" rel="noopener">Acceptable Use Policy</a>
-    <a href="#" onclick="openAbout('accessibility-statement.md');return false;"
+    <a href="#" onclick="openAbout('accessibility-statement.html');return false;"
        class="footer-link">Accessibility Statement</a>
   </nav>
   <div class="footer-right">
@@ -1302,19 +186,5 @@ loadSwitcher();
        class="footer-link" target="_blank" rel="noopener">Helpdesk</a>
   </div>
 </footer>
-<!-- Matomo -->
-<script>
-  var _paq = window._paq = window._paq || [];
-  _paq.push(['trackPageView']);
-  _paq.push(['enableLinkTracking']);
-  (function() {
-    var u="https://cessda.matomo.cloud/";
-    _paq.push(['setTrackerUrl', u+'matomo.php']);
-    _paq.push(['setSiteId', '16']);
-    var d=document, g=d.createElement('script'), s=d.getElementsByTagName('script')[0];
-    g.async=true; g.src='https://cdn.matomo.cloud/cessda.matomo.cloud/matomo.js'; s.parentNode.insertBefore(g,s);
-  })();
-</script>
-<!-- End Matomo Code -->
 </body>
 </html>

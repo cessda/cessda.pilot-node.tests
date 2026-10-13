@@ -1,0 +1,889 @@
+/*
+ * SPDX-FileCopyrightText: 2026 CESSDA ERIC (support@cessda.eu)
+ *
+ * SPDX-License-Identifier: Apache-2.0
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *    http://www.apache.org/licenses/LICENSE-2.0
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ */
+
+package eu.cessda.pilotnode;
+
+import java.io.IOException;
+import java.io.InputStream;
+import java.net.URI;
+import java.net.URISyntaxException;
+import java.net.URLEncoder;
+import java.net.http.HttpClient;
+import java.net.http.HttpRequest;
+import java.net.http.HttpResponse;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.time.Instant;
+import java.util.ArrayList;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.logging.Level;
+import java.util.logging.Logger;
+
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.node.ArrayNode;
+import com.fasterxml.jackson.databind.node.ObjectNode;
+
+/**
+ * Front Office Cross-Visibility Checker.
+ *
+ * <p>Covers the Proposed Validation Metrics that depend on a Node's Front
+ * Office (Discovery Hub) surfacing services filtered by Node PID:</p>
+ *
+ * <ul>
+ *   <li>Metric 4  — this Node's own resources appear in its own Front Office</li>
+ *   <li>Metric 5  — a peer Node's Exchange service is visible in this Node's
+ *       Front Office</li>
+ *   <li>Metric 6  — this Node's Exchange service is visible from the
+ *       Sandbox Front Office</li>
+ *   <li>Metric 9  — this Node's Research Output is visible in the Sandbox
+ *       Discovery Hub</li>
+ *   <li>Metric 10 — reported as an alias of Metric 4. Both metrics were
+ *       only distinct while services were onboarded centrally and
+ *       propagated out to each Node's Front Office; now that onboarding is
+ *       local to each Node, they are mechanically identical, so Metric 10
+ *       is not queried separately.</li>
+ *   <li>Metric 11 — this Node's Exchange service is visible in a peer
+ *       Node's Front Office</li>
+ * </ul>
+ *
+ * <p>Front Office endpoints are resolved from the {@code capability_type}
+ * entries already written to each Node's {@code endpoint_report.json} by
+ * {@link CheckNodeCapabilities} — no direct Node Registry call is made
+ * here. This means {@code CheckNodeCapabilities} must have been run first
+ * (or {@code node_registry_summary.json} and the per-Node
+ * {@code endpoint_report.json} files must otherwise already be present and
+ * up to date) before this check is run.</p>
+ *
+ * <p>The Sandbox Front Office is not a separate configuration value: the
+ * Sandbox is itself registered in the Node Registry (see
+ * {@link #SANDBOX_NODE_NAME}), so its Front Office endpoint is resolved
+ * from its own {@code endpoint_report.json} in exactly the same way as any
+ * other Node's. It is excluded from the peer list used for Metrics 5 and
+ * 11, since those metrics concern visibility across "networked Pilot
+ * Nodes" specifically, not the central Sandbox.</p>
+ *
+ * <p>Query URL shape, per Node:</p>
+ * <pre>
+ *   {front_office_base}/federation/services?q=&amp;nodes%5B%5D={url-encoded PID}
+ * </pre>
+ *
+ * <p>The {@code /federation} path element (see
+ * {@link #FEDERATION_PATH_SEGMENT}) may be removed from this API in the
+ * near future — it is isolated here as a single constant so that change is
+ * a one-line fix.</p>
+ *
+ * <p>Usage:</p>
+ * <pre>
+ *   CheckOtherMetrics NODE_NAME [dashboard_dir]
+ * </pre>
+ */
+public class CheckOtherMetrics {
+
+    // ── Constants ─────────────────────────────────────────────────────────
+
+    /**
+     * The capability_type value used to identify a Node's Front Office /
+     * Discovery Hub endpoint in endpoint_report.json.
+     */
+    static final String FRONT_OFFICE_CAPABILITY_TYPE = "Front Office";
+
+    /**
+     * The node_name under which the Sandbox is registered in the Node
+     * Registry (and therefore the directory name under dashboardDir where
+     * its endpoint_report.json is found). Confirmed: PID
+     * {@code 21.T15999/EOSC-BEYOND}.
+     */
+    static final String SANDBOX_NODE_NAME = "EOSC-Beyond";
+
+    /**
+     * Path element inserted between the Front Office base URL and
+     * "/services". May be removed in future — isolated here so that
+     * change only needs to be made in one place.
+     */
+    static final String FEDERATION_PATH_SEGMENT = "/federation";
+
+    /**
+     * Base URL of the Sandbox's public Discovery Hub search application,
+     * used only for Metric 9.
+     *
+     * <p>This is deliberately <em>not</em> derived from the Sandbox's
+     * {@code Front Office} / {@code Order Management} {@code
+     * capability_type} endpoint recorded in {@code endpoint_report.json}
+     * ({@code https://userspace.sandbox.eosc-beyond.eu/}), even though
+     * the hostname looks related. The two are different applications:
+     * querying {@code {front_office}/services} for Research Outputs (as
+     * an earlier version of this metric did, via the {@code
+     * research_activities} filter flag) reliably returns a 504 Gateway
+     * Time-out from the Sandbox, whereas this host's search API responds
+     * normally in well under a second. Confirmed by hand on 2026-09-07.</p>
+     */
+    static final String SANDBOX_DISCOVERY_HUB_SEARCH_BASE_URL =
+            "https://search.userspace.sandbox.eosc-beyond.eu";
+
+    /**
+     * The Discovery Hub search collections that together make up a
+     * Node's "Research Output" for Metric 9. Confirmed against the
+     * Sandbox's search API on 2026-09-07: a single combined query across
+     * all Research Output types times out, but each of these three
+     * collections queried individually responds normally, so Metric 9
+     * queries them separately and reports visibility if any one of them
+     * has a match.
+     */
+    private static final List<String> RESEARCH_OUTPUT_COLLECTIONS =
+            List.of("dataset", "publication", "software");
+
+    private static final Logger log = Logger.getLogger(CheckOtherMetrics.class.getName());
+
+    // ANSI colour codes
+    private static final String RED    = "\033[0;31m";
+    private static final String GREEN  = "\033[0;32m";
+    private static final String YELLOW = "\033[1;33m";
+    private static final String NC     = "\033[0m";
+
+    private CheckOtherMetrics() {
+        // Static utility class; not instantiated.
+    }
+
+    // ── Entry point ───────────────────────────────────────────────────────
+
+    public static void main(String[] args) throws IOException, InterruptedException {
+
+        if (args.length < 1) {
+            System.err.println("Error: NODE_NAME is required");
+            System.err.println("Usage: java CheckOtherMetrics <NODE_NAME> [<dashboard_dir>]");
+            System.exit(-1);
+        }
+
+        String nodeName = args[0];
+        String dashboardDir = args.length >= 2 ? args[1] : "../dashboard/data";
+
+        // Validate that nodeName contains no directory elements
+        var nodeNamePath = Path.of(nodeName);
+        if (nodeNamePath.normalize().getNameCount() != 1 || nodeNamePath.isAbsolute()) {
+            throw new IllegalArgumentException("nodeName must be a file name");
+        }
+
+        run(Path.of(dashboardDir), nodeName, HttpUtils.httpClient(), new ObjectMapper());
+    }
+
+    /**
+     * Substitutes the literal {@code <NODE_NAME>} placeholder used in the
+     * Proposed Validation Metrics descriptions with the actual Node name.
+     * Needed both for readability (a Node's real name is more useful than
+     * a template placeholder) and correctness: left unsubstituted,
+     * {@code <NODE_NAME>} is indistinguishable from an HTML tag to a
+     * browser rendering the description directly, and gets silently
+     * dropped along with anything that looked like an attribute inside it
+     * (e.g. the {@code 's} immediately after it in Metric 5's text).
+     */
+    private static String withNodeName(String template, String nodeName) {
+        return template.replace("<NODE_NAME>", nodeName);
+    }
+
+    // ── Main logic ────────────────────────────────────────────────────────
+
+    public static void run(
+            Path dashboardDir,
+            String nodeName,
+            HttpClient httpClient,
+            ObjectMapper mapper)
+            throws IOException, InterruptedException {
+        run(dashboardDir, nodeName, httpClient, mapper, Map.of());
+    }
+
+    /**
+     * @param discoveryHubNodeAliases Node name to the name the Sandbox Discovery Hub uses for
+     *                                that Node (Metric 9); a Node with no, or a blank, entry is
+     *                                queried by its own name. See {@link #parseDiscoveryHubNodeAliases}.
+     */
+    public static void run(
+            Path dashboardDir,
+            String nodeName,
+            HttpClient httpClient,
+            ObjectMapper mapper,
+            Map<String, String> discoveryHubNodeAliases)
+            throws IOException, InterruptedException {
+
+        Path outputDir = dashboardDir.resolve(nodeName);
+        Files.createDirectories(outputDir);
+        Path reportPath = outputDir.resolve("front_office_metrics_report.json");
+
+        log.log(Level.INFO, """
+                        Front Office Cross-Visibility Report
+                        Generated: {0}
+                        Node Name: {1}""",
+                new Object[]{Instant.now(), nodeName}
+        );
+
+        // ── Load registry + resolve PIDs ────────────────────────────────
+        Map<String, String> registryPids = readRegistryPids(dashboardDir, mapper);
+
+        String ownPid = registryPids.get(nodeName);
+        if (ownPid == null || ownPid.isBlank()) {
+            throw new IOException("Node '" + nodeName + "' was not found in "
+                    + "node_registry_summary.json, or has no node_pid. Run "
+                    + "CheckNodeCapabilities first.");
+        }
+
+        // Peers for Metrics 5/11 exclude both this Node and the Sandbox:
+        // the Sandbox is the central network Node, not a "networked Pilot
+        // Node" in the sense those two metrics mean.
+        List<Map.Entry<String, String>> peers = new ArrayList<>();
+        for (var entry : registryPids.entrySet()) {
+            if (!entry.getKey().equals(nodeName)
+                    && !entry.getKey().equals(SANDBOX_NODE_NAME)
+                    && !entry.getValue().isBlank()) {
+                peers.add(entry);
+            }
+        }
+        log.log(Level.INFO, "Resolved {0} peer Node(s) for cross-visibility checks", peers.size());
+
+        // ── Resolve own and Sandbox Front Office endpoints ──────────────
+        URI ownFrontOffice = readFrontOfficeEndpoint(dashboardDir, nodeName, mapper);
+        URI sandboxFrontOfficeUrl = readFrontOfficeEndpoint(dashboardDir, SANDBOX_NODE_NAME, mapper);
+        if (sandboxFrontOfficeUrl == null) {
+            log.log(Level.WARNING, "No Front Office endpoint found for Sandbox Node '{0}' "
+                    + "— Metric 6 will be reported as Not reported. Metric 9 is unaffected: "
+                    + "it queries the Sandbox Discovery Hub search application directly, "
+                    + "independent of the Front Office endpoint.", SANDBOX_NODE_NAME);
+        }
+
+        ArrayNode metricsOut = mapper.createArrayNode();
+
+        // ── Metric 4: own resources visible in own Front Office ────────
+        MetricResult metric4;
+        if (ownFrontOffice == null) {
+            metric4 = MetricResult.notReported();
+            printLine(4, "Own resources in own Front Office", metric4);
+        } else {
+            metric4 = queryFrontOffice(httpClient, ownFrontOffice, ownPid);
+            printLine(4, "Own resources in own Front Office", metric4);
+        }
+        ObjectNode metric4Entry = buildMetricEntry(mapper, 4,
+                withNodeName("<NODE_NAME> resources appear in the Node's Front Office.", nodeName),
+                "own", nodeName, ownPid, metric4, null);
+
+        // ── Metric 5: peer resources visible in own Front Office ───────
+        ArrayNode metric5Peers = mapper.createArrayNode();
+        boolean metric5AnyVisible = false;
+        if (ownFrontOffice == null) {
+            log.warning("Metric 5 skipped: own Front Office endpoint not found");
+        } else {
+            for (var peer : peers) {
+                MetricResult r = queryFrontOffice(httpClient, ownFrontOffice, peer.getValue());
+                printLine(5, "Peer '" + peer.getKey() + "' visible in own Front Office", r);
+                metric5AnyVisible |= r.visible();
+                metric5Peers.add(buildPeerEntry(mapper, peer.getKey(), peer.getValue(), r));
+            }
+        }
+        ObjectNode metric5Entry = buildMetricEntry(mapper, 5,
+                withNodeName("An Exchange service from another networked Pilot Node is "
+                        + "visible in the <NODE_NAME> Front Office.", nodeName),
+                "own", nodeName, null, null, metric5Peers);
+        metric5Entry.put("visible", metric5AnyVisible);
+
+        // ── Metric 6: own resources visible in Sandbox Front Office ────
+        MetricResult metric6 = sandboxFrontOfficeUrl == null
+                ? MetricResult.notReported()
+                : queryFrontOffice(httpClient, sandboxFrontOfficeUrl, ownPid);
+        printLine(6, "Own resources in Sandbox Front Office", metric6);
+        ObjectNode metric6Entry = buildMetricEntry(mapper, 6,
+                withNodeName("One or more <NODE_NAME> Exchange services are visible and accessible "
+                        + "from the Sandbox Front Office.", nodeName),
+                "sandbox", SANDBOX_NODE_NAME, ownPid, metric6, null);
+
+        // ── Metric 9: own Research Output visible in Sandbox Discovery Hub
+        ArrayNode metric9Collections = mapper.createArrayNode();
+        String discoveryHubNodeName = discoveryHubNodeName(discoveryHubNodeAliases, nodeName);
+        MetricResult metric9 = queryResearchOutputVisibility(httpClient, discoveryHubNodeName, metric9Collections, mapper);
+        printLine(9, "Own Research Output in Sandbox Discovery Hub", metric9);
+        ObjectNode metric9Entry = buildMetricEntry(mapper, 9,
+                withNodeName("At least one <NODE_NAME> Research Output is visible "
+                        + "in the Sandbox Discovery Hub.", nodeName),
+                "sandbox", SANDBOX_NODE_NAME, null, metric9, null);
+        // Metric 9 filters the Discovery Hub search by node name, not PID
+        // (see queryResearchOutputVisibility) — record that explicitly
+        // instead of the (inapplicable) target_pid field.
+        metric9Entry.put("target_node_name", nodeName);
+        // The name the Discovery Hub knows this Node by, when it differs from the registry name.
+        metric9Entry.put("discovery_hub_node_name", discoveryHubNodeName);
+        // The search endpoint only accepts POST (a GET, e.g. from a browser, returns 405).
+        metric9Entry.put("method", "POST");
+        metric9Entry.putObject("request_body");
+        metric9Entry.set("collection_results", metric9Collections);
+
+        // ── Metric 10: alias of Metric 4 ────────────────────────────────
+        ObjectNode metric10Entry = buildMetricEntry(mapper, 10,
+                withNodeName("An Exchange service onboarded in the <NODE_NAME> Service "
+                        + "Catalogue is visible in the <NODE_NAME> Front Office.", nodeName),
+                "own", nodeName, ownPid, metric4, null);
+        metric10Entry.put("alias_of_metric", 4);
+        metric10Entry.put("alias_note", "Mechanically identical to Metric 4 now that "
+                + "services are onboarded locally by each Node rather than "
+                + "centrally and propagated. Not queried separately.");
+        printLine(10, "(alias of Metric 4 — not queried separately)", metric4);
+
+        // ── Metric 11: own resources visible in peer Front Offices ─────
+        ArrayNode metric11Peers = mapper.createArrayNode();
+        boolean metric11AnyVisible = false;
+        for (var peer : peers) {
+            URI peerFrontOffice = readFrontOfficeEndpoint(dashboardDir, peer.getKey(), mapper);
+            MetricResult r;
+            if (peerFrontOffice == null) {
+                r = MetricResult.notReported();
+            } else {
+                r = queryFrontOffice(httpClient, peerFrontOffice, ownPid);
+            }
+            printLine(11, "Own resources visible in peer '" + peer.getKey() + "'", r);
+            metric11AnyVisible |= r.visible();
+            metric11Peers.add(buildPeerEntry(mapper, peer.getKey(), peerFrontOffice, r));
+        }
+        ObjectNode metric11Entry = buildMetricEntry(mapper, 11,
+                withNodeName("An Exchange service onboarded in the <NODE_NAME> Service "
+                        + "Catalogue is visible in another networked Pilot "
+                        + "Node's Front Office.", nodeName),
+                "peer", nodeName, null, null, metric11Peers);
+        metric11Entry.put("visible", metric11AnyVisible);
+
+        // Appended in numerical order — this is the only place display
+        // order is decided, independent of the (dependency-driven) order
+        // each metric was computed in above.
+        metricsOut.add(metric4Entry);
+        metricsOut.add(metric5Entry);
+        metricsOut.add(metric6Entry);
+        metricsOut.add(metric9Entry);
+        metricsOut.add(metric10Entry);
+        metricsOut.add(metric11Entry);
+
+        // ── Write report ─────────────────────────────────────────────────
+        ObjectNode report = mapper.createObjectNode();
+        report.put("generated", Instant.now().toString());
+        report.put("node_name", nodeName);
+        report.put("node_pid", ownPid);
+        report.put("front_office_endpoint",
+                ownFrontOffice != null ? ownFrontOffice.toString() : null);
+        report.put("sandbox_node_name", SANDBOX_NODE_NAME);
+        report.put("sandbox_front_office_endpoint",
+                sandboxFrontOfficeUrl != null ? sandboxFrontOfficeUrl.toString() : null);
+        report.set("metrics", metricsOut);
+
+        mapper.writerWithDefaultPrettyPrinter().writeValue(reportPath.toFile(), report);
+
+        log.log(Level.INFO, "Report generated: JSON: {0}", reportPath.toAbsolutePath());
+    }
+
+    // ── Registry / endpoint report readers ──────────────────────────────
+
+    /**
+     * Reads {@code node_registry_summary.json} (written by
+     * {@link CheckNodeCapabilities}) and returns a map of node name to
+     * node PID, in registry order.
+     */
+    private static Map<String, String> readRegistryPids(Path dashboardDir, ObjectMapper mapper)
+            throws IOException {
+        Path registryPath = dashboardDir.resolve("node_registry_summary.json");
+        if (!Files.exists(registryPath)) {
+            throw new IOException("node_registry_summary.json not found in "
+                    + dashboardDir + " — run CheckNodeCapabilities first.");
+        }
+
+        Map<String, String> result = new LinkedHashMap<>();
+        JsonNode root = mapper.readTree(registryPath.toFile());
+        for (JsonNode node : root.path("nodes")) {
+            String name = node.path("node_name").asText();
+            String pid  = node.path("node_pid").asText();
+            if (!name.isBlank()) {
+                result.put(name, pid);
+            }
+        }
+        return result;
+    }
+
+    /**
+     * Reads {@code <dashboardDir>/<nodeName>/endpoint_report.json} (written
+     * by {@link CheckNodeCapabilities}) and returns the endpoint URI for
+     * the capability whose {@code capability_type} matches
+     * {@link #FRONT_OFFICE_CAPABILITY_TYPE}, or {@code null} if the report
+     * is missing or that capability is not reported for this Node.
+     */
+    private static URI readFrontOfficeEndpoint(Path dashboardDir, String nodeName, ObjectMapper mapper)
+            throws IOException {
+        Path reportPath = dashboardDir.resolve(nodeName).resolve("endpoint_report.json");
+        if (!Files.exists(reportPath)) {
+            log.log(Level.WARNING, "endpoint_report.json not found for {0}", nodeName);
+            return null;
+        }
+
+        JsonNode root = mapper.readTree(reportPath.toFile());
+        for (JsonNode cap : root.path("capabilities")) {
+            if (FRONT_OFFICE_CAPABILITY_TYPE.equalsIgnoreCase(cap.path("capability_type").asText())) {
+                String endpoint = cap.path("endpoint").asText();
+                if (!endpoint.isBlank()) {
+                    try {
+                        return new URI(endpoint);
+                    } catch (URISyntaxException e) {
+                        log.log(Level.WARNING, "Front Office endpoint for {0} is not a valid URI: {1}",
+                                new Object[]{nodeName, e.getMessage()});
+                        return null;
+                    }
+                }
+            }
+        }
+        log.log(Level.WARNING, "No ''{0}'' capability reported for {1}",
+                new Object[]{FRONT_OFFICE_CAPABILITY_TYPE, nodeName});
+        return null;
+    }
+
+    // ── Front Office query ───────────────────────────────────────────────
+
+    /**
+     * Strips any trailing slash from {@code frontOfficeBase}, then builds
+     * the federation services query URL for {@code pid}:
+     * <pre>{@code {base}/federation/services?q=&nodes%5B%5D={url-encoded pid}}</pre>
+     */
+    static URI buildFrontOfficeQueryUrl(URI frontOfficeBase, String pid) {
+        String base = frontOfficeBase.toString();
+        if (base.endsWith("/")) {
+            base = base.substring(0, base.length() - 1);
+        }
+        String encodedPid = URLEncoder.encode(pid, StandardCharsets.UTF_8);
+        return URI.create(base + FEDERATION_PATH_SEGMENT + "/services?q=&nodes%5B%5D=" + encodedPid);
+    }
+
+    /**
+     * The name the Sandbox Discovery Hub uses for {@code nodeName} in its {@code node} filter
+     * (Metric 9): the configured alias, or {@code nodeName} itself when there is no alias or it
+     * is blank. A Node's name in the Federation Registry doesn't always match the Hub's, e.g.
+     * {@code LifeWatch-ERIC} is {@code LifeWatch} there.
+     */
+    static String discoveryHubNodeName(Map<String, String> aliases, String nodeName) {
+        String alias = aliases == null ? null : aliases.get(nodeName);
+        return alias == null || alias.isBlank() ? nodeName : alias.strip();
+    }
+
+    /**
+     * Parses {@code check.discovery-hub-node-aliases}: comma-separated {@code Node=HubName}
+     * pairs. A pair with a blank (or no) {@code HubName} means "no alias" and is ignored, so
+     * every Node can be listed, with only the ones that differ given a value.
+     */
+    static Map<String, String> parseDiscoveryHubNodeAliases(String raw) {
+        Map<String, String> aliases = new LinkedHashMap<>();
+        if (raw == null) {
+            return aliases;
+        }
+        for (String pair : raw.split(",")) {
+            int eq = pair.indexOf('=');
+            if (eq < 0) {
+                continue;
+            }
+            String node = pair.substring(0, eq).strip();
+            String alias = pair.substring(eq + 1).strip();
+            if (!node.isEmpty() && !alias.isEmpty()) {
+                aliases.put(node, alias);
+            }
+        }
+        return aliases;
+    }
+
+    /**
+     * Metric 9: builds the Discovery Hub search query URL for one
+     * Research Output collection (one of {@link #RESEARCH_OUTPUT_COLLECTIONS})
+     * filtered to {@code nodeName}, against
+     * {@link #SANDBOX_DISCOVERY_HUB_SEARCH_BASE_URL}:
+     * <pre>{@code {base}/api/web/search-results?rows=0&collection={collection}&q=*&sort_ui=default&fq=node:(%22{url-encoded node name}%22)&cursor=*&standard=true&exact=false&qf={url-encoded qf}}</pre>
+     *
+     * <p>The endpoint only accepts {@code POST} (with a {@code {}} body — see
+     * {@link #executeDiscoveryHubSearch}); opening this URL in a browser sends a GET
+     * and returns 405 Method Not Allowed.</p>
+     *
+     * <p>This replaces an earlier, since-removed
+     * {@code buildResearchOutputQueryUrl(URI, String)} that queried
+     * {@code {front_office}/services?sort=_score&research_activities&nodes%5B%5D={pid}}
+     * — that combined, all-types-at-once query reliably times out (HTTP
+     * 504) against the Sandbox. Note the filter here is by node
+     * <em>name</em> (e.g. {@code CESSDA}), not by PID as elsewhere in
+     * this class — confirmed against the live search API on
+     * 2026-09-07.</p>
+     *
+     * <p>{@code rows=0} is used because only the result count ({@code
+     * numFound} in the response) is needed, not the matched documents.
+     * {@code qf} is a required parameter for this endpoint (a 422 is
+     * returned without it); its value is copied verbatim from the
+     * Discovery Hub's own search UI.</p>
+     */
+    static URI buildResearchOutputQueryUrl(String collection, String nodeName) {
+        String encodedNode = URLEncoder.encode(nodeName, StandardCharsets.UTF_8);
+        String encodedQf = URLEncoder.encode(
+                "title^100 author_names_tg^120 description^10 keywords_tg^10",
+                StandardCharsets.UTF_8);
+        return URI.create(SANDBOX_DISCOVERY_HUB_SEARCH_BASE_URL
+                + "/api/web/search-results?rows=0&collection=" + collection
+                + "&q=*&sort_ui=default&fq=node:(%22" + encodedNode + "%22)"
+                + "&cursor=*&standard=true&exact=false&qf=" + encodedQf);
+    }
+
+    /**
+     * Queries a Front Office for Exchange services filtered to
+     * {@code targetPid} and returns whether any results were found.
+     */
+    static MetricResult queryFrontOffice(HttpClient httpClient, URI frontOfficeBase, String targetPid) {
+        MetricResult filtered = executeVisibilityQuery(httpClient, buildFrontOfficeQueryUrl(frontOfficeBase, targetPid));
+        if (!isBackendFailure(filtered)) {
+            return filtered;
+        }
+        return withKeywordFallback(httpClient, frontOfficeBase, targetPid, filtered);
+    }
+
+    /**
+     * True when the Front Office answered but could not serve the node-filtered query: an HTTP 5xx, or
+     * an HTTP 200 whose body is an {@code error}. A 404, a refused connection or a timeout say nothing
+     * about the filter, so they are not retried another way.
+     */
+    private static boolean isBackendFailure(MetricResult result) {
+        return "Error".equals(result.status()) && result.httpCode() != null
+                && (result.httpCode() == 200 || result.httpCode() >= 500);
+    }
+
+    /**
+     * The shared Front Office backend can fail to filter by one node's PID (for example while that node
+     * has a resource it cannot map, such as an Adapter) even though the node's services are indexed and
+     * show up in an ordinary search. Look for them with a keyword search for the node's name, and count
+     * the node as visible only if a result really belongs to it. Otherwise the original error stands.
+     */
+    private static MetricResult withKeywordFallback(HttpClient httpClient, URI frontOfficeBase,
+                                                    String targetPid, MetricResult filtered) {
+        String nodeName = targetPid.substring(targetPid.lastIndexOf('/') + 1);
+        String base = frontOfficeBase.toString();
+        if (base.endsWith("/")) {
+            base = base.substring(0, base.length() - 1);
+        }
+        URI searchUrl = URI.create(base + FEDERATION_PATH_SEGMENT + "/services?q="
+                + URLEncoder.encode(nodeName, StandardCharsets.UTF_8));
+        String why = "the node-filtered query failed (" + filtered.error() + ")";
+
+        try {
+            HttpResponse<InputStream> response = httpClient.send(HttpRequest.newBuilder()
+                    .uri(searchUrl).header("accept", "application/json").GET().build(),
+                    HttpResponse.BodyHandlers.ofInputStream());
+            JsonNode root;
+            try (InputStream body = response.body()) {
+                if (response.statusCode() != 200) {
+                    return filtered.withNote(why + "; keyword search for '" + nodeName + "' returned HTTP "
+                            + response.statusCode());
+                }
+                root = new ObjectMapper().readTree(body);
+            }
+            long matches = 0;
+            for (JsonNode result : root.path("results")) {
+                if (nodeName.equalsIgnoreCase(result.path("nodePID").asText())) {
+                    matches++;
+                }
+            }
+            if (matches > 0) {
+                return new MetricResult(searchUrl, response.statusCode(), matches, true, "Available", null,
+                        why + "; found " + matches + " service(s) of " + nodeName + " with a keyword search instead");
+            }
+            return filtered.withNote(why + "; a keyword search for '" + nodeName + "' found none of its services");
+        } catch (IOException e) {
+            return filtered.withNote(why + "; keyword search failed: " + e.getMessage());
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            return filtered.withNote(why + "; keyword search interrupted");
+        }
+    }
+
+    /**
+     * Queries the Sandbox Discovery Hub search API for Research Outputs
+     * (Metric 9) belonging to {@code nodeName}, across every collection
+     * in {@link #RESEARCH_OUTPUT_COLLECTIONS}, and returns whether any of
+     * them had a match. Unlike {@link #queryFrontOffice} this issues
+     * multiple requests — one per collection, since a single combined
+     * query times out — so it cannot share {@link #executeVisibilityQuery}
+     * (which is also GET-based against a {@code total}/{@code results}
+     * shaped response, whereas this API is POST-based and returns
+     * {@code numFound}); see {@link #executeDiscoveryHubSearch}.
+     *
+     * <p>Per-collection detail is appended to {@code collectionResultsOut}
+     * (one object per collection: {@code collection}, {@code query_url},
+     * {@code result_count}, {@code visible}, {@code status}, {@code
+     * http_code}) so the report shows exactly which Research Output
+     * types were and weren't found, not just the aggregate.</p>
+     *
+     * @return an aggregate {@link MetricResult} whose {@code resultCount}
+     *         is the sum across all collections, {@code visible} is true
+     *         if any collection had a match, {@code queryUrl} is the
+     *         first collection's query URL (for reference — the full set
+     *         is in {@code collectionResultsOut}), and {@code status} is
+     *         {@code "Error"} only if no collection was visible and at
+     *         least one query itself failed.
+     */
+    private static MetricResult queryResearchOutputVisibility(
+            HttpClient httpClient, String nodeName, ArrayNode collectionResultsOut, ObjectMapper mapper) {
+
+        long totalCount = 0;
+        boolean anyVisible = false;
+        URI firstQueryUrl = null;
+        Integer lastHttpCode = null;
+        String error = null;
+
+        for (String collection : RESEARCH_OUTPUT_COLLECTIONS) {
+            URI queryUrl = buildResearchOutputQueryUrl(collection, nodeName);
+            if (firstQueryUrl == null) {
+                firstQueryUrl = queryUrl;
+            }
+
+            MetricResult result = executeDiscoveryHubSearch(httpClient, queryUrl);
+            lastHttpCode = result.httpCode();
+            if ("Error".equals(result.status())) {
+                error = result.error();
+            }
+            totalCount += Math.max(result.resultCount(), 0);
+            anyVisible |= result.visible();
+
+            ObjectNode collectionEntry = mapper.createObjectNode();
+            collectionEntry.put("collection", collection);
+            collectionEntry.put("query_url", queryUrl.toString());
+            collectionEntry.put("method", "POST");
+            collectionEntry.putObject("request_body");
+            collectionEntry.put("result_count", result.resultCount());
+            collectionEntry.put("visible", result.visible());
+            collectionEntry.put("status", result.status());
+            if (result.httpCode() != null) {
+                collectionEntry.put("http_code", result.httpCode());
+            } else {
+                collectionEntry.putNull("http_code");
+            }
+            collectionResultsOut.add(collectionEntry);
+        }
+
+        String status = anyVisible ? "Available" : (error != null ? "Error" : "Not visible");
+        return new MetricResult(firstQueryUrl, lastHttpCode, totalCount, anyVisible, status, error);
+    }
+
+    /**
+     * Executes a single Discovery Hub search query (Metric 9) and returns
+     * whether it found any results. Unlike {@link #executeVisibilityQuery},
+     * this is a {@code POST} (an empty JSON object {@code {}} body is
+     * required — the endpoint returns 422 without one) and the result
+     * count is read from the response's {@code numFound} field rather
+     * than {@code total}.
+     */
+    private static MetricResult executeDiscoveryHubSearch(HttpClient httpClient, URI queryUrl) {
+        HttpRequest request = HttpRequest.newBuilder()
+                .uri(queryUrl)
+                .header("accept", "application/json")
+                .header("content-type", "application/json")
+                .POST(HttpRequest.BodyPublishers.ofString("{}"))
+                .build();
+
+        try {
+            HttpResponse<InputStream> response = httpClient.send(
+                    request, HttpResponse.BodyHandlers.ofInputStream());
+
+            int httpCode = response.statusCode();
+            if (httpCode != 200) {
+                try (InputStream ignored = response.body()) {
+                    // drain
+                }
+                return MetricResult.error(queryUrl, httpCode, "HTTP " + httpCode);
+            }
+
+            JsonNode root;
+            try (InputStream body = response.body()) {
+                root = new ObjectMapper().readTree(body);
+            }
+
+            long resultCount = root.path("numFound").asLong(-1);
+            if (resultCount < 0) {
+                resultCount = root.path("results").size();
+            }
+            boolean visible = resultCount > 0;
+
+            return new MetricResult(queryUrl, httpCode, resultCount, visible,
+                    visible ? "Available" : "Not visible", null);
+
+        } catch (IOException e) {
+            return MetricResult.error(queryUrl, null, e.getMessage());
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            return MetricResult.error(queryUrl, null, "Interrupted");
+        }
+    }
+
+    /**
+     * How many results a Front Office response matched, not how many it returned on this page.
+     * The Front Office reports the total as {@code pagination.total_count}; a top-level {@code total}
+     * is also accepted. Only when neither is present is the number of results on the page used.
+     */
+    static long totalResultCount(JsonNode root) {
+        JsonNode paged = root.path("pagination").path("total_count");
+        if (paged.canConvertToLong() && paged.asLong() >= 0) {
+            return paged.asLong();
+        }
+        JsonNode total = root.path("total");
+        if (total.canConvertToLong() && total.asLong() >= 0) {
+            return total.asLong();
+        }
+        return root.path("results").size();
+    }
+
+    private static MetricResult executeVisibilityQuery(HttpClient httpClient, URI queryUrl) {
+        HttpRequest request = HttpRequest.newBuilder()
+                .uri(queryUrl)
+                .header("accept", "application/json")
+                .GET()
+                .build();
+
+        try {
+            HttpResponse<InputStream> response = httpClient.send(
+                    request, HttpResponse.BodyHandlers.ofInputStream());
+
+            int httpCode = response.statusCode();
+            if (httpCode != 200) {
+                try (InputStream ignored = response.body()) {
+                    // drain
+                }
+                return MetricResult.error(queryUrl, httpCode, "HTTP " + httpCode);
+            }
+
+            JsonNode root;
+            try (InputStream body = response.body()) {
+                root = new ObjectMapper().readTree(body);
+            }
+
+            // Some backends report failures with HTTP 200 and an {"error": "..."} body; that is not
+            // "no results".
+            if (root.hasNonNull("error") && !root.has("results")) {
+                return MetricResult.error(queryUrl, httpCode, root.get("error").asText());
+            }
+
+            long resultCount = totalResultCount(root);
+            boolean visible = resultCount > 0;
+
+            return new MetricResult(queryUrl, httpCode, resultCount, visible,
+                    visible ? "Available" : "Not visible", null);
+
+        } catch (IOException e) {
+            return MetricResult.error(queryUrl, null, e.getMessage());
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            return MetricResult.error(queryUrl, null, "Interrupted");
+        }
+    }
+
+    // ── JSON entry builders ──────────────────────────────────────────────
+
+    private static ObjectNode buildMetricEntry(
+            ObjectMapper mapper, int metric, String description,
+            String frontOfficeQueried, String frontOfficeOwner, String targetPid,
+            MetricResult result, ArrayNode peerResults) {
+
+        ObjectNode entry = mapper.createObjectNode();
+        entry.put("metric", metric);
+        entry.put("description", description);
+        entry.put("front_office_queried", frontOfficeQueried);
+        entry.put("front_office_owner", frontOfficeOwner);
+        if (targetPid != null) {
+            entry.put("target_pid", targetPid);
+        }
+        if (result != null) {
+            entry.put("query_url", result.queryUrl() != null ? result.queryUrl().toString() : null);
+            entry.put("result_count", result.resultCount());
+            entry.put("visible", result.visible());
+            entry.put("status", result.status());
+            if (result.httpCode() != null) {
+                entry.put("http_code", result.httpCode());
+            } else {
+                entry.putNull("http_code");
+            }
+            putDiagnostics(entry, result);
+        }
+        if (peerResults != null) {
+            entry.set("peer_results", peerResults);
+        }
+        return entry;
+    }
+
+    static ObjectNode buildPeerEntry(
+            ObjectMapper mapper, String peerName, Object peerFrontOfficeOrPid, MetricResult result) {
+        ObjectNode entry = mapper.createObjectNode();
+        entry.put("peer_node", peerName);
+        entry.put("peer_reference", String.valueOf(peerFrontOfficeOrPid));
+        entry.put("query_url", result.queryUrl() != null ? result.queryUrl().toString() : null);
+        entry.put("result_count", result.resultCount());
+        entry.put("visible", result.visible());
+        entry.put("status", result.status());
+        if (result.httpCode() != null) {
+            entry.put("http_code", result.httpCode());
+        } else {
+            entry.putNull("http_code");
+        }
+        putDiagnostics(entry, result);
+        return entry;
+    }
+
+    /** Why a result is an error, and how a result was reached when it was not by the normal query. */
+    private static void putDiagnostics(ObjectNode entry, MetricResult result) {
+        if (result.error() != null) {
+            entry.put("error", result.error());
+        }
+        if (result.note() != null) {
+            entry.put("note", result.note());
+        }
+    }
+
+    private static void printLine(int metric, String label, MetricResult result) {
+        // GREEN: visible. YELLOW: legitimate negative result (not yet
+        // visible, or the capability isn't reported for this Node).
+        // RED: the check itself failed (bad HTTP status, network error).
+        String colour = result.visible() ? GREEN
+                : "Error".equals(result.status()) ? RED
+                : YELLOW;
+        System.out.printf("  Metric %-3d %-45s %s%s%s%s%n",
+                metric, label, colour, result.status(), result.visible() && result.note() != null
+                        ? " (via keyword search)" : "", NC);
+    }
+
+    // ── Supporting types ──────────────────────────────────────────────────
+
+    /**
+     * Result of querying a single Front Office for a single target PID.
+     */
+    record MetricResult(URI queryUrl, Integer httpCode, long resultCount, boolean visible, String status, String error,
+                        String note) {
+        MetricResult(URI queryUrl, Integer httpCode, long resultCount, boolean visible, String status, String error) {
+            this(queryUrl, httpCode, resultCount, visible, status, error, null);
+        }
+
+        /** The same result with an explanation of how it was reached (shown in the report). */
+        MetricResult withNote(String note) {
+            return new MetricResult(queryUrl, httpCode, resultCount, visible, status, error, note);
+        }
+
+        static MetricResult notReported() {
+            return new MetricResult(null, null, 0, false, "Not reported", null);
+        }
+
+        static MetricResult error(URI queryUrl, Integer httpCode, String error) {
+            return new MetricResult(queryUrl, httpCode, 0, false, "Error", error);
+        }
+    }
+}

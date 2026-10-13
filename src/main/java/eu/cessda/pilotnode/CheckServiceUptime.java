@@ -20,6 +20,7 @@ package eu.cessda.pilotnode;
 import java.io.IOException;
 import java.io.InputStream;
 import java.net.URI;
+import java.net.URLDecoder;
 import java.net.URLEncoder;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
@@ -31,10 +32,8 @@ import java.time.LocalDate;
 import java.time.OffsetDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
-import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Optional;
-import java.util.Set;
 import java.util.logging.Level;
 import java.util.logging.Logger;
 import java.util.regex.Matcher;
@@ -53,8 +52,25 @@ import com.fasterxml.jackson.databind.node.ObjectNode;
  * ARGO Uptime Monitor.
  *
  * <p>Builds {@code argo_uptime_report.json} for a node using a pluggable source strategy.
- * The current default is scraping the public ARGO status dashboard and extracting data
- * from its referenced JS/API payloads. A legacy API source is kept as fallback.
+ * The current default calls the public ARGO capability-monitoring metrics API directly
+ * ({@code GET /v1/public/nodes/{NODE}/capabilities/monitoring/metrics}) for monthly-granularity
+ * availability/reliability/uptime figures. If that API is unavailable, this falls back to
+ * scraping the public ARGO status dashboard and extracting data from its referenced JS/API
+ * payloads, and finally to a legacy API source (requires an API key).
+ *
+ * <p>Both the capability-metrics API and the dashboard scrape need an ARGO tenant name for
+ * the node being checked, resolved in this order (see
+ * {@link #monitoringTenantFromEndpointReport} and {@link #appendNodeNameFallbacks}):
+ * <ol>
+ *   <li>The tenant declared by the node's own {@code Monitoring} capability in
+ *       {@code endpoint_report.json} (authoritative — extracted from a
+ *       {@code .../tenants/<TENANT>/...} URL; tried alone if present).</li>
+ *   <li>Otherwise, the node name as-is.</li>
+ *   <li>If that specifically 404s and the node name is hyphenated, the substring before
+ *       the first hyphen (e.g. {@code LifeWatch-ERIC} &rarr; {@code LifeWatch}).</li>
+ *   <li>If still unresolved (any 4xx) and the node name contains whitespace, its first
+ *       whitespace-separated token (e.g. {@code EGI Pilot Node} &rarr; {@code EGI}).</li>
+ * </ol>
  *
  * <p>Usage:
  * <pre>
@@ -62,11 +78,11 @@ import com.fasterxml.jackson.databind.node.ObjectNode;
  * </pre>
  *
  * <ul>
- *   <li>{@code NODE_NAME}     – node name used for the output subdirectory (required)</li>
- *   <li>{@code API_KEY}       – API key for legacy ARGO API fallback (optional)</li>
- *   <li>{@code START_DATE}    – {@code YYYY-MM-DD} (optional, defaults to 6 days ago)</li>
- *   <li>{@code END_DATE}      – {@code YYYY-MM-DD} (optional, defaults to today)</li>
- *   <li>{@code dashboard_dir} – path to dashboard data directory
+ *   <li>{@code NODE_NAME}     - node name used for the output subdirectory (required)</li>
+ *   <li>{@code API_KEY}       - API key for legacy ARGO API fallback (optional)</li>
+ *   <li>{@code START_DATE}    - {@code YYYY-MM-DD} (optional, defaults to 1 month ago)</li>
+ *   <li>{@code END_DATE}      - {@code YYYY-MM-DD} (optional, defaults to today)</li>
+ *   <li>{@code dashboard_dir} - path to dashboard data directory
  *                               (optional, defaults to {@code ../dashboard/data})</li>
  * </ul>
  */
@@ -80,12 +96,17 @@ public class CheckServiceUptime {
     private static final String PUBLIC_DASHBOARD_TEMPLATE =
             "https://status.devel.mon.argo.grnet.gr/public/tenants/%s/dashboard";
     private static final String DEFAULT_PUBLIC_API_BASE = "https://api-status.devel.mon.argo.grnet.gr";
+    private static final String CAPABILITY_METRICS_PATH_TEMPLATE =
+            "/v1/public/nodes/%s/capabilities/monitoring/metrics";
+    private static final String GRANULARITY = "monthly";
     private static final Pattern API_BASE_PATTERN =
             Pattern.compile("https://api-status[\\w.-]*\\.grnet\\.gr");
     private static final Pattern DATE_PATTERN =
             Pattern.compile("^\\d{4}-\\d{2}-\\d{2}$");
-    private static final Pattern FIRST_COMPONENT_SPLIT_PATTERN =
-            Pattern.compile("[\\s-]+");
+    private static final Pattern TENANT_FROM_URL_PATTERN =
+            Pattern.compile("/tenants/([^/?#]+)");
+    private static final Pattern WHITESPACE_PATTERN =
+            Pattern.compile("\\s");
 
     private static final Logger log = Logger.getLogger(CheckServiceUptime.class.getName());
     // ── Entry point ───────────────────────────────────────────────────────────
@@ -108,7 +129,7 @@ public class CheckServiceUptime {
 
         LocalDate startDate = args.length > index
                 ? parseDate(args[index])
-                : LocalDate.now().minusDays(6);
+                : LocalDate.now().minusMonths(1);
         LocalDate endDate = args.length > index + 1
                 ? parseDate(args[index + 1])
                 : LocalDate.now();
@@ -154,6 +175,7 @@ public class CheckServiceUptime {
 
         UptimeReportData reportData = resolveReportData(
                 new UptimeQuery(nodeName, apiKey, startDate, endDate),
+                dashboardDir,
                 http,
                 mapper,
                 startTime,
@@ -185,10 +207,11 @@ public class CheckServiceUptime {
         log.log(Level.INFO, "Report complete [{0}] - JSON: {1}", new Object[]{reportData.dataSource(), reportFile});
     }
 
-    private static UptimeReportData resolveReportData(UptimeQuery query, HttpClient http, ObjectMapper mapper,
+    private static UptimeReportData resolveReportData(UptimeQuery query, Path dashboardDir, HttpClient http, ObjectMapper mapper,
                                                       String startTime, String endTime)
             throws IOException, InterruptedException {
         List<UptimeReportSource> sources = List.of(
+                new CapabilityApiSource(),
                 new DashboardSource(),
                 new LegacyApiSource()
         );
@@ -196,7 +219,7 @@ public class CheckServiceUptime {
 
         for (UptimeReportSource source : sources) {
             try {
-                UptimeReportData data = source.fetch(query, http, mapper, startTime, endTime);
+                UptimeReportData data = source.fetch(query, dashboardDir, http, mapper, startTime, endTime);
                 if (data.endpoints().isEmpty()) {
                     log.log(Level.WARNING, "{0} returned no endpoints for node {1}",
                             new Object[]{source.name(), query.nodeName()});
@@ -226,8 +249,83 @@ public class CheckServiceUptime {
     private interface UptimeReportSource {
         String name();
 
-        UptimeReportData fetch(UptimeQuery query, HttpClient http, ObjectMapper mapper, String startTime, String endTime)
+        UptimeReportData fetch(UptimeQuery query, Path dashboardDir, HttpClient http, ObjectMapper mapper, String startTime, String endTime)
                 throws IOException, InterruptedException;
+    }
+
+    /**
+     * Calls the public ARGO capability-monitoring metrics API directly:
+     * {@code GET /v1/public/nodes/{NODE}/capabilities/monitoring/metrics
+     * ?start_date=YYYY-MM-DD&end_date=YYYY-MM-DD&granularity=monthly}.
+     *
+     * <p>This is the preferred source — it needs no HTML/JS scraping, just the
+     * node (tenant) name. The response shape is
+     * {@code {"data":[{"name":"...","results":[{"date":...,"availability":...,
+     * "reliability":...,"uptime":...}]}]}}; each service's {@code results} entries
+     * are averaged the same way as the dashboard source.</p>
+     */
+    private static final class CapabilityApiSource implements UptimeReportSource {
+        @Override
+        public String name() {
+            return "capability-metrics-api";
+        }
+
+        @Override
+        public UptimeReportData fetch(UptimeQuery query, Path dashboardDir, HttpClient http, ObjectMapper mapper, String startTime, String endTime)
+                throws IOException, InterruptedException {
+            String monitoringTenant = monitoringTenantFromEndpointReport(dashboardDir, query.nodeName(), mapper);
+            List<String> tenantsToTry = new ArrayList<>();
+            tenantsToTry.add(monitoringTenant != null ? monitoringTenant : query.nodeName());
+
+            IOException lastClientError = null;
+            for (int i = 0; i < tenantsToTry.size(); i++) {
+                String tenantName = tenantsToTry.get(i);
+                URI metricsUri = URI.create(DEFAULT_PUBLIC_API_BASE
+                        + String.format(CAPABILITY_METRICS_PATH_TEMPLATE, encodePathSegment(tenantName))
+                        + "?start_date=" + encodeQueryValue(query.startDate().toString())
+                        + "&end_date=" + encodeQueryValue(query.endDate().toString())
+                        + "&granularity=" + GRANULARITY);
+                HttpTextResponse response = getBodyWithStatus(http, metricsUri, "application/json");
+                if (response.statusCode() != 200) {
+                    if (is4xx(response.statusCode())) {
+                        lastClientError = new IOException("capability metrics not found for node '" + tenantName
+                                + "' (HTTP " + response.statusCode() + ")");
+                        appendNodeNameFallbacks(tenantsToTry, tenantName, response.statusCode(), monitoringTenant != null);
+                        continue;
+                    }
+                    throw new IOException("request to " + metricsUri + " failed with HTTP " + response.statusCode());
+                }
+
+                JsonNode root = mapper.readTree(response.body());
+                JsonNode services = root.path("data");
+                if (!services.isArray()) {
+                    throw new IOException("Unexpected capability metrics payload shape");
+                }
+
+                ArrayNode endpointsOut = mapper.createArrayNode();
+                for (JsonNode service : services) {
+                    String serviceName = service.path("name").asText("(unnamed)");
+                    endpointsOut.add(summariseResults(mapper, serviceName, "SERVICE", service.path("results")));
+                }
+
+                String warning = endpointsOut.isEmpty()
+                        ? "Capability metrics API was reachable but returned no services."
+                        : null;
+                return new UptimeReportData(
+                        query.nodeName(),
+                        metricsUri.toString(),
+                        metricsUri.toString(),
+                        "capability-metrics-api",
+                        endpointsOut,
+                        warning
+                );
+            }
+
+            if (lastClientError != null) {
+                throw lastClientError;
+            }
+            throw new IOException("No tenant name candidate could be resolved for capability metrics API");
+        }
     }
 
     private static final class DashboardSource implements UptimeReportSource {
@@ -237,16 +335,22 @@ public class CheckServiceUptime {
         }
 
         @Override
-        public UptimeReportData fetch(UptimeQuery query, HttpClient http, ObjectMapper mapper, String startTime, String endTime)
+        public UptimeReportData fetch(UptimeQuery query, Path dashboardDir, HttpClient http, ObjectMapper mapper, String startTime, String endTime)
                 throws IOException, InterruptedException {
+            String monitoringTenant = monitoringTenantFromEndpointReport(dashboardDir, query.nodeName(), mapper);
+            List<String> tenantsToTry = new ArrayList<>();
+            tenantsToTry.add(monitoringTenant != null ? monitoringTenant : query.nodeName());
+
             IOException lastClientError = null;
-            for (String tenantName : tenantNameCandidates(query.nodeName())) {
+            for (int i = 0; i < tenantsToTry.size(); i++) {
+                String tenantName = tenantsToTry.get(i);
                 URI dashboardUri = URI.create(String.format(PUBLIC_DASHBOARD_TEMPLATE, encodePathSegment(tenantName)));
                 HttpTextResponse dashboardResponse = getBodyWithStatus(http, dashboardUri, "text/html");
                 if (dashboardResponse.statusCode() != 200) {
                     if (is4xx(dashboardResponse.statusCode())) {
                         lastClientError = new IOException("dashboard not found for tenant '" + tenantName
                                 + "' (HTTP " + dashboardResponse.statusCode() + ")");
+                        appendNodeNameFallbacks(tenantsToTry, tenantName, dashboardResponse.statusCode(), monitoringTenant != null);
                         continue;
                     }
                     throw new IOException("request to " + dashboardUri + " failed with HTTP " + dashboardResponse.statusCode());
@@ -278,6 +382,7 @@ public class CheckServiceUptime {
                     if (is4xx(groupsResponse.statusCode())) {
                         lastClientError = new IOException("public results not found for tenant '" + tenantName
                                 + "' (HTTP " + groupsResponse.statusCode() + ")");
+                        appendNodeNameFallbacks(tenantsToTry, tenantName, groupsResponse.statusCode(), monitoringTenant != null);
                         continue;
                     }
                     throw new IOException("request to " + groupsUri + " failed with HTTP " + groupsResponse.statusCode());
@@ -292,61 +397,8 @@ public class CheckServiceUptime {
                 ArrayNode endpointsOut = mapper.createArrayNode();
                 for (JsonNode group : groups) {
                     String endpointName = group.path("name").asText("(unnamed)");
-                    JsonNode results = group.path("results");
-
-                    double uptimeTotal = 0.0;
-                    int uptimeDays = 0;
-                    double availabilityTotal = 0.0;
-                    int availabilityDays = 0;
-                    double reliabilityTotal = 0.0;
-                    int reliabilityDays = 0;
-
-                    if (results.isArray()) {
-                        for (JsonNode day : results) {
-                            Double uptime = parseMetric(day.path("uptime"));
-                            if (uptime != null) {
-                                uptimeTotal += normalizeUptime(uptime);
-                                uptimeDays++;
-                            }
-                            Double availability = parseMetric(day.path("availability"));
-                            if (availability != null) {
-                                availabilityTotal += availability;
-                                availabilityDays++;
-                            }
-                            Double reliability = parseMetric(day.path("reliability"));
-                            if (reliability != null) {
-                                reliabilityTotal += reliability;
-                                reliabilityDays++;
-                            }
-                        }
-                    }
-
-                    ObjectNode endpointOut = mapper.createObjectNode();
-                    endpointOut.put("name", endpointName);
-                    endpointOut.put("type", group.path("type").asText("SERVICEGROUP"));
-                    Double uptimePercentage = null;
-                    if (availabilityDays > 0) {
-                        double avgAvailability = round2(availabilityTotal / availabilityDays);
-                        endpointOut.put("average_availability", avgAvailability);
-                        uptimePercentage = avgAvailability;
-                    } else {
-                        endpointOut.putNull("average_availability");
-                    }
-                    if (uptimePercentage == null && uptimeDays > 0) {
-                        uptimePercentage = round2(uptimeTotal / uptimeDays);
-                    }
-                    if (uptimePercentage != null) {
-                        endpointOut.put("uptime_percentage", uptimePercentage);
-                    } else {
-                        endpointOut.putNull("uptime_percentage");
-                    }
-                    if (reliabilityDays > 0) {
-                        endpointOut.put("average_reliability", round2(reliabilityTotal / reliabilityDays));
-                    } else {
-                        endpointOut.putNull("average_reliability");
-                    }
-                    endpointOut.put("days_monitored", Math.max(uptimeDays, Math.max(availabilityDays, reliabilityDays)));
-                    endpointsOut.add(endpointOut);
+                    String endpointType = group.path("type").asText("SERVICEGROUP");
+                    endpointsOut.add(summariseResults(mapper, endpointName, endpointType, group.path("results")));
                 }
 
                 String warning = endpointsOut.isEmpty()
@@ -376,7 +428,7 @@ public class CheckServiceUptime {
         }
 
         @Override
-        public UptimeReportData fetch(UptimeQuery query, HttpClient http, ObjectMapper mapper, String startTime, String endTime)
+        public UptimeReportData fetch(UptimeQuery query, Path dashboardDir, HttpClient http, ObjectMapper mapper, String startTime, String endTime)
                 throws IOException, InterruptedException {
             if (query.apiKey() == null || query.apiKey().isBlank()) {
                 throw new IOException("legacy API key is missing");
@@ -477,6 +529,70 @@ public class CheckServiceUptime {
         return Optional.empty();
     }
 
+    /**
+     * Averages a service's daily/monthly {@code results} entries (each carrying
+     * {@code uptime}, {@code availability}, {@code reliability}) into the single
+     * endpoint summary object used in {@code argo_uptime_report.json}. Shared by
+     * every source, since the capability-metrics API and the dashboard's
+     * {@code results/groups} API return the same {@code name} + {@code results[]}
+     * shape.
+     */
+    private static ObjectNode summariseResults(ObjectMapper mapper, String name, String type, JsonNode results) {
+        double uptimeTotal = 0.0;
+        int uptimeDays = 0;
+        double availabilityTotal = 0.0;
+        int availabilityDays = 0;
+        double reliabilityTotal = 0.0;
+        int reliabilityDays = 0;
+
+        if (results.isArray()) {
+            for (JsonNode day : results) {
+                Double uptime = parseMetric(day.path("uptime"));
+                if (uptime != null) {
+                    uptimeTotal += normalizeUptime(uptime);
+                    uptimeDays++;
+                }
+                Double availability = parseMetric(day.path("availability"));
+                if (availability != null) {
+                    availabilityTotal += availability;
+                    availabilityDays++;
+                }
+                Double reliability = parseMetric(day.path("reliability"));
+                if (reliability != null) {
+                    reliabilityTotal += reliability;
+                    reliabilityDays++;
+                }
+            }
+        }
+
+        ObjectNode endpointOut = mapper.createObjectNode();
+        endpointOut.put("name", name);
+        endpointOut.put("type", type);
+        Double uptimePercentage = null;
+        if (availabilityDays > 0) {
+            double avgAvailability = round2(availabilityTotal / availabilityDays);
+            endpointOut.put("average_availability", avgAvailability);
+            uptimePercentage = avgAvailability;
+        } else {
+            endpointOut.putNull("average_availability");
+        }
+        if (uptimePercentage == null && uptimeDays > 0) {
+            uptimePercentage = round2(uptimeTotal / uptimeDays);
+        }
+        if (uptimePercentage != null) {
+            endpointOut.put("uptime_percentage", uptimePercentage);
+        } else {
+            endpointOut.putNull("uptime_percentage");
+        }
+        if (reliabilityDays > 0) {
+            endpointOut.put("average_reliability", round2(reliabilityTotal / reliabilityDays));
+        } else {
+            endpointOut.putNull("average_reliability");
+        }
+        endpointOut.put("days_monitored", Math.max(uptimeDays, Math.max(availabilityDays, reliabilityDays)));
+        return endpointOut;
+    }
+
     private static Double parseMetric(JsonNode value) {
         if (value == null || value.isMissingNode() || value.isNull()) {
             return null;
@@ -514,22 +630,87 @@ public class CheckServiceUptime {
         return statusCode >= 400 && statusCode < 500;
     }
 
-    private static List<String> tenantNameCandidates(String nodeName) {
-        Set<String> candidates = new LinkedHashSet<>();
-        String trimmed = nodeName == null ? "" : nodeName.trim();
-        if (!trimmed.isEmpty()) {
-            candidates.add(trimmed);
-            String firstComponent = firstNodeComponent(trimmed);
-            if (!firstComponent.isBlank()) {
-                candidates.add(firstComponent);
-            }
+    /**
+     * Reads {@code <dashboardDir>/<nodeName>/endpoint_report.json} (written earlier by
+     * {@code CheckNodeCapabilities}) and, if it has a {@code Monitoring} capability with
+     * a {@code .../tenants/<TENANT>/...} endpoint URL, returns the URL-decoded
+     * {@code <TENANT>} segment. Returns {@code null} — meaning "phase 1 is empty" to the
+     * caller, which should then resolve a tenant from the node name instead — if the
+     * report is missing or unreadable, there's no {@code Monitoring} capability, its
+     * endpoint is blank, or that endpoint doesn't contain a recognisable
+     * {@code /tenants/<name>} segment.
+     */
+    private static String monitoringTenantFromEndpointReport(Path dashboardDir, String nodeName, ObjectMapper mapper) {
+        Path reportPath = dashboardDir.resolve(nodeName).resolve("endpoint_report.json");
+        if (!Files.isRegularFile(reportPath)) {
+            return null;
         }
-        return List.copyOf(candidates);
+        try {
+            JsonNode root = mapper.readTree(reportPath.toFile());
+            for (JsonNode cap : root.path("capabilities")) {
+                if (!"Monitoring".equals(cap.path("capability_type").asText())) {
+                    continue;
+                }
+                String endpoint = cap.path("endpoint").asText("");
+                if (endpoint.isBlank()) {
+                    return null;
+                }
+                Matcher matcher = TENANT_FROM_URL_PATTERN.matcher(endpoint);
+                if (matcher.find()) {
+                    return URLDecoder.decode(matcher.group(1), StandardCharsets.UTF_8);
+                }
+                log.log(Level.WARNING,
+                        "Monitoring capability endpoint for {0} has no /tenants/<name> segment: {1}",
+                        new Object[]{nodeName, endpoint});
+                return null;
+            }
+        } catch (IOException e) {
+            log.log(Level.WARNING, "Could not read {0} to resolve a Monitoring tenant: {1}",
+                    new Object[]{reportPath, e.getMessage()});
+        }
+        return null;
     }
 
-    private static String firstNodeComponent(String nodeName) {
-        String[] parts = FIRST_COMPONENT_SPLIT_PATTERN.split(nodeName, 2);
-        return parts.length > 0 ? parts[0].trim() : nodeName.trim();
+    /**
+     * If {@code tenantName} was resolved from the node name rather than a declared
+     * Monitoring capability ({@code derivedFromMonitoring} is {@code false} — an
+     * authoritative Monitoring tenant is tried alone, with no further fallback), appends
+     * the next fallback candidate(s) for {@code tenantsToTry} to try, if not already
+     * present:
+     * <ul>
+     *   <li>on a strict 404, the substring before the first hyphen in {@code tenantName}
+     *       (e.g. {@code LifeWatch-ERIC} &rarr; {@code LifeWatch});</li>
+     *   <li>on any 4xx, the substring before the first whitespace in {@code tenantName}
+     *       (e.g. {@code EGI Pilot Node} &rarr; {@code EGI}) — the pre-existing fallback.</li>
+     * </ul>
+     */
+    private static void appendNodeNameFallbacks(List<String> tenantsToTry, String tenantName,
+                                                 int statusCode, boolean derivedFromMonitoring) {
+        if (derivedFromMonitoring) {
+            return;
+        }
+        if (statusCode == 404) {
+            String hyphenTrimmed = beforeFirstHyphen(tenantName);
+            if (hyphenTrimmed != null && !tenantsToTry.contains(hyphenTrimmed)) {
+                tenantsToTry.add(hyphenTrimmed);
+            }
+        }
+        String whitespaceTrimmed = beforeFirstWhitespace(tenantName);
+        if (whitespaceTrimmed != null && !tenantsToTry.contains(whitespaceTrimmed)) {
+            tenantsToTry.add(whitespaceTrimmed);
+        }
+    }
+
+    /** {@code "LifeWatch-ERIC"} &rarr; {@code "LifeWatch"}; {@code null} if there's no hyphen. */
+    private static String beforeFirstHyphen(String name) {
+        int idx = name.indexOf('-');
+        return idx > 0 ? name.substring(0, idx).trim() : null;
+    }
+
+    /** {@code "EGI Pilot Node"} &rarr; {@code "EGI"}; {@code null} if there's no whitespace. */
+    private static String beforeFirstWhitespace(String name) {
+        Matcher matcher = WHITESPACE_PATTERN.matcher(name);
+        return matcher.find() ? name.substring(0, matcher.start()).trim() : null;
     }
 
     // ── Utility ───────────────────────────────────────────────────────────────
@@ -554,7 +735,7 @@ public class CheckServiceUptime {
                 Arguments:
                   node-name     - Node name used for the output directory (required)
                   api-key       - API key for legacy ARGO API fallback (optional)
-                  start-date    - Start date in YYYY-MM-DD format (optional, defaults to 6 days ago)
+                  start-date    - Start date in YYYY-MM-DD format (optional, defaults to 1 month ago)
                   end-date      - End date in YYYY-MM-DD format (optional, defaults to today)
                   dashboard-dir - Path to dashboard data directory (optional, defaults to ../dashboard/data)
                 ======================================
