@@ -226,4 +226,12 @@ class MonitoringDeclaredUrlTest {
 
         assertEquals("daily", run().path("granularity").asText());
     }
+
+    @Test
+    void aDeclaredUrlThatIsNotAUrlFallsBackAndIsNamedInTheWarning() throws Exception {
+        endpointReport("NodeOne", "http://exa mple/tenants/ACME/dashboard/");
+        route("/v1/public/nodes/NodeOne/capabilities/monitoring/metrics", 200, RESULTS);
+
+        assertEquals("capability-metrics-api", run().path("data_source").asText());
+    }
 }

@@ -367,21 +367,16 @@ public class CheckServiceUptime {
                 throws IOException, InterruptedException {
             MonitoringDeclaration declared = monitoringDeclaration(dashboardDir, query.nodeName(), mapper);
             if (declared.endpoint() == null) {
-                throw new IOException("the node declares no Monitoring endpoint");
+                throw new IllegalStateException("the node declares no Monitoring endpoint");
             }
             if (METRICS_URL_PATTERN.matcher(URI.create(declared.endpoint()).getPath()).find()) {
                 return fetchMetricsApi(query, http, mapper, declared.endpoint());
             }
             if (declared.tenant() == null) {
-                throw new IOException("the Monitoring endpoint " + declared.endpoint()
+                throw new IllegalStateException("the Monitoring endpoint " + declared.endpoint()
                         + " has no /tenants/<name> segment, so the results cannot be located from it");
             }
-            URI dashboardUri;
-            try {
-                dashboardUri = URI.create(declared.endpoint());
-            } catch (IllegalArgumentException e) {
-                throw new IOException("the Monitoring endpoint is not a usable URL: " + declared.endpoint());
-            }
+            URI dashboardUri = URI.create(declared.endpoint());
             return scrapeDashboard(query, http, mapper, dashboardUri, declared.tenant(), startTime, endTime, hosts,
                     "declared-monitoring-url");
         }
@@ -392,12 +387,7 @@ public class CheckServiceUptime {
          */
         private static UptimeReportData fetchMetricsApi(UptimeQuery query, HttpClient http, ObjectMapper mapper,
                                                         String endpoint) throws IOException, InterruptedException {
-            URI declaredUri;
-            try {
-                declaredUri = URI.create(endpoint);
-            } catch (IllegalArgumentException e) {
-                throw new IOException("the Monitoring endpoint is not a usable URL: " + endpoint);
-            }
+            URI declaredUri = URI.create(endpoint);
             URI metricsUri = declaredUri.getRawQuery() != null ? declaredUri
                     : URI.create(endpoint + "?" + periodQuery(query));
             HttpTextResponse response = getBodyWithStatus(http, metricsUri, "application/json");
@@ -438,7 +428,7 @@ public class CheckServiceUptime {
                 try {
                     return scrapeDashboard(query, http, mapper, dashboardUri, tenantName, startTime, endTime, hosts,
                             "dashboard-public-results");
-                } catch (NotFoundException e) {
+                } catch (ClientErrorException e) {
                     lastClientError = e;
                     appendNodeNameFallbacks(tenantsToTry, tenantName, e.statusCode(), declared.nodeName());
                 }
@@ -451,7 +441,7 @@ public class CheckServiceUptime {
         }
     }
 
-    /** A 4xx from ARGO: the tenant is not known there, which is when the node-name fallbacks are worth trying. */
+    /** Any 4xx from ARGO (not only 404): the tenant was not served, which is when the node-name fallbacks are worth trying. */
     /**
      * What one {@code results} point stands for in the report: a calendar month for the metrics API when it was
      * asked for {@code granularity=monthly}, a day otherwise. {@code null} when the source does not say.
@@ -496,11 +486,11 @@ public class CheckServiceUptime {
         return endpointsOut;
     }
 
-    private static final class NotFoundException extends IOException {
+    private static final class ClientErrorException extends IOException {
         private static final long serialVersionUID = 1L;
         private final int statusCode;
 
-        NotFoundException(String message, int statusCode) {
+        ClientErrorException(String message, int statusCode) {
             super(message);
             this.statusCode = statusCode;
         }
@@ -518,7 +508,7 @@ public class CheckServiceUptime {
         HttpTextResponse dashboardResponse = getBodyWithStatus(http, dashboardUri, "text/html");
         if (dashboardResponse.statusCode() != 200) {
             if (is4xx(dashboardResponse.statusCode())) {
-                throw new NotFoundException("dashboard not found for tenant '" + tenantName + "' at " + dashboardUri
+                throw new ClientErrorException("dashboard not found for tenant '" + tenantName + "' at " + dashboardUri
                         + " (HTTP " + dashboardResponse.statusCode() + ")", dashboardResponse.statusCode());
             }
             throw new IOException("request to " + dashboardUri + " failed with HTTP " + dashboardResponse.statusCode());
@@ -548,7 +538,7 @@ public class CheckServiceUptime {
         HttpTextResponse groupsResponse = getBodyWithStatus(http, groupsUri, "application/json");
         if (groupsResponse.statusCode() != 200) {
             if (is4xx(groupsResponse.statusCode())) {
-                throw new NotFoundException("public results not found for tenant '" + tenantName
+                throw new ClientErrorException("public results not found for tenant '" + tenantName
                         + "' (HTTP " + groupsResponse.statusCode() + ")", groupsResponse.statusCode());
             }
             throw new IOException("request to " + groupsUri + " failed with HTTP " + groupsResponse.statusCode());
