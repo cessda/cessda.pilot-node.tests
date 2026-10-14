@@ -113,6 +113,8 @@ class MonitoringDeclaredUrlTest {
 
         assertEquals("capability-metrics-api", report.path("data_source").asText());
         assertEquals(1, report.path("endpoints").size());
+        assertTrue(queries.stream().anyMatch(q -> q.contains("start-date=") && q.contains("end-date=")),
+                "the period is sent under the names the API reads: " + queries);
         assertTrue(requests.contains("/declared/tenants/ACME/dashboard/"), "the declared URL was tried first: " + requests);
     }
 
@@ -184,7 +186,7 @@ class MonitoringDeclaredUrlTest {
         assertEquals("declared-monitoring-url", report.path("data_source").asText());
         assertEquals(1, report.path("endpoints").size());
         assertEquals(1, requests.size(), "nothing else was asked: " + requests);
-        assertTrue(queries.get(0).contains("granularity=monthly") && queries.get(0).contains("start_date="),
+        assertTrue(queries.get(0).contains("granularity=monthly") && queries.get(0).contains("start-date=") && queries.get(0).contains("end-date="),
                 "the period was added: " + queries);
     }
 
@@ -207,5 +209,21 @@ class MonitoringDeclaredUrlTest {
         JsonNode report = run();
 
         assertEquals("capability-metrics-api", report.path("data_source").asText());
+    }
+
+    @Test
+    void theReportSaysWhatOnePointStandsFor() throws Exception {
+        endpointReport("NodeOne", base + "/v1/public/nodes/E-INFRA-CZ/capabilities/monitoring/metrics");
+        route("/v1/public/nodes/E-INFRA-CZ/capabilities/monitoring/metrics", 200, RESULTS);
+
+        assertEquals("monthly", run().path("granularity").asText());
+    }
+
+    @Test
+    void aDeclaredQueryThatAsksForDailyPointsIsReportedAsDaily() throws Exception {
+        endpointReport("NodeOne", base + "/v1/public/nodes/E-INFRA-CZ/capabilities/monitoring/metrics?granularity=daily");
+        route("/v1/public/nodes/E-INFRA-CZ/capabilities/monitoring/metrics", 200, RESULTS);
+
+        assertEquals("daily", run().path("granularity").asText());
     }
 }

@@ -33,6 +33,7 @@ import java.time.OffsetDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Locale;
 import java.util.Optional;
 import java.util.logging.Level;
 import java.util.logging.Logger;
@@ -107,6 +108,8 @@ public class CheckServiceUptime {
             Pattern.compile("https://api-status[\\w.-]*\\.grnet\\.gr");
     private static final Pattern DATE_PATTERN =
             Pattern.compile("^\\d{4}-\\d{2}-\\d{2}$");
+    private static final Pattern GRANULARITY_PARAM_PATTERN =
+            Pattern.compile("[?&]granularity=([A-Za-z]+)");
     private static final Pattern METRICS_URL_PATTERN =
             Pattern.compile("/capabilities/monitoring/metrics/?$");
     private static final Pattern TENANT_FROM_URL_PATTERN =
@@ -211,6 +214,10 @@ public class CheckServiceUptime {
             report.put("resolved_data_endpoint", reportData.resolvedDataEndpoint());
         }
         report.put("data_source", reportData.dataSource());
+        String granularity = granularityOf(reportData);
+        if (granularity != null) {
+            report.put("granularity", granularity);
+        }
         ObjectNode period = report.putObject("period");
         period.put("start", startTime);
         period.put("end",   endTime);
@@ -277,7 +284,7 @@ public class CheckServiceUptime {
     /**
      * Calls the public ARGO capability-monitoring metrics API directly:
      * {@code GET /v1/public/nodes/{NODE}/capabilities/monitoring/metrics
-     * ?start_date=YYYY-MM-DD&end_date=YYYY-MM-DD&granularity=monthly}.
+     * ?start-date=YYYY-MM-DD&end-date=YYYY-MM-DD&granularity=monthly}.
      *
      * <p>This is the preferred source — it needs no HTML/JS scraping, just the
      * node (tenant) name. The response shape is
@@ -308,9 +315,7 @@ public class CheckServiceUptime {
                 String tenantName = tenantsToTry.get(i);
                 URI metricsUri = URI.create(hosts.apiBase()
                         + String.format(CAPABILITY_METRICS_PATH_TEMPLATE, encodePathSegment(tenantName))
-                        + "?start_date=" + encodeQueryValue(query.startDate().toString())
-                        + "&end_date=" + encodeQueryValue(query.endDate().toString())
-                        + "&granularity=" + GRANULARITY);
+                        + "?" + periodQuery(query));
                 HttpTextResponse response = getBodyWithStatus(http, metricsUri, "application/json");
                 if (response.statusCode() != 200) {
                     if (is4xx(response.statusCode())) {
@@ -394,8 +399,7 @@ public class CheckServiceUptime {
                 throw new IOException("the Monitoring endpoint is not a usable URL: " + endpoint);
             }
             URI metricsUri = declaredUri.getRawQuery() != null ? declaredUri
-                    : URI.create(endpoint + "?start_date=" + encodeQueryValue(query.startDate().toString())
-                    + "&end_date=" + encodeQueryValue(query.endDate().toString()) + "&granularity=" + GRANULARITY);
+                    : URI.create(endpoint + "?" + periodQuery(query));
             HttpTextResponse response = getBodyWithStatus(http, metricsUri, "application/json");
             if (response.statusCode() != 200) {
                 throw new IOException("the Monitoring endpoint " + metricsUri + " answered HTTP " + response.statusCode());
@@ -448,6 +452,36 @@ public class CheckServiceUptime {
     }
 
     /** A 4xx from ARGO: the tenant is not known there, which is when the node-name fallbacks are worth trying. */
+    /**
+     * What one {@code results} point stands for in the report: a calendar month for the metrics API when it was
+     * asked for {@code granularity=monthly}, a day otherwise. {@code null} when the source does not say.
+     */
+    private static String granularityOf(UptimeReportData data) {
+        switch (data.dataSource()) {
+            case "capability-metrics-api", "declared-monitoring-url" -> {
+                String endpoint = data.resolvedDataEndpoint();
+                if (endpoint != null && endpoint.contains("/capabilities/monitoring/metrics")) {
+                    Matcher matcher = GRANULARITY_PARAM_PATTERN.matcher(endpoint);
+                    return matcher.find() ? matcher.group(1).toLowerCase(Locale.ROOT) : "daily";
+                }
+                return "daily";
+            }
+            case "dashboard-public-results" -> {
+                return "daily";
+            }
+            default -> {
+                return null;
+            }
+        }
+    }
+
+    /** The period as the metrics API takes it; it ignores {@code start_date}/{@code end_date} and answers with today only. */
+    private static String periodQuery(UptimeQuery query) {
+        return "start-date=" + encodeQueryValue(query.startDate().toString())
+                + "&end-date=" + encodeQueryValue(query.endDate().toString())
+                + "&granularity=" + GRANULARITY;
+    }
+
     /** Summarises a capability-metrics payload ({@code {"data":[{"name":…,"results":[…]}]}}) per service. */
     private static ArrayNode summariseMetrics(ObjectMapper mapper, String body) throws IOException {
         JsonNode services = mapper.readTree(body).path("data");

@@ -872,10 +872,11 @@ function renderArgoPanel(data) {
       </div>`;
     }
 
-    // The capability-metrics API reports one point per calendar month
-    // (granularity=monthly); the dashboard and legacy sources report one
-    // point per day — so "days_monitored" needs a matching unit and plural.
-    const monitoredUnit = data.data_source === 'capability-metrics-api' ? 'month' : 'day';
+    // "days_monitored" counts result points: a calendar month each when the
+    // report says granularity "monthly" (older reports did not say, and only
+    // the capability-metrics API was monthly), a day each otherwise.
+    const monitoredUnit = (data.granularity ?? (data.data_source === 'capability-metrics-api' ? 'monthly' : 'daily')) === 'monthly'
+        ? 'month' : 'day';
 
     const cards = services.map(s => {
         const name         = s.name || s.service_name || s.id || '(unnamed)';
