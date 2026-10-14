@@ -38,6 +38,7 @@ class MonitoringDeclaredUrlTest {
     private HttpServer server;
     private String base;
     private final List<String> requests = new CopyOnWriteArrayList<>();
+    private final List<String> queries = new CopyOnWriteArrayList<>();
     private final HttpClient http = HttpClient.newHttpClient();
 
     @BeforeEach
@@ -59,6 +60,7 @@ class MonitoringDeclaredUrlTest {
     private void route(String path, int status, String body) {
         server.createContext(path, ex -> {
             requests.add(ex.getRequestURI().getPath());
+            queries.add(String.valueOf(ex.getRequestURI().getRawQuery()));
             reply(ex, status, body);
         });
     }
@@ -170,5 +172,40 @@ class MonitoringDeclaredUrlTest {
         assertEquals("unavailable", report.path("data_source").asText());
         assertTrue(report.path("warning").asText().contains("declared-monitoring-url"),
                 "the warning says the declared URL was tried: " + report.path("warning").asText());
+    }
+
+    @Test
+    void aDeclaredMetricsApiUrlIsUsedAndTheReportingPeriodIsAdded() throws Exception {
+        endpointReport("NodeOne", base + "/v1/public/nodes/E-INFRA-CZ/capabilities/monitoring/metrics");
+        route("/v1/public/nodes/E-INFRA-CZ/capabilities/monitoring/metrics", 200, RESULTS);
+
+        JsonNode report = run();
+
+        assertEquals("declared-monitoring-url", report.path("data_source").asText());
+        assertEquals(1, report.path("endpoints").size());
+        assertEquals(1, requests.size(), "nothing else was asked: " + requests);
+        assertTrue(queries.get(0).contains("granularity=monthly") && queries.get(0).contains("start_date="),
+                "the period was added: " + queries);
+    }
+
+    @Test
+    void aDeclaredMetricsApiUrlWithItsOwnQueryIsUsedUnchanged() throws Exception {
+        endpointReport("NodeOne", base + "/v1/public/nodes/E-INFRA-CZ/capabilities/monitoring/metrics?granularity=daily");
+        route("/v1/public/nodes/E-INFRA-CZ/capabilities/monitoring/metrics", 200, RESULTS);
+
+        JsonNode report = run();
+
+        assertEquals("declared-monitoring-url", report.path("data_source").asText());
+        assertEquals(List.of("granularity=daily"), queries);
+    }
+
+    @Test
+    void aDeclaredMetricsApiThatFailsFallsBack() throws Exception {
+        endpointReport("NodeOne", base + "/v1/public/nodes/E-WRONG/capabilities/monitoring/metrics");
+        route("/v1/public/nodes/NodeOne/capabilities/monitoring/metrics", 200, RESULTS);
+
+        JsonNode report = run();
+
+        assertEquals("capability-metrics-api", report.path("data_source").asText());
     }
 }

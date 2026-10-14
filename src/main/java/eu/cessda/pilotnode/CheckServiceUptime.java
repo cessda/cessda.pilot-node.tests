@@ -55,7 +55,9 @@ import com.fasterxml.jackson.databind.node.ObjectNode;
  * <ol>
  *   <li>The Monitoring capability's endpoint exactly as the node declares it in
  *       {@code endpoint_report.json}: the dashboard page is read, the public results API is found from
- *       the script it loads, and the tenant is the {@code /tenants/<name>} segment of the declared URL.</li>
+ *       the script it loads, and the tenant is the {@code /tenants/<name>} segment of the declared URL.
+ *       If the declared URL is the metrics API itself ({@code …/capabilities/monitoring/metrics}), that is
+ *       requested as published, with the reporting period added when the URL has no query of its own.</li>
  *   <li>If that gives no monitoring data, the fallbacks: the public ARGO capability-monitoring metrics API
  *       ({@code GET /v1/public/nodes/{NODE}/capabilities/monitoring/metrics}), then the public ARGO
  *       status dashboard, then a legacy API (requires an API key).</li>
@@ -105,6 +107,8 @@ public class CheckServiceUptime {
             Pattern.compile("https://api-status[\\w.-]*\\.grnet\\.gr");
     private static final Pattern DATE_PATTERN =
             Pattern.compile("^\\d{4}-\\d{2}-\\d{2}$");
+    private static final Pattern METRICS_URL_PATTERN =
+            Pattern.compile("/capabilities/monitoring/metrics/?$");
     private static final Pattern TENANT_FROM_URL_PATTERN =
             Pattern.compile("/tenants/([^/?#]+)");
     private static final Pattern WHITESPACE_PATTERN =
@@ -318,17 +322,7 @@ public class CheckServiceUptime {
                     throw new IOException("request to " + metricsUri + " failed with HTTP " + response.statusCode());
                 }
 
-                JsonNode root = mapper.readTree(response.body());
-                JsonNode services = root.path("data");
-                if (!services.isArray()) {
-                    throw new IOException("Unexpected capability metrics payload shape");
-                }
-
-                ArrayNode endpointsOut = mapper.createArrayNode();
-                for (JsonNode service : services) {
-                    String serviceName = service.path("name").asText("(unnamed)");
-                    endpointsOut.add(summariseResults(mapper, serviceName, "SERVICE", service.path("results")));
-                }
+                ArrayNode endpointsOut = summariseMetrics(mapper, response.body());
 
                 String warning = endpointsOut.isEmpty()
                         ? "Capability metrics API was reachable but returned no services."
@@ -370,6 +364,9 @@ public class CheckServiceUptime {
             if (declared.endpoint() == null) {
                 throw new IOException("the node declares no Monitoring endpoint");
             }
+            if (METRICS_URL_PATTERN.matcher(URI.create(declared.endpoint()).getPath()).find()) {
+                return fetchMetricsApi(query, http, mapper, declared.endpoint());
+            }
             if (declared.tenant() == null) {
                 throw new IOException("the Monitoring endpoint " + declared.endpoint()
                         + " has no /tenants/<name> segment, so the results cannot be located from it");
@@ -382,6 +379,33 @@ public class CheckServiceUptime {
             }
             return scrapeDashboard(query, http, mapper, dashboardUri, declared.tenant(), startTime, endTime, hosts,
                     "declared-monitoring-url");
+        }
+
+        /**
+         * The node declares the capability-metrics API itself. It is requested as published; if the URL carries no
+         * query of its own, the period being reported is added (the API otherwise answers with today only).
+         */
+        private static UptimeReportData fetchMetricsApi(UptimeQuery query, HttpClient http, ObjectMapper mapper,
+                                                        String endpoint) throws IOException, InterruptedException {
+            URI declaredUri;
+            try {
+                declaredUri = URI.create(endpoint);
+            } catch (IllegalArgumentException e) {
+                throw new IOException("the Monitoring endpoint is not a usable URL: " + endpoint);
+            }
+            URI metricsUri = declaredUri.getRawQuery() != null ? declaredUri
+                    : URI.create(endpoint + "?start_date=" + encodeQueryValue(query.startDate().toString())
+                    + "&end_date=" + encodeQueryValue(query.endDate().toString()) + "&granularity=" + GRANULARITY);
+            HttpTextResponse response = getBodyWithStatus(http, metricsUri, "application/json");
+            if (response.statusCode() != 200) {
+                throw new IOException("the Monitoring endpoint " + metricsUri + " answered HTTP " + response.statusCode());
+            }
+            ArrayNode endpointsOut = summariseMetrics(mapper, response.body());
+            if (endpointsOut.isEmpty()) {
+                throw new IOException("the Monitoring endpoint " + metricsUri + " returned no services");
+            }
+            return new UptimeReportData(query.nodeName(), endpoint, metricsUri.toString(), "declared-monitoring-url",
+                    endpointsOut, null);
         }
     }
 
@@ -424,6 +448,20 @@ public class CheckServiceUptime {
     }
 
     /** A 4xx from ARGO: the tenant is not known there, which is when the node-name fallbacks are worth trying. */
+    /** Summarises a capability-metrics payload ({@code {"data":[{"name":…,"results":[…]}]}}) per service. */
+    private static ArrayNode summariseMetrics(ObjectMapper mapper, String body) throws IOException {
+        JsonNode services = mapper.readTree(body).path("data");
+        if (!services.isArray()) {
+            throw new IOException("Unexpected capability metrics payload shape");
+        }
+        ArrayNode endpointsOut = mapper.createArrayNode();
+        for (JsonNode service : services) {
+            String serviceName = service.path("name").asText("(unnamed)");
+            endpointsOut.add(summariseResults(mapper, serviceName, "SERVICE", service.path("results")));
+        }
+        return endpointsOut;
+    }
+
     private static final class NotFoundException extends IOException {
         private static final long serialVersionUID = 1L;
         private final int statusCode;
@@ -749,9 +787,6 @@ public class CheckServiceUptime {
                     return new MonitoringDeclaration(name, endpoint,
                             URLDecoder.decode(matcher.group(1), StandardCharsets.UTF_8));
                 }
-                log.log(Level.WARNING,
-                        "Monitoring capability endpoint for {0} has no /tenants/<name> segment: {1}",
-                        new Object[]{nodeName, endpoint});
                 return new MonitoringDeclaration(name, endpoint, null);
             }
             return new MonitoringDeclaration(name, null, null);
