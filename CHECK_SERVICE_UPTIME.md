@@ -6,30 +6,29 @@ Java check that writes `argo_uptime_report.json` to `<dashboard_dir>/<NODE_NAME>
 
 `CheckServiceUptime` uses a single output contract and tries sources in order:
 
-1. Capability-monitoring metrics API (default):  
+1. **The declared Monitoring URL.** The `Monitoring` capability's endpoint in `endpoint_report.json`
+   (read from `<dashboard_dir>/<NODE_NAME>/`, written earlier by `CheckNodeCapabilities`) is requested
+   exactly as the node publishes it. The public results API is found from the script that page loads,
+   and the ARGO tenant is the `/tenants/<TENANT>/` segment of that URL (URL-decoded). The report's
+   `data_source` is `declared-monitoring-url`. If the node declares no Monitoring endpoint, the endpoint
+   has no `/tenants/<TENANT>/` segment, or the page gives no service uptime values, the check moves on.
+2. Capability-monitoring metrics API (fallback):  
    `GET https://api-status.devel.mon.argo.grnet.gr/v1/public/nodes/<TENANT>/capabilities/monitoring/metrics`  
-   called with `start_date`, `end_date` (`YYYY-MM-DD`) and `granularity=monthly`. No HTML/JS
-   scraping is needed — this is a direct JSON call.
-2. Public ARGO dashboard flow (fallback):  
+   called with `start_date`, `end_date` (`YYYY-MM-DD`) and `granularity=monthly`.
+3. Public ARGO dashboard flow (fallback):  
    `https://status.devel.mon.argo.grnet.gr/public/tenants/<TENANT>/dashboard`
-3. Legacy ARGO API fallback (requires API key)
+4. Legacy ARGO API fallback (requires API key)
 
-For both the capability-metrics API and the public-dashboard flow, the ARGO
-tenant name is resolved with a 4-phase cascade:
+The two public fallbacks need a tenant name, tried in this order:
 
-1. The tenant declared by the node's own `Monitoring` capability in
-   `endpoint_report.json` (read from `<dashboard_dir>/<NODE_NAME>/`,
-   written earlier by `CheckNodeCapabilities`), if present — extracted from
-   a `.../tenants/<TENANT>/...` endpoint URL and URL-decoded. This is
-   authoritative and is tried alone, with no further fallback: a node's
-   registry name doesn't always match its real ARGO tenant name (e.g.
-   `LifeWatch-ERIC`'s registry name resolves to ARGO tenant `LIFEWATCH`,
-   which no amount of splitting the registry name would ever produce).
-2. Otherwise, the node name as-is.
-3. If that specifically returns `404` and the node name is hyphenated, the
-   substring before the first hyphen, e.g. `LifeWatch-ERIC -> LifeWatch`.
-4. If still unresolved (any `4xx`) and the node name contains whitespace,
-   its first whitespace-separated token, e.g. `EGI Pilot Node -> EGI`.
+1. The node name at the top of `endpoint_report.json` (`node_name`, from the Federation Registry).
+2. The tenant named by the declared Monitoring URL, if it differs.
+3. If the node name returns `404` and is hyphenated, the substring before the first hyphen,
+   e.g. `LifeWatch-ERIC -> LifeWatch`.
+4. If still unresolved (any `4xx`) and the node name contains whitespace, its first
+   whitespace-separated token, e.g. `EGI Pilot Node -> EGI`.
+
+This is the lenient behaviour. Strict mode will use the declared URL only, with no fallback.
 
 ## Usage
 
@@ -39,7 +38,7 @@ CheckServiceUptime NODE_NAME [API_KEY] [START_DATE] [END_DATE] [dashboard_dir]
 
 | Argument | Required | Default | Description |
 | -------- | -------- | ------- | ----------- |
-| `NODE_NAME` | Yes | — | Node name used for output directory and tenant resolution (phase 1 of tenant resolution also reads `<dashboard_dir>/NODE_NAME/endpoint_report.json`, if present) |
+| `NODE_NAME` | Yes | — | Node name used for output directory and tenant resolution (the declared Monitoring URL and node name are also read from `<dashboard_dir>/NODE_NAME/endpoint_report.json`, if present) |
 | `API_KEY` | No | — | Legacy ARGO API key used only if the capability-metrics API and public-dashboard flow are both unavailable |
 | `START_DATE` | No | 1 month ago | Start date (`YYYY-MM-DD`) |
 | `END_DATE` | No | Today | End date (`YYYY-MM-DD`) |
