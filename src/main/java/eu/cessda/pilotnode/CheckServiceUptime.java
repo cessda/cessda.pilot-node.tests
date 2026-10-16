@@ -33,6 +33,7 @@ import java.time.OffsetDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Locale;
 import java.util.Optional;
 import java.util.logging.Level;
 import java.util.logging.Logger;
@@ -51,26 +52,30 @@ import com.fasterxml.jackson.databind.node.ObjectNode;
 /**
  * ARGO Uptime Monitor.
  *
- * <p>Builds {@code argo_uptime_report.json} for a node using a pluggable source strategy.
- * The current default calls the public ARGO capability-monitoring metrics API directly
- * ({@code GET /v1/public/nodes/{NODE}/capabilities/monitoring/metrics}) for monthly-granularity
- * availability/reliability/uptime figures. If that API is unavailable, this falls back to
- * scraping the public ARGO status dashboard and extracting data from its referenced JS/API
- * payloads, and finally to a legacy API source (requires an API key).
- *
- * <p>Both the capability-metrics API and the dashboard scrape need an ARGO tenant name for
- * the node being checked, resolved in this order (see
- * {@link #monitoringTenantFromEndpointReport} and {@link #appendNodeNameFallbacks}):
+ * <p>Builds {@code argo_uptime_report.json} for a node using a pluggable source strategy, trying in order:
  * <ol>
- *   <li>The tenant declared by the node's own {@code Monitoring} capability in
- *       {@code endpoint_report.json} (authoritative — extracted from a
- *       {@code .../tenants/<TENANT>/...} URL; tried alone if present).</li>
- *   <li>Otherwise, the node name as-is.</li>
- *   <li>If that specifically 404s and the node name is hyphenated, the substring before
- *       the first hyphen (e.g. {@code LifeWatch-ERIC} &rarr; {@code LifeWatch}).</li>
+ *   <li>The Monitoring capability's endpoint exactly as the node declares it in
+ *       {@code endpoint_report.json}: the dashboard page is read, the public results API is found from
+ *       the script it loads, and the tenant is the {@code /tenants/<name>} segment of the declared URL.
+ *       If the declared URL is the metrics API itself ({@code …/capabilities/monitoring/metrics}), that is
+ *       requested as published, with the reporting period added when the URL has no query of its own.</li>
+ *   <li>If that gives no monitoring data, the fallbacks: the public ARGO capability-monitoring metrics API
+ *       ({@code GET /v1/public/nodes/{NODE}/capabilities/monitoring/metrics}), then the public ARGO
+ *       status dashboard, then a legacy API (requires an API key).</li>
+ * </ol>
+ *
+ * <p>The two public fallbacks need an ARGO tenant name, tried in this order (see
+ * {@link #tenantCandidates} and {@link #appendNodeNameFallbacks}):
+ * <ol>
+ *   <li>The node name, as given at the top of {@code endpoint_report.json} (from the Federation Registry).</li>
+ *   <li>The tenant named by the declared Monitoring endpoint, if it is not the same.</li>
+ *   <li>If the node name 404s and is hyphenated, the substring before the first hyphen
+ *       (e.g. {@code LifeWatch-ERIC} &rarr; {@code LifeWatch}).</li>
  *   <li>If still unresolved (any 4xx) and the node name contains whitespace, its first
  *       whitespace-separated token (e.g. {@code EGI Pilot Node} &rarr; {@code EGI}).</li>
  * </ol>
+ *
+ * <p>This is the lenient behaviour. A strict version will use the declared endpoint only, with no fallback.
  *
  * <p>Usage:
  * <pre>
@@ -103,12 +108,22 @@ public class CheckServiceUptime {
             Pattern.compile("https://api-status[\\w.-]*\\.grnet\\.gr");
     private static final Pattern DATE_PATTERN =
             Pattern.compile("^\\d{4}-\\d{2}-\\d{2}$");
+    private static final Pattern GRANULARITY_PARAM_PATTERN =
+            Pattern.compile("[?&]granularity=([A-Za-z]+)");
+    private static final Pattern METRICS_URL_PATTERN =
+            Pattern.compile("/capabilities/monitoring/metrics/?$");
     private static final Pattern TENANT_FROM_URL_PATTERN =
             Pattern.compile("/tenants/([^/?#]+)");
     private static final Pattern WHITESPACE_PATTERN =
             Pattern.compile("\\s");
 
     private static final Logger log = Logger.getLogger(CheckServiceUptime.class.getName());
+
+    /** The ARGO hosts used for the fallback sources; tests point them at a fake. */
+    record Hosts(String dashboardTemplate, String apiBase) {
+        static final Hosts DEFAULT = new Hosts(PUBLIC_DASHBOARD_TEMPLATE, DEFAULT_PUBLIC_API_BASE);
+    }
+
     // ── Entry point ───────────────────────────────────────────────────────────
 
     @SuppressWarnings({"java:S106", "java:S8688"})
@@ -153,6 +168,13 @@ public class CheckServiceUptime {
     public static void run(String nodeName, String apiKey,
                            LocalDate startDate, LocalDate endDate, Path dashboardDir,
                            HttpClient http, ObjectMapper mapper) throws IOException, InterruptedException {
+        run(nodeName, apiKey, startDate, endDate, dashboardDir, http, mapper, Hosts.DEFAULT);
+    }
+
+    @SuppressWarnings("java:S8688")
+    static void run(String nodeName, String apiKey,
+                    LocalDate startDate, LocalDate endDate, Path dashboardDir,
+                    HttpClient http, ObjectMapper mapper, Hosts hosts) throws IOException, InterruptedException {
 
         // ── Resolve output path ───────────────────────────────────────────────
 
@@ -179,7 +201,8 @@ public class CheckServiceUptime {
                 http,
                 mapper,
                 startTime,
-                endTime
+                endTime,
+                hosts
         );
 
         // ── Write JSON report ─────────────────────────────────────────────────
@@ -191,6 +214,10 @@ public class CheckServiceUptime {
             report.put("resolved_data_endpoint", reportData.resolvedDataEndpoint());
         }
         report.put("data_source", reportData.dataSource());
+        String granularity = granularityOf(reportData);
+        if (granularity != null) {
+            report.put("granularity", granularity);
+        }
         ObjectNode period = report.putObject("period");
         period.put("start", startTime);
         period.put("end",   endTime);
@@ -208,11 +235,12 @@ public class CheckServiceUptime {
     }
 
     private static UptimeReportData resolveReportData(UptimeQuery query, Path dashboardDir, HttpClient http, ObjectMapper mapper,
-                                                      String startTime, String endTime)
+                                                      String startTime, String endTime, Hosts hosts)
             throws IOException, InterruptedException {
         List<UptimeReportSource> sources = List.of(
-                new CapabilityApiSource(),
-                new DashboardSource(),
+                new DeclaredUrlSource(hosts),
+                new CapabilityApiSource(hosts),
+                new DashboardSource(hosts),
                 new LegacyApiSource()
         );
         List<String> errors = new ArrayList<>();
@@ -236,7 +264,7 @@ public class CheckServiceUptime {
         }
 
         ArrayNode emptyEndpoints = mapper.createArrayNode();
-        String dashboardUrl = String.format(PUBLIC_DASHBOARD_TEMPLATE, encodePathSegment(query.nodeName()));
+        String dashboardUrl = String.format(hosts.dashboardTemplate(), encodePathSegment(query.nodeName()));
         String warning = "No uptime data source was available. " + String.join(" | ", errors);
         return new UptimeReportData(query.nodeName(), dashboardUrl, null, "unavailable", emptyEndpoints, warning);
     }
@@ -256,7 +284,7 @@ public class CheckServiceUptime {
     /**
      * Calls the public ARGO capability-monitoring metrics API directly:
      * {@code GET /v1/public/nodes/{NODE}/capabilities/monitoring/metrics
-     * ?start_date=YYYY-MM-DD&end_date=YYYY-MM-DD&granularity=monthly}.
+     * ?start-date=YYYY-MM-DD&end-date=YYYY-MM-DD&granularity=monthly}.
      *
      * <p>This is the preferred source — it needs no HTML/JS scraping, just the
      * node (tenant) name. The response shape is
@@ -265,6 +293,12 @@ public class CheckServiceUptime {
      * are averaged the same way as the dashboard source.</p>
      */
     private static final class CapabilityApiSource implements UptimeReportSource {
+        private final Hosts hosts;
+
+        CapabilityApiSource(Hosts hosts) {
+            this.hosts = hosts;
+        }
+
         @Override
         public String name() {
             return "capability-metrics-api";
@@ -273,40 +307,27 @@ public class CheckServiceUptime {
         @Override
         public UptimeReportData fetch(UptimeQuery query, Path dashboardDir, HttpClient http, ObjectMapper mapper, String startTime, String endTime)
                 throws IOException, InterruptedException {
-            String monitoringTenant = monitoringTenantFromEndpointReport(dashboardDir, query.nodeName(), mapper);
-            List<String> tenantsToTry = new ArrayList<>();
-            tenantsToTry.add(monitoringTenant != null ? monitoringTenant : query.nodeName());
+            MonitoringDeclaration declared = monitoringDeclaration(dashboardDir, query.nodeName(), mapper);
+            List<String> tenantsToTry = tenantCandidates(declared);
 
             IOException lastClientError = null;
             for (int i = 0; i < tenantsToTry.size(); i++) {
                 String tenantName = tenantsToTry.get(i);
-                URI metricsUri = URI.create(DEFAULT_PUBLIC_API_BASE
+                URI metricsUri = URI.create(hosts.apiBase()
                         + String.format(CAPABILITY_METRICS_PATH_TEMPLATE, encodePathSegment(tenantName))
-                        + "?start_date=" + encodeQueryValue(query.startDate().toString())
-                        + "&end_date=" + encodeQueryValue(query.endDate().toString())
-                        + "&granularity=" + GRANULARITY);
+                        + "?" + periodQuery(query));
                 HttpTextResponse response = getBodyWithStatus(http, metricsUri, "application/json");
                 if (response.statusCode() != 200) {
                     if (is4xx(response.statusCode())) {
                         lastClientError = new IOException("capability metrics not found for node '" + tenantName
                                 + "' (HTTP " + response.statusCode() + ")");
-                        appendNodeNameFallbacks(tenantsToTry, tenantName, response.statusCode(), monitoringTenant != null);
+                        appendNodeNameFallbacks(tenantsToTry, tenantName, response.statusCode(), declared.nodeName());
                         continue;
                     }
                     throw new IOException("request to " + metricsUri + " failed with HTTP " + response.statusCode());
                 }
 
-                JsonNode root = mapper.readTree(response.body());
-                JsonNode services = root.path("data");
-                if (!services.isArray()) {
-                    throw new IOException("Unexpected capability metrics payload shape");
-                }
-
-                ArrayNode endpointsOut = mapper.createArrayNode();
-                for (JsonNode service : services) {
-                    String serviceName = service.path("name").asText("(unnamed)");
-                    endpointsOut.add(summariseResults(mapper, serviceName, "SERVICE", service.path("results")));
-                }
+                ArrayNode endpointsOut = summariseMetrics(mapper, response.body());
 
                 String warning = endpointsOut.isEmpty()
                         ? "Capability metrics API was reachable but returned no services."
@@ -328,7 +349,67 @@ public class CheckServiceUptime {
         }
     }
 
+    /** The Monitoring dashboard exactly as the node publishes it; the results are located from the page it serves. */
+    private static final class DeclaredUrlSource implements UptimeReportSource {
+        private final Hosts hosts;
+
+        DeclaredUrlSource(Hosts hosts) {
+            this.hosts = hosts;
+        }
+
+        @Override
+        public String name() {
+            return "declared-monitoring-url";
+        }
+
+        @Override
+        public UptimeReportData fetch(UptimeQuery query, Path dashboardDir, HttpClient http, ObjectMapper mapper, String startTime, String endTime)
+                throws IOException, InterruptedException {
+            MonitoringDeclaration declared = monitoringDeclaration(dashboardDir, query.nodeName(), mapper);
+            if (declared.endpoint() == null) {
+                throw new IllegalStateException("the node declares no Monitoring endpoint");
+            }
+            if (METRICS_URL_PATTERN.matcher(URI.create(declared.endpoint()).getPath()).find()) {
+                return fetchMetricsApi(query, http, mapper, declared.endpoint());
+            }
+            if (declared.tenant() == null) {
+                throw new IllegalStateException("the Monitoring endpoint " + declared.endpoint()
+                        + " has no /tenants/<name> segment, so the results cannot be located from it");
+            }
+            URI dashboardUri = URI.create(declared.endpoint());
+            return scrapeDashboard(query, http, mapper, dashboardUri, declared.tenant(), startTime, endTime, hosts,
+                    "declared-monitoring-url");
+        }
+
+        /**
+         * The node declares the capability-metrics API itself. It is requested as published; if the URL carries no
+         * query of its own, the period being reported is added (the API otherwise answers with today only).
+         */
+        private static UptimeReportData fetchMetricsApi(UptimeQuery query, HttpClient http, ObjectMapper mapper,
+                                                        String endpoint) throws IOException, InterruptedException {
+            URI declaredUri = URI.create(endpoint);
+            URI metricsUri = declaredUri.getRawQuery() != null ? declaredUri
+                    : URI.create(endpoint + "?" + periodQuery(query));
+            HttpTextResponse response = getBodyWithStatus(http, metricsUri, "application/json");
+            if (response.statusCode() != 200) {
+                throw new IOException("the Monitoring endpoint " + metricsUri + " answered HTTP " + response.statusCode());
+            }
+            ArrayNode endpointsOut = summariseMetrics(mapper, response.body());
+            if (endpointsOut.isEmpty()) {
+                throw new IOException("the Monitoring endpoint " + metricsUri + " returned no services");
+            }
+            return new UptimeReportData(query.nodeName(), endpoint, metricsUri.toString(), "declared-monitoring-url",
+                    endpointsOut, null);
+        }
+    }
+
     private static final class DashboardSource implements UptimeReportSource {
+        private final Hosts hosts;
+
+        DashboardSource(Hosts hosts) {
+            this.hosts = hosts;
+        }
+
         @Override
         public String name() {
             return "public-dashboard";
@@ -337,81 +418,20 @@ public class CheckServiceUptime {
         @Override
         public UptimeReportData fetch(UptimeQuery query, Path dashboardDir, HttpClient http, ObjectMapper mapper, String startTime, String endTime)
                 throws IOException, InterruptedException {
-            String monitoringTenant = monitoringTenantFromEndpointReport(dashboardDir, query.nodeName(), mapper);
-            List<String> tenantsToTry = new ArrayList<>();
-            tenantsToTry.add(monitoringTenant != null ? monitoringTenant : query.nodeName());
+            MonitoringDeclaration declared = monitoringDeclaration(dashboardDir, query.nodeName(), mapper);
+            List<String> tenantsToTry = tenantCandidates(declared);
 
             IOException lastClientError = null;
             for (int i = 0; i < tenantsToTry.size(); i++) {
                 String tenantName = tenantsToTry.get(i);
-                URI dashboardUri = URI.create(String.format(PUBLIC_DASHBOARD_TEMPLATE, encodePathSegment(tenantName)));
-                HttpTextResponse dashboardResponse = getBodyWithStatus(http, dashboardUri, "text/html");
-                if (dashboardResponse.statusCode() != 200) {
-                    if (is4xx(dashboardResponse.statusCode())) {
-                        lastClientError = new IOException("dashboard not found for tenant '" + tenantName
-                                + "' (HTTP " + dashboardResponse.statusCode() + ")");
-                        appendNodeNameFallbacks(tenantsToTry, tenantName, dashboardResponse.statusCode(), monitoringTenant != null);
-                        continue;
-                    }
-                    throw new IOException("request to " + dashboardUri + " failed with HTTP " + dashboardResponse.statusCode());
+                URI dashboardUri = URI.create(String.format(hosts.dashboardTemplate(), encodePathSegment(tenantName)));
+                try {
+                    return scrapeDashboard(query, http, mapper, dashboardUri, tenantName, startTime, endTime, hosts,
+                            "dashboard-public-results");
+                } catch (ClientErrorException e) {
+                    lastClientError = e;
+                    appendNodeNameFallbacks(tenantsToTry, tenantName, e.statusCode(), declared.nodeName());
                 }
-
-                Document document = Jsoup.parse(dashboardResponse.body(), dashboardUri.toString());
-                Element scriptElement = document.selectFirst("script[src*=/assets/index-]");
-                if (scriptElement == null) {
-                    scriptElement = document.selectFirst("script[src]");
-                }
-                if (scriptElement == null) {
-                    throw new IOException("No script tag found in dashboard page");
-                }
-
-                String scriptUrl = scriptElement.absUrl("src");
-                if (scriptUrl == null || scriptUrl.isBlank()) {
-                    throw new IOException("Could not resolve dashboard script URL");
-                }
-
-                String bundleJs = getBody(http, URI.create(scriptUrl), "text/javascript");
-                String publicApiBase = extractPublicApiBase(bundleJs).orElse(DEFAULT_PUBLIC_API_BASE);
-
-                URI groupsUri = URI.create(publicApiBase + "/v1/public/tenants/"
-                        + encodePathSegment(tenantName)
-                        + "/results/groups?start_time=" + encodeQueryValue(startTime)
-                        + "&end_time=" + encodeQueryValue(endTime));
-                HttpTextResponse groupsResponse = getBodyWithStatus(http, groupsUri, "application/json");
-                if (groupsResponse.statusCode() != 200) {
-                    if (is4xx(groupsResponse.statusCode())) {
-                        lastClientError = new IOException("public results not found for tenant '" + tenantName
-                                + "' (HTTP " + groupsResponse.statusCode() + ")");
-                        appendNodeNameFallbacks(tenantsToTry, tenantName, groupsResponse.statusCode(), monitoringTenant != null);
-                        continue;
-                    }
-                    throw new IOException("request to " + groupsUri + " failed with HTTP " + groupsResponse.statusCode());
-                }
-
-                JsonNode root = mapper.readTree(groupsResponse.body());
-                JsonNode groups = root.path("data");
-                if (!groups.isArray()) {
-                    throw new IOException("Unexpected groups payload shape");
-                }
-
-                ArrayNode endpointsOut = mapper.createArrayNode();
-                for (JsonNode group : groups) {
-                    String endpointName = group.path("name").asText("(unnamed)");
-                    String endpointType = group.path("type").asText("SERVICEGROUP");
-                    endpointsOut.add(summariseResults(mapper, endpointName, endpointType, group.path("results")));
-                }
-
-                String warning = endpointsOut.isEmpty()
-                        ? "Public dashboard was reachable but returned no service uptime values."
-                        : null;
-                return new UptimeReportData(
-                        query.nodeName(),
-                        dashboardUri.toString(),
-                        groupsUri.toString(),
-                        "dashboard-public-results",
-                        endpointsOut,
-                        warning
-                );
             }
 
             if (lastClientError != null) {
@@ -419,6 +439,138 @@ public class CheckServiceUptime {
             }
             throw new IOException("No tenant name candidate could be resolved for public dashboard");
         }
+    }
+
+    /** Any 4xx from ARGO (not only 404): the tenant was not served, which is when the node-name fallbacks are worth trying. */
+    /**
+     * What one {@code results} point stands for in the report: a calendar month for the metrics API when it was
+     * asked for {@code granularity=monthly}, a day otherwise. {@code null} when the source does not say.
+     */
+    private static String granularityOf(UptimeReportData data) {
+        switch (data.dataSource()) {
+            case "capability-metrics-api", "declared-monitoring-url" -> {
+                String endpoint = data.resolvedDataEndpoint();
+                if (endpoint != null && endpoint.contains("/capabilities/monitoring/metrics")) {
+                    Matcher matcher = GRANULARITY_PARAM_PATTERN.matcher(endpoint);
+                    return matcher.find() ? matcher.group(1).toLowerCase(Locale.ROOT) : "daily";
+                }
+                return "daily";
+            }
+            case "dashboard-public-results" -> {
+                return "daily";
+            }
+            default -> {
+                return null;
+            }
+        }
+    }
+
+    /** The period as the metrics API takes it; it ignores {@code start_date}/{@code end_date} and answers with today only. */
+    private static String periodQuery(UptimeQuery query) {
+        return "start-date=" + encodeQueryValue(query.startDate().toString())
+                + "&end-date=" + encodeQueryValue(query.endDate().toString())
+                + "&granularity=" + GRANULARITY;
+    }
+
+    /** Summarises a capability-metrics payload ({@code {"data":[{"name":…,"results":[…]}]}}) per service. */
+    private static ArrayNode summariseMetrics(ObjectMapper mapper, String body) throws IOException {
+        JsonNode services = mapper.readTree(body).path("data");
+        if (!services.isArray()) {
+            throw new IOException("Unexpected capability metrics payload shape");
+        }
+        ArrayNode endpointsOut = mapper.createArrayNode();
+        for (JsonNode service : services) {
+            String serviceName = service.path("name").asText("(unnamed)");
+            endpointsOut.add(summariseResults(mapper, serviceName, "SERVICE", service.path("results")));
+        }
+        return endpointsOut;
+    }
+
+    private static final class ClientErrorException extends IOException {
+        private static final long serialVersionUID = 1L;
+        private final int statusCode;
+
+        ClientErrorException(String message, int statusCode) {
+            super(message);
+            this.statusCode = statusCode;
+        }
+
+        int statusCode() {
+            return statusCode;
+        }
+    }
+
+    /** Reads a dashboard page, finds the public results API from the script it loads, and summarises the tenant's results. */
+    private static UptimeReportData scrapeDashboard(UptimeQuery query, HttpClient http, ObjectMapper mapper,
+                                                    URI dashboardUri, String tenantName, String startTime,
+                                                    String endTime, Hosts hosts, String dataSource)
+            throws IOException, InterruptedException {
+        HttpTextResponse dashboardResponse = getBodyWithStatus(http, dashboardUri, "text/html");
+        if (dashboardResponse.statusCode() != 200) {
+            if (is4xx(dashboardResponse.statusCode())) {
+                throw new ClientErrorException("dashboard not found for tenant '" + tenantName + "' at " + dashboardUri
+                        + " (HTTP " + dashboardResponse.statusCode() + ")", dashboardResponse.statusCode());
+            }
+            throw new IOException("request to " + dashboardUri + " failed with HTTP " + dashboardResponse.statusCode());
+        }
+
+        Document document = Jsoup.parse(dashboardResponse.body(), dashboardUri.toString());
+        Element scriptElement = document.selectFirst("script[src*=/assets/index-]");
+        if (scriptElement == null) {
+            scriptElement = document.selectFirst("script[src]");
+        }
+        if (scriptElement == null) {
+            throw new IOException("No script tag found in dashboard page " + dashboardUri);
+        }
+
+        String scriptUrl = scriptElement.absUrl("src");
+        if (scriptUrl == null || scriptUrl.isBlank()) {
+            throw new IOException("Could not resolve dashboard script URL");
+        }
+
+        String bundleJs = getBody(http, URI.create(scriptUrl), "text/javascript");
+        String publicApiBase = extractPublicApiBase(bundleJs).orElse(hosts.apiBase());
+
+        URI groupsUri = URI.create(publicApiBase + "/v1/public/tenants/"
+                + encodePathSegment(tenantName)
+                + "/results/groups?start_time=" + encodeQueryValue(startTime)
+                + "&end_time=" + encodeQueryValue(endTime));
+        HttpTextResponse groupsResponse = getBodyWithStatus(http, groupsUri, "application/json");
+        if (groupsResponse.statusCode() != 200) {
+            if (is4xx(groupsResponse.statusCode())) {
+                throw new ClientErrorException("public results not found for tenant '" + tenantName
+                        + "' (HTTP " + groupsResponse.statusCode() + ")", groupsResponse.statusCode());
+            }
+            throw new IOException("request to " + groupsUri + " failed with HTTP " + groupsResponse.statusCode());
+        }
+
+        JsonNode root = mapper.readTree(groupsResponse.body());
+        JsonNode groups = root.path("data");
+        if (!groups.isArray()) {
+            throw new IOException("Unexpected groups payload shape");
+        }
+
+        ArrayNode endpointsOut = mapper.createArrayNode();
+        for (JsonNode group : groups) {
+            String endpointName = group.path("name").asText("(unnamed)");
+            String endpointType = group.path("type").asText("SERVICEGROUP");
+            endpointsOut.add(summariseResults(mapper, endpointName, endpointType, group.path("results")));
+        }
+        if (endpointsOut.isEmpty() && "declared-monitoring-url".equals(dataSource)) {
+            throw new IOException("the declared Monitoring dashboard " + dashboardUri + " returned no service uptime values");
+        }
+
+        String warning = endpointsOut.isEmpty()
+                ? "Public dashboard was reachable but returned no service uptime values."
+                : null;
+        return new UptimeReportData(
+                query.nodeName(),
+                dashboardUri.toString(),
+                groupsUri.toString(),
+                dataSource,
+                endpointsOut,
+                warning
+        );
     }
 
     private static final class LegacyApiSource implements UptimeReportSource {
@@ -631,62 +783,68 @@ public class CheckServiceUptime {
     }
 
     /**
-     * Reads {@code <dashboardDir>/<nodeName>/endpoint_report.json} (written earlier by
-     * {@code CheckNodeCapabilities}) and, if it has a {@code Monitoring} capability with
-     * a {@code .../tenants/<TENANT>/...} endpoint URL, returns the URL-decoded
-     * {@code <TENANT>} segment. Returns {@code null} — meaning "phase 1 is empty" to the
-     * caller, which should then resolve a tenant from the node name instead — if the
-     * report is missing or unreadable, there's no {@code Monitoring} capability, its
-     * endpoint is blank, or that endpoint doesn't contain a recognisable
-     * {@code /tenants/<name>} segment.
+     * What the node says about its monitoring: the node name the Federation Registry gave (the top of
+     * {@code endpoint_report.json}), the Monitoring capability's endpoint exactly as declared, and the
+     * ARGO tenant in its {@code /tenants/<name>} segment. Each is {@code null} when it is not there.
      */
-    private static String monitoringTenantFromEndpointReport(Path dashboardDir, String nodeName, ObjectMapper mapper) {
+    private record MonitoringDeclaration(String nodeName, String endpoint, String tenant) { }
+
+    private static MonitoringDeclaration monitoringDeclaration(Path dashboardDir, String nodeName, ObjectMapper mapper) {
         Path reportPath = dashboardDir.resolve(nodeName).resolve("endpoint_report.json");
         if (!Files.isRegularFile(reportPath)) {
-            return null;
+            return new MonitoringDeclaration(nodeName, null, null);
         }
         try {
             JsonNode root = mapper.readTree(reportPath.toFile());
+            String reportedName = root.path("node_name").asText("").trim();
+            String name = reportedName.isEmpty() ? nodeName : reportedName;
             for (JsonNode cap : root.path("capabilities")) {
                 if (!"Monitoring".equals(cap.path("capability_type").asText())) {
                     continue;
                 }
-                String endpoint = cap.path("endpoint").asText("");
-                if (endpoint.isBlank()) {
-                    return null;
+                String endpoint = cap.path("endpoint").asText("").trim();
+                if (endpoint.isEmpty()) {
+                    return new MonitoringDeclaration(name, null, null);
                 }
                 Matcher matcher = TENANT_FROM_URL_PATTERN.matcher(endpoint);
                 if (matcher.find()) {
-                    return URLDecoder.decode(matcher.group(1), StandardCharsets.UTF_8);
+                    return new MonitoringDeclaration(name, endpoint,
+                            URLDecoder.decode(matcher.group(1), StandardCharsets.UTF_8));
                 }
-                log.log(Level.WARNING,
-                        "Monitoring capability endpoint for {0} has no /tenants/<name> segment: {1}",
-                        new Object[]{nodeName, endpoint});
-                return null;
+                return new MonitoringDeclaration(name, endpoint, null);
             }
+            return new MonitoringDeclaration(name, null, null);
         } catch (IOException e) {
             log.log(Level.WARNING, "Could not read {0} to resolve a Monitoring tenant: {1}",
                     new Object[]{reportPath, e.getMessage()});
         }
-        return null;
+        return new MonitoringDeclaration(nodeName, null, null);
+    }
+
+    /** The tenants the fallback sources try first: the node's name, then the tenant its Monitoring endpoint names. */
+    private static List<String> tenantCandidates(MonitoringDeclaration declared) {
+        List<String> tenants = new ArrayList<>();
+        tenants.add(declared.nodeName());
+        if (declared.tenant() != null && !tenants.contains(declared.tenant())) {
+            tenants.add(declared.tenant());
+        }
+        return tenants;
     }
 
     /**
-     * If {@code tenantName} was resolved from the node name rather than a declared
-     * Monitoring capability ({@code derivedFromMonitoring} is {@code false} — an
-     * authoritative Monitoring tenant is tried alone, with no further fallback), appends
-     * the next fallback candidate(s) for {@code tenantsToTry} to try, if not already
-     * present:
+     * When the node name was not known to ARGO, appends the next guess(es) for {@code tenantsToTry}, if not
+     * already present:
      * <ul>
-     *   <li>on a strict 404, the substring before the first hyphen in {@code tenantName}
+     *   <li>on a strict 404, the substring before the first hyphen in the node name
      *       (e.g. {@code LifeWatch-ERIC} &rarr; {@code LifeWatch});</li>
-     *   <li>on any 4xx, the substring before the first whitespace in {@code tenantName}
-     *       (e.g. {@code EGI Pilot Node} &rarr; {@code EGI}) — the pre-existing fallback.</li>
+     *   <li>on any 4xx, the substring before the first whitespace in the node name
+     *       (e.g. {@code EGI Pilot Node} &rarr; {@code EGI}).</li>
      * </ul>
+     * Only the node name is trimmed; a tenant read from the node's own Monitoring endpoint is not guessed at.
      */
     private static void appendNodeNameFallbacks(List<String> tenantsToTry, String tenantName,
-                                                 int statusCode, boolean derivedFromMonitoring) {
-        if (derivedFromMonitoring) {
+                                                 int statusCode, String nodeName) {
+        if (!tenantName.equals(nodeName)) {
             return;
         }
         if (statusCode == 404) {
