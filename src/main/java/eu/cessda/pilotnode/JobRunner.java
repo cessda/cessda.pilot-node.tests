@@ -1,11 +1,10 @@
 package eu.cessda.pilotnode;
 
-import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.beans.factory.annotation.Qualifier;
-import org.springframework.stereotype.Service;
-
 import java.util.concurrent.Executor;
 import java.util.logging.Logger;
+
+import org.springframework.beans.factory.annotation.Qualifier;
+import org.springframework.stereotype.Service;
 
 @Service
 public class JobRunner {
@@ -19,7 +18,6 @@ public class JobRunner {
     // nothing to do with the cron scheduler; it should always use the
     // general-purpose "applicationTaskExecutor" Spring Boot provides by
     // default, so that's pinned explicitly here.
-    @Autowired
     public JobRunner(@Qualifier("applicationTaskExecutor") Executor executor) {
         this.executor = executor;
     }
