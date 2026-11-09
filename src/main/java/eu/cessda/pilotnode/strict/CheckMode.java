@@ -50,10 +50,6 @@ public enum CheckMode {
         return label;
     }
 
-    public boolean strict() {
-        return this == STRICT;
-    }
-
     /** Where this mode keeps its results, given the dashboard data directory. */
     public Path resolve(Path dataDir) {
         return subdirectory == null ? dataDir : dataDir.resolve(subdirectory);

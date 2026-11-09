@@ -62,6 +62,9 @@ public final class JsonFetcher {
      */
     public static Fetched fetchWithRetries(HttpClient http, ObjectMapper mapper, URI url, int maxAttempts,
                                            Duration baseDelay) throws InterruptedException {
+        if (maxAttempts < 1) {
+            throw new IllegalArgumentException("maxAttempts must be at least 1: " + maxAttempts);
+        }
         Fetched result = null;
         for (int attempt = 1; attempt <= maxAttempts; attempt++) {
             result = fetch(http, mapper, url).afterAttempts(attempt);

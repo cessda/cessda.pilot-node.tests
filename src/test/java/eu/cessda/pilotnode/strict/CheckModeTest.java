@@ -1,7 +1,6 @@
 package eu.cessda.pilotnode.strict;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -36,7 +35,5 @@ class CheckModeTest {
         Path data = Path.of("dashboard/data");
         assertEquals(data, CheckMode.LENIENT.resolve(data));
         assertEquals(data.resolve("strict"), CheckMode.STRICT.resolve(data));
-        assertTrue(CheckMode.STRICT.strict());
-        assertFalse(CheckMode.LENIENT.strict());
     }
 }

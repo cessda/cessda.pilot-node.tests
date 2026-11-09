@@ -17,6 +17,7 @@
 
 package eu.cessda.pilotnode.strict;
 
+import com.fasterxml.jackson.annotation.JsonInclude;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 
@@ -31,30 +32,17 @@ import com.fasterxml.jackson.databind.node.ObjectNode;
  * @param actual   what was found
  * @param hint     optional pointer to a remedy, for example what lenient mode would have done
  */
-public record Finding(Severity severity, String code, String message, String subject, String url, String expected,
-                      String actual, String hint) {
+@JsonInclude(JsonInclude.Include.NON_EMPTY)
+public record Finding(Severity severity, String code, @JsonInclude(JsonInclude.Include.ALWAYS) String message,
+                      String subject, String url, String expected, String actual, String hint) {
 
     /** ERROR: the node does not conform or something does not work. WARNING: accepted but not as recommended. INFO: worth knowing. */
     public enum Severity {
         ERROR, WARNING, INFO
     }
 
+    /** The finding as JSON. Optional fields that are absent or empty are left out; {@code message} is always written. */
     public ObjectNode toJson(ObjectMapper mapper) {
-        ObjectNode n = mapper.createObjectNode();
-        n.put("severity", severity.name());
-        n.put("code", code);
-        n.put("message", message);
-        putIfPresent(n, "subject", subject);
-        putIfPresent(n, "url", url);
-        putIfPresent(n, "expected", expected);
-        putIfPresent(n, "actual", actual);
-        putIfPresent(n, "hint", hint);
-        return n;
-    }
-
-    private static void putIfPresent(ObjectNode n, String field, String value) {
-        if (value != null && !value.isBlank()) {
-            n.put(field, value);
-        }
+        return mapper.valueToTree(this);
     }
 }

@@ -248,7 +248,7 @@ public class CheckCatalogueServices {
                             CheckMode mode, Duration retryDelay)
             throws IOException, InterruptedException {
 
-        if (mode.strict()) {
+        if (mode == CheckMode.STRICT) {
             runStrict(mode.resolve(dashboardDir), nodeName, nodePid, selector, httpClient, mapper, retryDelay);
             return;
         }

@@ -311,7 +311,7 @@ public class CheckNodeCapabilities {
         StrictNodeCheck strictCheck = new StrictNodeCheck(http, mapper, dashboardDir, retryDelay,
                 format.contains(OutputFormat.JSON));
 
-        if (format.contains(OutputFormat.TEXT) && !mode.strict()) {
+        if (format.contains(OutputFormat.TEXT) && mode != CheckMode.STRICT) {
             writeTextHeader(summaryTxtPath);
         }
 
@@ -333,7 +333,7 @@ public class CheckNodeCapabilities {
 
             ObjectNode summary;
             try {
-                summary = mode.strict()
+                summary = mode == CheckMode.STRICT
                         ? strictCheck.check(new StrictNodeCheck.Node(nodeName, nodeId, nodePid, nodeEndpointString,
                                 nodeLogo, legalEntityName, legalEntityRor))
                         : checkNodeCapabilities(
@@ -364,7 +364,7 @@ public class CheckNodeCapabilities {
             }
             nodeSummaries.add(summary);
 
-            if (format.contains(OutputFormat.TEXT) && !mode.strict()) {
+            if (format.contains(OutputFormat.TEXT) && mode != CheckMode.STRICT) {
                 appendTextSummaryEntry(summaryTxtPath, summary);
             }
         }
