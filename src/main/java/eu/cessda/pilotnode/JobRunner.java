@@ -1,11 +1,11 @@
 package eu.cessda.pilotnode;
 
+import java.util.concurrent.Executor;
+import java.util.logging.Logger;
+
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.stereotype.Service;
-
-import java.util.concurrent.Executor;
-import java.util.logging.Logger;
 
 @Service
 public class JobRunner {
