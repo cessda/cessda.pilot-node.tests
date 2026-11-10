@@ -18,8 +18,6 @@
 package eu.cessda.pilotnode;
 
 import java.io.IOException;
-import java.net.URI;
-import java.net.URISyntaxException;
 import java.net.http.HttpClient;
 import java.nio.file.Path;
 import java.time.LocalDate;
@@ -32,6 +30,8 @@ import java.util.logging.Logger;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+
+import eu.cessda.pilotnode.catalogue.CatalogueSelector;
 
 /**
  * Runs every data-collection check in one pass: {@link CheckNodeCapabilities}
@@ -96,7 +96,7 @@ public class CheckAll {
      *                      is no earlier summary to fall back on
      */
     public static Result run(Path dashboardDir, String nodeApiKey, String argoApiKey,
-                              CheckCoreIntegrations.Source coreSource,
+                              CheckCoreIntegrations.Source coreSource, CatalogueSelector catalogueSelector,
                               Map<String, String> discoveryHubNodeAliases,
                               HttpClient http, ObjectMapper mapper) throws IOException {
 
@@ -140,7 +140,7 @@ public class CheckAll {
 
         for (String nodeName : nodeNames) {
             try {
-                runCatalogueServices(dashboardDir, nodeName, mapper, http);
+                runCatalogueServices(dashboardDir, nodeName, catalogueSelector, mapper, http);
                 result.catalogueOk++;
             } catch (SkippedException e) {
                 result.catalogueSkipped++;
@@ -222,36 +222,20 @@ public class CheckAll {
      * @throws SkippedException if the Node has no Resource Catalogue
      *                           capability endpoint to check
      */
-    static void runCatalogueServices(Path dashboardDir, String nodeName, ObjectMapper mapper,
-                                              HttpClient http)
-            throws IOException, URISyntaxException, InterruptedException, SkippedException {
+    static void runCatalogueServices(Path dashboardDir, String nodeName, CatalogueSelector selector,
+                                      ObjectMapper mapper, HttpClient http)
+            throws IOException, InterruptedException, SkippedException {
 
         Path reportPath = dashboardDir.resolve(nodeName).resolve("endpoint_report.json");
         if (!java.nio.file.Files.isRegularFile(reportPath)) {
             throw new SkippedException("no endpoint_report.json for this node");
         }
 
-        JsonNode root = mapper.readTree(reportPath.toFile());
-        String nodePid = root.path("node_pid").asText(null);
-        String catalogueUrlString = null;
-        for (JsonNode cap : root.path("capabilities")) {
-            if ("Resource Catalogue".equals(cap.path("capability_type").asText())) {
-                catalogueUrlString = cap.path("endpoint").asText("");
-                break;
-            }
+        try {
+            CheckCatalogueServices.runSelected(dashboardDir, nodeName, null, CATALOGUE_QUANTITY, selector, http, mapper);
+        } catch (CheckCatalogueServices.NoCatalogueEndpointException e) {
+            throw new SkippedException(e.getMessage());
         }
-
-        if (catalogueUrlString == null || catalogueUrlString.isBlank()) {
-            String error = root.path("error").asText("");
-            throw new SkippedException(error.isBlank()
-                    ? "no Resource Catalogue endpoint in endpoint_report.json"
-                    : "no Resource Catalogue endpoint: endpoint_report.json records an error (" + error + ")");
-        }
-
-        URI catalogueUrl = new URI(catalogueUrlString);
-        CheckCatalogueServices.run(dashboardDir, nodeName,
-                (nodePid == null || nodePid.isBlank()) ? null : nodePid,
-                catalogueUrl, CATALOGUE_QUANTITY, http, mapper);
     }
 
     /** Signals that a per-Node check was deliberately skipped, not failed. */
