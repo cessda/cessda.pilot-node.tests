@@ -151,6 +151,9 @@ whichever source URL actually answered (the node's own catalogue or the
 Sandbox fallback — see below); it isn't necessarily the same as
 `services.length` if `quantity` limited a fallback query.
 
+> **Strict mode.** In strict mode each endpoint is requested exactly as published, nothing is completed or
+> converted by guesswork, and there is no Sandbox fallback. See [Strict Mode](STRICT_MODE.md).
+
 ## Choosing the Catalogue Endpoint
 
 A node can offer several catalogue endpoints, in different formats (Data-Terra, for instance, lists a Service

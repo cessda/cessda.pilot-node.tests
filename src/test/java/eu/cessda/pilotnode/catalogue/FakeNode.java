@@ -28,8 +28,21 @@ public final class FakeNode implements AutoCloseable {
 
     private final HttpServer server;
     private final Map<String, Function<Map<String, String>, Reply>> routes = new ConcurrentHashMap<>();
+    /** Answers that need the whole exchange, for example by HTTP method or with a redirect; they take precedence. */
+    public interface RawHandler {
+        void handle(HttpExchange exchange) throws IOException;
+    }
+
+    private final Map<String, RawHandler> rawRoutes = new ConcurrentHashMap<>();
+
+    public void raw(String path, RawHandler handler) {
+        rawRoutes.put(path, handler);
+    }
+
     /** Every request, as "path?query". */
     public final List<String> requests = new CopyOnWriteArrayList<>();
+    /** Every request, as "METHOD path". */
+    public final List<String> methods = new CopyOnWriteArrayList<>();
 
     public FakeNode() throws IOException {
         server = HttpServer.create(new InetSocketAddress(InetAddress.getLoopbackAddress(), 0), 0);
@@ -57,6 +70,13 @@ public final class FakeNode implements AutoCloseable {
         String path = ex.getRequestURI().getPath();
         String raw = ex.getRequestURI().getRawQuery();
         requests.add(path + (raw == null ? "" : "?" + URLDecoder.decode(raw, StandardCharsets.UTF_8)));
+        methods.add(ex.getRequestMethod() + " " + path);
+        RawHandler rawHandler = rawRoutes.get(path);
+        if (rawHandler != null) {
+            rawHandler.handle(ex);
+            ex.close();
+            return;
+        }
         Function<Map<String, String>, Reply> handler = routes.get(path);
         Reply reply;
         try {

@@ -75,11 +75,20 @@ public final class CatalogueSelector {
 
     /** The node's catalogue endpoints in the order they will be tried: by type, then OPERATIONAL, then document order. */
     public List<CatalogueCandidate> candidates(JsonNode endpointReport) {
+        return collect(endpointReport, true);
+    }
+
+    /** The node's catalogue capabilities including any that give no endpoint, to tell "none declared" from "declared without one". */
+    public List<CatalogueCandidate> declaredCandidates(JsonNode endpointReport) {
+        return collect(endpointReport, false);
+    }
+
+    private List<CatalogueCandidate> collect(JsonNode endpointReport, boolean requireEndpoint) {
         List<CatalogueCandidate> all = new ArrayList<>();
         int order = 0;
         for (JsonNode cap : endpointReport.path("capabilities")) {
             String endpoint = cap.path("endpoint").asText("").trim();
-            if (!endpoint.isEmpty() && capabilityOrder.contains(normalise(cap.path("capability_type").asText("")))) {
+            if ((!requireEndpoint || !endpoint.isEmpty()) && capabilityOrder.contains(normalise(cap.path("capability_type").asText("")))) {
                 all.add(new CatalogueCandidate(cap.path("capability_type").asText(), text(cap, "protocol"), endpoint,
                         text(cap, "api_spec"), text(cap, "version"), text(cap, "declared_status"), order));
             }

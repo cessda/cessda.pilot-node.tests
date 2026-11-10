@@ -29,7 +29,7 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 
 /** Fetches a JSON document without letting a bad endpoint raise anything but a described failure. */
-final class JsonFetcher {
+public final class JsonFetcher {
 
     /** A catalogue page is far smaller than this; the limit stops a misbehaving endpoint from filling memory. */
     static final int MAX_BYTES = 20 * 1024 * 1024;
@@ -37,14 +37,59 @@ final class JsonFetcher {
 
     private JsonFetcher() {}
 
-    /** The parsed document, or why there is none. */
-    record Fetched(Integer status, JsonNode root, String problem) {
-        boolean ok() {
+    /**
+     * The parsed document, or why there is none.
+     *
+     * @param attempts how many requests it took (1 unless {@link #fetchWithRetries} had to try again)
+     */
+    public record Fetched(Integer status, JsonNode root, String problem, int attempts) {
+        public Fetched(Integer status, JsonNode root, String problem) {
+            this(status, root, problem, 1);
+        }
+
+        public boolean ok() {
             return root != null;
+        }
+
+        Fetched afterAttempts(int n) {
+            return new Fetched(status, root, problem, n);
         }
     }
 
-    static Fetched fetch(HttpClient http, ObjectMapper mapper, URI url) throws InterruptedException {
+    /**
+     * Fetches a document, trying again after a network error, a timeout or a 5xx response (all usually momentary).
+     * Other failures, such as a 404, are not retried. The delay before the next try grows with the attempt number.
+     */
+    public static Fetched fetchWithRetries(HttpClient http, ObjectMapper mapper, URI url, int maxAttempts,
+                                           Duration baseDelay) throws InterruptedException {
+        if (maxAttempts < 1) {
+            throw new IllegalArgumentException("maxAttempts must be at least 1: " + maxAttempts);
+        }
+        Fetched result = null;
+        for (int attempt = 1; attempt <= maxAttempts; attempt++) {
+            result = fetch(http, mapper, url).afterAttempts(attempt);
+            boolean transientFailure = !result.ok() && (result.status() == null || result.status() >= 500);
+            if (!transientFailure || attempt == maxAttempts) {
+                break;
+            }
+            Thread.sleep(baseDelay.toMillis() * attempt);
+        }
+        return result;
+    }
+
+    /**
+     * For a redirect that was not followed (the client does not follow a redirect from https to http, nor an endless
+     * chain), says where it points. The query string is left out: it can carry one-time login values.
+     */
+    public static String redirectNote(int status, String location) {
+        if (status < 300 || status > 399 || location == null || location.isBlank()) {
+            return "";
+        }
+        int query = location.indexOf('?');
+        return ", redirecting to " + (query < 0 ? location : location.substring(0, query)) + " (not followed)";
+    }
+
+    public static Fetched fetch(HttpClient http, ObjectMapper mapper, URI url) throws InterruptedException {
         try {
             HttpRequest request = HttpRequest.newBuilder(url)
                     .timeout(TIMEOUT)
@@ -54,7 +99,8 @@ final class JsonFetcher {
             HttpResponse<InputStream> response = http.send(request, HttpResponse.BodyHandlers.ofInputStream());
             try (InputStream in = response.body()) {
                 if (response.statusCode() != 200) {
-                    return new Fetched(response.statusCode(), null, "HTTP " + response.statusCode());
+                    return new Fetched(response.statusCode(), null, "HTTP " + response.statusCode()
+                            + redirectNote(response.statusCode(), response.headers().firstValue("Location").orElse(null)));
                 }
                 byte[] bytes = in.readNBytes(MAX_BYTES + 1);
                 if (bytes.length > MAX_BYTES) {

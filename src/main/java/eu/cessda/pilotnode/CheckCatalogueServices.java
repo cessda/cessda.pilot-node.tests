@@ -36,6 +36,9 @@ import java.util.logging.Logger;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import eu.cessda.pilotnode.catalogue.CatalogueSelector;
+import eu.cessda.pilotnode.strict.StrictCatalogueSelector;
+import eu.cessda.pilotnode.strict.Findings;
+import eu.cessda.pilotnode.strict.CheckMode;
 import eu.cessda.pilotnode.catalogue.CatalogueList;
 import eu.cessda.pilotnode.catalogue.CatalogueContext;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -223,9 +226,32 @@ public class CheckCatalogueServices {
         runSelected(dashboardDir, nodeName, nodePid, quantity, selector, httpClient, mapper, FALLBACK_BASE_URL);
     }
 
+    /** Reads the node's services in the given mode; see {@link CheckMode}. Strict mode never uses the Sandbox. */
+    public static void runSelected(Path dashboardDir, String nodeName, String nodePid, int quantity,
+                                   CatalogueSelector selector, HttpClient httpClient, ObjectMapper mapper, CheckMode mode)
+            throws IOException, InterruptedException {
+        runSelected(dashboardDir, nodeName, nodePid, quantity, selector, httpClient, mapper, FALLBACK_BASE_URL, mode,
+                STRICT_RETRY_DELAY);
+    }
+
     static void runSelected(Path dashboardDir, String nodeName, String nodePid, int quantity,
                             CatalogueSelector selector, HttpClient httpClient, ObjectMapper mapper, URI fallbackBase)
             throws IOException, InterruptedException {
+        runSelected(dashboardDir, nodeName, nodePid, quantity, selector, httpClient, mapper, fallbackBase,
+                CheckMode.LENIENT, STRICT_RETRY_DELAY);
+    }
+
+    private static final Duration STRICT_RETRY_DELAY = Duration.ofSeconds(1);
+
+    static void runSelected(Path dashboardDir, String nodeName, String nodePid, int quantity,
+                            CatalogueSelector selector, HttpClient httpClient, ObjectMapper mapper, URI fallbackBase,
+                            CheckMode mode, Duration retryDelay)
+            throws IOException, InterruptedException {
+
+        if (mode == CheckMode.STRICT) {
+            runStrict(mode.resolve(dashboardDir), nodeName, nodePid, selector, httpClient, mapper, retryDelay);
+            return;
+        }
 
         Path endpointReportPath = dashboardDir.resolve(nodeName).resolve("endpoint_report.json");
         JsonNode endpointReport = mapper.readTree(endpointReportPath.toFile());
@@ -263,7 +289,7 @@ public class CheckCatalogueServices {
             provenance.put("converted", chosen.list().converted());
             log.log(Level.INFO, "Using {0} ({1})", new Object[]{chosen.candidate(), chosen.format()});
             source = new Source(chosen.list().root(), URI.create(chosen.candidate().endpoint()), null, pid, provenance,
-                    tried, chosen.list().invalid(), chosen.list().warnings());
+                    tried, chosen.list().invalid(), chosen.list().warnings(), null);
         } else {
             String reason = result.attempts().isEmpty()
                     ? "no Service Catalogue or Resource Catalogue endpoint"
@@ -272,9 +298,80 @@ public class CheckCatalogueServices {
             source = sandboxSource(httpClient, mapper, pid, endpointReport.path("node_endpoint").asText(""), reason,
                     quantity, fallbackBase, null);
             source = new Source(source.root(), source.apiUrl(), source.fallbackReason(), source.nodePid(), null, tried,
-                    List.of(), List.of());
+                    List.of(), List.of(), null);
         }
         checkAndReport(dashboardDir, nodeName, source, httpClient, mapper);
+    }
+
+    private static void runStrict(Path strictDir, String nodeName, String nodePid, CatalogueSelector selector,
+                                  HttpClient httpClient, ObjectMapper mapper, Duration retryDelay)
+            throws IOException, InterruptedException {
+
+        Path endpointReportPath = strictDir.resolve(nodeName).resolve("endpoint_report.json");
+        if (!Files.isRegularFile(endpointReportPath)) {
+            throw new NoCatalogueEndpointException("no strict endpoint_report.json for this node: run Node Capabilities in"
+                    + " strict mode first");
+        }
+        JsonNode endpointReport = mapper.readTree(endpointReportPath.toFile());
+        String pid = nodePid == null || nodePid.isBlank() ? endpointReport.path("node_pid").asText(null) : nodePid;
+
+        List<eu.cessda.pilotnode.catalogue.CatalogueCandidate> candidates = selector.candidates(endpointReport);
+        List<eu.cessda.pilotnode.catalogue.CatalogueCandidate> declared = selector.declaredCandidates(endpointReport);
+        if (candidates.isEmpty() && !declared.isEmpty()) {
+            // The node says it has a catalogue but publishes no endpoint for it: a finding, not a node to skip.
+            Findings findings = new Findings();
+            for (var d : declared) {
+                findings.error("catalogue-endpoint-missing", "The node declares a " + d.capabilityType() + " but publishes no endpoint for it",
+                        d.capabilityType(), null, "an absolute http(s) endpoint", "none",
+                        "See the findings of the strict Node Capabilities report for this capability");
+            }
+            ObjectNode empty = mapper.createObjectNode();
+            empty.put("total", 0).put("from", 0).put("to", 0);
+            empty.putArray("results");
+            Source source = new Source(empty, URI.create(endpointReport.path("node_endpoint").asText("http://invalid.invalid")), null,
+                    pid, null, mapper.createArrayNode(), List.of(), List.of(), findings);
+            checkAndReport(strictDir, nodeName, source, httpClient, mapper);
+            return;
+        }
+        if (candidates.isEmpty()) {
+            String error = endpointReport.path("error").asText("");
+            throw new NoCatalogueEndpointException(error.isBlank()
+                    ? "no Service Catalogue or Resource Catalogue endpoint in the strict endpoint_report.json"
+                    : "no Service Catalogue or Resource Catalogue endpoint: the strict endpoint_report.json records an error ("
+                            + error + ")");
+        }
+        log.log(Level.INFO, "Strict Exchange Services check for {0}; endpoints as published: {1}", new Object[]{nodeName, candidates});
+
+        StrictCatalogueSelector.Outcome outcome = new StrictCatalogueSelector(selector, httpClient, mapper, retryDelay)
+                .select(endpointReport, new CatalogueContext(pid));
+        ArrayNode tried = mapper.createArrayNode();
+        for (CatalogueSelector.Attempt attempt : outcome.attempts()) {
+            ObjectNode a = tried.addObject();
+            a.put("capability_type", attempt.candidate().capabilityType());
+            a.put("endpoint", attempt.candidate().endpoint());
+            a.put("outcome", attempt.outcome());
+        }
+
+        Source source;
+        if (outcome.selection().isPresent()) {
+            CatalogueSelector.Selection chosen = outcome.selection().get();
+            ObjectNode provenance = mapper.createObjectNode();
+            provenance.put("capability_type", chosen.candidate().capabilityType());
+            provenance.put("endpoint", chosen.candidate().endpoint());
+            provenance.put("protocol", chosen.candidate().protocol());
+            provenance.put("adapter", chosen.adapterId());
+            provenance.put("format", chosen.format());
+            provenance.put("converted", chosen.list().converted());
+            source = new Source(chosen.list().root(), URI.create(chosen.candidate().endpoint()), null, pid, provenance, tried,
+                    chosen.list().invalid(), chosen.list().warnings(), outcome.findings());
+        } else {
+            ObjectNode empty = mapper.createObjectNode();
+            empty.put("total", 0).put("from", 0).put("to", 0);
+            empty.putArray("results");
+            source = new Source(empty, URI.create(candidates.get(0).endpoint().trim()), null, pid, null, tried, List.of(),
+                    List.of(), outcome.findings());
+        }
+        checkAndReport(strictDir, nodeName, source, httpClient, mapper);
     }
 
     /** The node's {@code endpoint_report.json} lists no catalogue endpoint at all, so there is nothing to read. */
@@ -290,10 +387,11 @@ public class CheckCatalogueServices {
 
     /** The services to check, and how they were obtained. */
     private record Source(JsonNode root, URI apiUrl, String fallbackReason, String nodePid, ObjectNode provenance,
-                          ArrayNode tried, List<CatalogueList.InvalidRecord> invalid, List<String> warnings) {
+                          ArrayNode tried, List<CatalogueList.InvalidRecord> invalid, List<String> warnings,
+                          Findings findings) {
 
         static Source of(JsonNode root, URI apiUrl, String nodePid) {
-            return new Source(root, apiUrl, null, nodePid, null, null, List.of(), List.of());
+            return new Source(root, apiUrl, null, nodePid, null, null, List.of(), List.of(), null);
         }
     }
 
@@ -351,7 +449,7 @@ public class CheckCatalogueServices {
         if (root.has("error")) {
             filtered.set("error", root.get("error"));
         }
-        return new Source(filtered, fallbackUrl, reason, nodePid, null, null, List.of(), List.of());
+        return new Source(filtered, fallbackUrl, reason, nodePid, null, null, List.of(), List.of(), null);
     }
 
     // ── checking and reporting ────────────────────────────────────────────
@@ -501,6 +599,11 @@ public class CheckCatalogueServices {
         report.put("generated", Instant.now().toString());
         report.put("node_name",      nodeName);
         report.put("api_source", apiUrl.toString());
+        if (source.findings() != null) {
+            source.findings().writeTo(report, mapper);
+        } else {
+            report.put("mode", CheckMode.LENIENT.label());
+        }
         if (fallbackReason != null) {
             report.put("fallback", true);
             report.put("fallback_reason", fallbackReason);

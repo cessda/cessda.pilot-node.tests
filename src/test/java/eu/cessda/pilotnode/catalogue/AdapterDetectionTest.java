@@ -87,4 +87,15 @@ class AdapterDetectionTest {
                 lot1.probeUrls(java.net.URI.create("https://x/services")).get(0).toString());
         assertEquals("https://x/api/service/all", beyond.probeUrls(java.net.URI.create("https://x/api")).get(0).toString());
     }
+
+    @Test
+    void aRedirectNoteNamesTheTargetButNeverItsQueryString() {
+        assertEquals(", redirecting to https://login.example.org/auth (not followed)",
+                JsonFetcher.redirectNote(302, "https://login.example.org/auth?state=abc&nonce=def"));
+        assertEquals(", redirecting to http://x/api/ (not followed)", JsonFetcher.redirectNote(301, "http://x/api/"));
+        assertEquals("", JsonFetcher.redirectNote(200, "http://x"));
+        assertEquals("", JsonFetcher.redirectNote(404, "http://x"));
+        assertEquals("", JsonFetcher.redirectNote(302, null));
+        assertEquals("", JsonFetcher.redirectNote(302, " "));
+    }
 }
