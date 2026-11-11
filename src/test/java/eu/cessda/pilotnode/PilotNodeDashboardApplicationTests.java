@@ -7,6 +7,7 @@ import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.test.web.servlet.MockMvc;
 
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 @SpringBootTest
@@ -24,6 +25,13 @@ class PilotNodeDashboardApplicationTests {
     @Test
     void nodePageLoads() throws Exception {
         mockMvc.perform(get("/node.html")).andExpect(status().isOk());
+    }
+
+    @Test
+    void pagesScriptsAndStylesAreNeverCached() throws Exception {
+        for (String file : new String[]{"/index.html", "/node.html", "/scripts.js", "/style.css"}) {
+            mockMvc.perform(get(file)).andExpect(status().isOk()).andExpect(header().string("Cache-Control", "no-store"));
+        }
     }
 
     @Test
