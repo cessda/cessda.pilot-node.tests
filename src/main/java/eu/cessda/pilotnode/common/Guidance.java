@@ -87,6 +87,9 @@ public final class Guidance {
                     + "answers can be checked against it."),
             Map.entry("version-differs-from-api-spec", "Check that the version in your Node Endpoint is the version you "
                     + "mean to advertise. If it should match the specification, correct whichever is wrong."),
+            Map.entry("payload-differs-from-api-spec", "Either change the service so that its answer follows the "
+                    + "specification at api_spec, or, if the specification describes another version or is out of date, "
+                    + "correct it or the api_spec URL in your Node Endpoint. The first differences are under Found."),
 
             // Exchange Services
             Map.entry("catalogue-endpoint-missing", "Add an endpoint to this capability in your Node Endpoint: the address "

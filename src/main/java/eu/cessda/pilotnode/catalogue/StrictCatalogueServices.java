@@ -106,6 +106,9 @@ public final class StrictCatalogueServices {
             provenance.put("adapter", chosen.adapterId());
             provenance.put("format", chosen.format());
             provenance.put("converted", chosen.list().converted());
+            if (outcome.payloadCheck() != null) {
+                provenance.set("payload_check", outcome.payloadCheck());
+            }
             source = new Source(chosen.list().root(), URI.create(chosen.candidate().endpoint()), null, pid, provenance, tried,
                     chosen.list().invalid(), chosen.list().warnings(), outcome.findings());
         } else {

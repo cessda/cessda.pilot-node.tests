@@ -67,6 +67,11 @@ const STRICT_REPORT_TYPES = [
     { key: 'strictCore',      file: 'core_integrations_report.json',  label: 'Core Service integrations', icon: '🧩' },
 ];
 
+/** "1 error", "2 errors", "0 errors". */
+function plural(n, word) {
+    return `${n || 0} ${word}${n === 1 ? '' : 's'}`;
+}
+
 /** Text that came from a node (a URL, a response) must not be taken for markup. */
 function escapeHtml(value) {
     return String(value ?? '').replace(/[&<>"']/g,
@@ -109,6 +114,51 @@ function renderFinding(f) {
     </details>`;
 }
 
+// What became of checking each answer against its api_spec: followed it, broke it (with the violations), or was not
+// checked (with the reason). Node Capabilities has one per capability; Exchange Services one for the catalogue read.
+function payloadItems(type, report) {
+    if (type.key === 'strictEndpoint') {
+        return (report.capabilities || []).filter(c => c.payload_check)
+            .map(c => ({ title: c.capability_type, url: c.endpoint, check: c.payload_check }));
+    }
+    if (type.key === 'strictCatalogue' && report.source && report.source.payload_check) {
+        return [{ title: report.source.capability_type, url: report.source.endpoint, check: report.source.payload_check }];
+    }
+    return [];
+}
+
+function renderPayloadItem({ title, url, check }) {
+    let badge, detail = '';
+    if (check.status === 'checked') {
+        const pass = check.result === 'PASS';
+        badge = `<span class="badge ${pass ? 'badge-ok' : 'badge-error'}">${pass ? 'Follows api_spec' : 'Breaks api_spec'}</span>`;
+        detail = `<span class="strict-check-meta">${escapeHtml(check.operation || '')}</span>`;
+        if (!pass) {
+            const more = (check.violation_count || 0) - (check.violations || []).length;
+            detail += `<details class="strict-finding"><summary>${check.violation_count} violation(s)</summary>
+              <div class="strict-finding-body">${(check.violations || []).map(v => `<div>${escapeHtml(v)}</div>`).join('')}
+              ${more > 0 ? `<div class="strict-finding-key">and ${more} more</div>` : ''}</div></details>`;
+        }
+    } else {
+        badge = '<span class="badge badge-missing">Not checked</span>';
+        detail = `<span class="strict-check-meta">${escapeHtml(check.reason || '')}</span>`;
+    }
+    return `<div class="strict-payload">
+      <div class="strict-payload-head">${badge} <span>${escapeHtml(title || '')}</span>
+        <span class="strict-check-meta">${escapeHtml(url || '')}</span></div>
+      <div class="strict-payload-detail">${detail}</div>
+    </div>`;
+}
+
+function renderPayloadChecks(type, report) {
+    const items = payloadItems(type, report);
+    if (items.length === 0) return '';
+    return `<div class="strict-payloads">
+      <div class="strict-payloads-head">Answers checked against the api_spec</div>
+      ${items.map(renderPayloadItem).join('')}
+    </div>`;
+}
+
 function renderStrictCheck(type, report) {
     if (!report) {
         return `<div class="strict-check"><div class="strict-check-head">
@@ -118,23 +168,23 @@ function renderStrictCheck(type, report) {
         .sort((a, b) => (SEVERITY_ORDER[a.severity] ?? 9) - (SEVERITY_ORDER[b.severity] ?? 9));
     const pass = report.strict_result === 'PASS';
     const generated = report.generated ? `<span class="strict-check-meta">${escapeHtml(report.generated)}</span>` : '';
-    const count = (n, word) => `${n || 0} ${word}${n === 1 ? '' : 's'}`;
     // One line per category; it opens to show the findings.
     return `<details class="strict-check">
       <summary class="strict-check-head">
         <span>${type.icon} ${type.label}</span>
         <span class="badge ${pass ? 'badge-ok' : 'badge-error'}">${pass ? 'Pass' : 'Fail'}</span>
-        <span class="strict-check-meta">${count(report.findings_error, 'error')} · ${count(report.findings_warning, 'warning')} · ${count(report.findings_info, 'note')}</span>
+        <span class="strict-check-meta">${plural(report.findings_error, 'error')} · ${plural(report.findings_warning, 'warning')} · ${plural(report.findings_info, 'note')}</span>
         ${generated}
       </summary>
       ${report.error ? `<div class="panel-missing" style="padding:0.5rem 0.9rem;">✕ ${escapeHtml(report.error)}</div>` : ''}
       ${findings.length ? findings.map(renderFinding).join('') : '<div class="panel-missing" style="padding:0.5rem 0.9rem;">No findings.</div>'}
+      ${renderPayloadChecks(type, report)}
     </details>`;
 }
 
 // The node page in strict mode has the same panels as in lenient mode, built from the strict reports (which have the
 // same content, plus findings). Each panel ends with the strict result of the check or checks behind it: one line that
-// opens to show the findings. A check that has not been run shows as
+// opens to show the findings, and the answers checked against the api_spec. A check that has not been run shows as
 // such, under an empty panel.
 function strictChecks(panelHtml, strict, ...keys) {
     const checks = keys.map(key => renderStrictCheck(STRICT_REPORT_TYPES.find(t => t.key === key), strict[key])).join('');
@@ -1548,6 +1598,7 @@ async function runCatalogueCheck() {
 
     // The backend chooses which of the node's catalogue endpoints to read (a Service Catalogue first, then a
     // Resource Catalogue, in whichever format it can read); the page only names the node and its PID.
+    // The PID is optional: without it the server reads it from the node's own report.
     const epData = await fetchLenientReport(nodeName, 'endpoint_report.json') || await fetchStrictReport(nodeName, 'endpoint_report.json');
     const nodePid = epData?.node_pid || null;
 

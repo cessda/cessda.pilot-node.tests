@@ -421,4 +421,84 @@ class StrictNodeCapabilitiesTest {
         assertEquals("HTTP 302, redirecting to https://login.example.org/oidc/authorize (not followed)", f.path("actual").asText());
         assertFalse(report.toString().contains("SECRET"), "no one-time login values in the report");
     }
+
+    // ── the payload, against the api_spec ────────────────────────────────────
+
+    private static final String LIST_SPEC = "{\"openapi\":\"3.0.3\",\"paths\":{\"/list\":{\"get\":{\"responses\":{\"200\":"
+            + "{\"content\":{\"application/json\":{\"schema\":{\"type\":\"object\",\"required\":[\"total\"],"
+            + "\"properties\":{\"total\":{\"type\":\"integer\"}}}}}}}}}}}";
+
+    private JsonNode payloadRun(String listBody, String specExtra, String specBody) throws IOException {
+        addNode("P", "/node/p");
+        node.route("/list", q -> new FakeNode.Reply(200, listBody));
+        if (specBody != null) {
+            node.route("/spec", q -> new FakeNode.Reply(200, specBody));
+        }
+        document("/node/p", cap("Service Catalogue", "/list", specExtra));
+        run(CheckMode.STRICT);
+        return strictReport("P");
+    }
+
+    @Test
+    void anAnswerThatFollowsTheApiSpecIsCheckedAndPasses() throws IOException {
+        JsonNode report = payloadRun("{\"total\":3}", "\"api_spec\":\"" + node.base() + "/spec\"", LIST_SPEC);
+        JsonNode check = report.path("capabilities").get(0).path("payload_check");
+        assertEquals("checked", check.path("status").asText());
+        assertEquals("PASS", check.path("result").asText());
+        assertEquals("GET /list", check.path("operation").asText());
+        assertEquals(1, findings(report, "payload-matches-api-spec").size());
+        assertEquals(0, findings(report, "payload-differs-from-api-spec").size());
+    }
+
+    @Test
+    void anAnswerThatBreaksTheApiSpecFailsAndTheViolationIsShown() throws IOException {
+        JsonNode report = payloadRun("{\"total\":\"three\"}", "\"api_spec\":\"" + node.base() + "/spec\"", LIST_SPEC);
+        JsonNode check = report.path("capabilities").get(0).path("payload_check");
+        assertEquals("FAIL", check.path("result").asText());
+        assertEquals(1, check.path("violation_count").asInt());
+        assertTrue(check.path("violations").get(0).asText().contains("total"), check.toString());
+        var f = findings(report, "payload-differs-from-api-spec");
+        assertEquals(1, f.size());
+        assertEquals("ERROR", f.get(0).path("severity").asText());
+        assertEquals("FAIL", report.path("strict_result").asText());
+    }
+
+    @Test
+    void withNoApiSpecThePayloadIsReportedAsNotChecked() throws IOException {
+        JsonNode report = payloadRun("{\"total\":3}", "", null);
+        JsonNode check = report.path("capabilities").get(0).path("payload_check");
+        assertEquals("not_checked", check.path("status").asText());
+        assertEquals("no api_spec is published", check.path("reason").asText());
+        assertEquals(0, findings(report, "payload-differs-from-api-spec").size());
+        assertEquals(0, findings(report, "payload-matches-api-spec").size());
+    }
+
+    @Test
+    void anApiSpecThatIsADocumentationPageMeansThePayloadIsNotChecked() throws IOException {
+        JsonNode report = payloadRun("{\"total\":3}", "\"api_spec\":\"" + node.base() + "/spec\"", "<html>docs</html>");
+        JsonNode check = report.path("capabilities").get(0).path("payload_check");
+        assertEquals("not_checked", check.path("status").asText());
+        assertTrue(check.path("reason").asText().contains("could not be read as a JSON document"), check.toString());
+    }
+
+    @Test
+    void anApiSpecWithNoPathForTheEndpointSaysSo() throws IOException {
+        String other = LIST_SPEC.replace("\"/list\"", "\"/elsewhere\"");
+        JsonNode report = payloadRun("{\"total\":3}", "\"api_spec\":\"" + node.base() + "/spec\"", other);
+        JsonNode check = report.path("capabilities").get(0).path("payload_check");
+        assertEquals("not_checked", check.path("status").asText());
+        assertTrue(check.path("reason").asText().contains("no path for /list"), check.toString());
+    }
+
+    @Test
+    void anEndpointThatDoesNotAnswerHasNoPayloadToCheck() throws IOException {
+        addNode("P", "/node/p");
+        node.status("/list", 503);
+        node.route("/spec", q -> new FakeNode.Reply(200, LIST_SPEC));
+        document("/node/p", cap("Service Catalogue", "/list", "\"api_spec\":\"" + node.base() + "/spec\""));
+        run(CheckMode.STRICT);
+        JsonNode check = strictReport("P").path("capabilities").get(0).path("payload_check");
+        assertEquals("not_checked", check.path("status").asText());
+        assertEquals("the endpoint did not answer successfully", check.path("reason").asText());
+    }
 }

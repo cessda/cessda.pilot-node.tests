@@ -36,6 +36,7 @@ import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 
 import eu.cessda.pilotnode.common.Finding;
+import eu.cessda.pilotnode.common.OpenApiPayloadCheck;
 import eu.cessda.pilotnode.common.Findings;
 import eu.cessda.pilotnode.common.CheckMode;
 import eu.cessda.pilotnode.catalogue.JsonFetcher;
@@ -139,8 +140,9 @@ public final class StrictNodeCapabilities {
             row.put("declared_status", declared);
 
             total++;
+            Probe probe = null;
             if (CapabilitiesModel.isHttp(endpointText)) {
-                Probe probe = probe(URI.create(endpointText));
+                probe = probe(URI.create(endpointText));
                 row.put("status", probe.ok() ? "Available" : "Not available");
                 if (probe.code() != null) {
                     row.put("http_code", probe.code());
@@ -158,6 +160,7 @@ public final class StrictNodeCapabilities {
             }
 
             checkApiSpec(findings, subject, cap, specs);
+            row.set("payload_check", checkPayload(findings, subject, endpointText, textOrNull(cap, "api_spec"), probe, specs));
         }
 
         report.put("total_capabilities", total);
@@ -167,7 +170,16 @@ public final class StrictNodeCapabilities {
 
     // ── one GET, as published ─────────────────────────────────────────────
 
-    private record Probe(Integer code, boolean ok, String finalUrl, boolean redirected, String error, String location) {}
+    /** What a GET answered: the status, and the body unless it was larger than {@link #MAX_BODY_BYTES}. */
+    private record Probe(Integer code, boolean ok, String finalUrl, boolean redirected, String error, String location,
+                         byte[] body, boolean bodyTooLarge) {
+        Probe(Integer code, boolean ok, String finalUrl, boolean redirected, String error, String location) {
+            this(code, ok, finalUrl, redirected, error, location, null, false);
+        }
+    }
+
+    /** A payload is only checked if it is smaller than this; the limit stops a misbehaving endpoint filling memory. */
+    static final int MAX_BODY_BYTES = 5 * 1024 * 1024;
 
     private Probe probe(URI url) throws InterruptedException {
         try {
@@ -177,11 +189,20 @@ public final class StrictNodeCapabilities {
                     .header("Accept", "*/*")
                     .timeout(PROBE_TIMEOUT)
                     .build();
-            HttpResponse<Void> response = http.send(request, HttpResponse.BodyHandlers.discarding());
+            HttpResponse<java.io.InputStream> response = http.send(request, HttpResponse.BodyHandlers.ofInputStream());
             int code = response.statusCode();
             boolean redirected = response.previousResponse().isPresent();
+            byte[] body = null;
+            boolean tooLarge = false;
+            try (java.io.InputStream in = response.body()) {
+                if (code >= 200 && code < 300) {
+                    byte[] read = in.readNBytes(MAX_BODY_BYTES + 1);
+                    tooLarge = read.length > MAX_BODY_BYTES;
+                    body = tooLarge ? null : read;
+                }
+            }
             return new Probe(code, code >= 200 && code < 300, response.uri().toString(), redirected, null,
-                    response.headers().firstValue("Location").orElse(null));
+                    response.headers().firstValue("Location").orElse(null), body, tooLarge);
         } catch (IOException e) {
             return new Probe(null, false, null, false, e.getMessage() == null ? e.getClass().getSimpleName() : e.getMessage(), null);
         } catch (IllegalArgumentException e) {
@@ -216,6 +237,52 @@ public final class StrictNodeCapabilities {
                                 ? "The redirect leads from https to http, which is never followed. Publish the URL that answers."
                                 : !note.isEmpty() ? "Publish the URL that answers, or the one the redirect leads to"
                                 : null));
+    }
+
+    // ── the payload, against the api_spec ──────────────────────────────────
+
+    /**
+     * Checks what the endpoint answered against its {@code api_spec}, if that is an OpenAPI document, and returns the
+     * result as the row's {@code payload_check}: checked (PASS or FAIL, with the violations), or not checked, with the
+     * reason. A failure is an error finding and a pass a note; a payload that could not be checked is only recorded
+     * in the row.
+     */
+    private ObjectNode checkPayload(Findings f, String subject, String url, String spec, Probe probe,
+                                    Map<String, JsonFetcher.Fetched> specs) {
+        String specUrl = spec == null || spec.isBlank() ? null : spec.trim();
+        if (specUrl == null) {
+            return notChecked("no api_spec is published", null);
+        }
+        if (probe == null) {
+            return notChecked("the endpoint is not an http(s) URL, so there is no answer to check", specUrl);
+        }
+        if (!probe.ok()) {
+            return notChecked("the endpoint did not answer successfully", specUrl);
+        }
+        if (!CapabilitiesModel.isHttp(specUrl)) {
+            return notChecked("the api_spec is not an http(s) URL", specUrl);
+        }
+        JsonFetcher.Fetched fetched = specs.get(specUrl);
+        if (fetched == null || !fetched.ok()) {
+            return notChecked("the api_spec could not be read as a JSON document ("
+                    + (fetched == null ? "not requested" : fetched.problem()) + ")", specUrl);
+        }
+        if (probe.bodyTooLarge() || probe.body() == null) {
+            return notChecked("the answer is larger than " + MAX_BODY_BYTES / (1024 * 1024) + " MB", specUrl);
+        }
+        JsonNode payload;
+        try {
+            payload = mapper.readTree(probe.body());
+        } catch (IOException e) {
+            payload = null;
+        }
+        OpenApiPayloadCheck.Result result = OpenApiPayloadCheck.check(fetched.root(), URI.create(url), payload);
+        OpenApiPayloadCheck.addFindings(f, subject, url, specUrl, result);
+        return result.toJson(mapper, specUrl);
+    }
+
+    private ObjectNode notChecked(String reason, String specUrl) {
+        return OpenApiPayloadCheck.Result.notChecked(reason).toJson(mapper, specUrl);
     }
 
     // ── api_spec and version ──────────────────────────────────────────────

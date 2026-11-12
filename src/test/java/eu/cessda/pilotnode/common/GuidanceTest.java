@@ -32,7 +32,7 @@ class GuidanceTest {
     @Test
     void errorsAndWarningsSayWhatToChangeInTheNodeEndpoint() {
         for (String code : new String[]{"endpoint-http-error", "api-spec-unreachable", "catalogue-unreachable",
-                "monitoring-endpoint-not-a-data-api", "node-endpoint-unavailable"}) {
+                "monitoring-endpoint-not-a-data-api", "node-endpoint-unavailable", "payload-differs-from-api-spec"}) {
             assertNotNull(Guidance.fix(code), code);
         }
         assertTrue(Guidance.fix("api-spec-not-machine-readable").contains("api_spec"));

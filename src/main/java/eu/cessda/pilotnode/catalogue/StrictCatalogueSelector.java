@@ -29,8 +29,10 @@ import java.util.regex.Pattern;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.node.ObjectNode;
 
 import eu.cessda.pilotnode.capabilities.CapabilitiesModel;
+import eu.cessda.pilotnode.common.OpenApiPayloadCheck;
 import eu.cessda.pilotnode.common.Findings;
 
 /**
@@ -57,7 +59,7 @@ public final class StrictCatalogueSelector {
 
     /** What happened to the strict selection. */
     public record Outcome(Optional<CatalogueCandidates.Selection> selection, Findings findings,
-                          List<CatalogueCandidates.Attempt> attempts) {}
+                          List<CatalogueCandidates.Attempt> attempts, ObjectNode payloadCheck) {}
 
     private final CatalogueCandidates candidateSource;
     private final HttpClient http;
@@ -81,6 +83,7 @@ public final class StrictCatalogueSelector {
         Findings findings = new Findings();
         List<CatalogueCandidates.Attempt> attempts = new ArrayList<>();
         Optional<CatalogueCandidates.Selection> selection = Optional.empty();
+        ObjectNode payloadCheck = null;
 
         for (CatalogueCandidate candidate : candidateSource.candidates(endpointReport)) {
             if (selection.isPresent()) {
@@ -132,7 +135,7 @@ public final class StrictCatalogueSelector {
                 continue;
             }
 
-            checkAgainstDeclarations(findings, candidate, subject, adapter, format);
+            ObjectNode checked = checkAgainstDeclarations(findings, candidate, subject, adapter, format, url, fetched.root());
             Recognised recognised = new Recognised(candidate, adapter, format,
                     new CatalogueAdapter.Probe(url, url, fetched.root()), subject);
             try {
@@ -140,6 +143,7 @@ public final class StrictCatalogueSelector {
                 reportList(findings, recognised, list);
                 attempts.add(new CatalogueCandidates.Attempt(candidate, "used (" + format + ")"));
                 selection = Optional.of(new CatalogueCandidates.Selection(candidate, adapter.id(), format, list));
+                payloadCheck = checked;
             } catch (IOException e) {
                 findings.error("catalogue-read-failed", "The catalogue was recognised but could not be read in full", subject,
                         candidate.endpoint(), "the whole list", e.getMessage(), null);
@@ -150,31 +154,56 @@ public final class StrictCatalogueSelector {
             findings.error("no-readable-catalogue", "None of the node's catalogue endpoints returned a service list", null, null,
                     "at least one readable service list", attempts.size() + " endpoint(s) tried", null);
         }
-        return new Outcome(selection, findings, attempts);
+        return new Outcome(selection, findings, attempts, payloadCheck);
     }
 
     // ── what the node says about the endpoint ───────────────────────────────
 
-    private void checkAgainstDeclarations(Findings f, CatalogueCandidate candidate, String subject, CatalogueAdapter adapter,
-                                          String format) {
+    /**
+     * Compares the response with what the node declares, and returns what became of the payload check: checked against
+     * the Lot-1 release the {@code api_spec} names, or against an OpenAPI {@code api_spec}'s response schema, or not
+     * checked (no {@code api_spec}, or one that cannot be used), with the reason.
+     */
+    private ObjectNode checkAgainstDeclarations(Findings f, CatalogueCandidate candidate, String subject, CatalogueAdapter adapter,
+                                                String format, URI requested, JsonNode response) throws InterruptedException {
         String spec = candidate.apiSpec();
         String url = candidate.endpoint();
+        ObjectNode payloadCheck;
         if (spec == null || spec.isBlank()) {
             f.info("api-spec-absent", "No api_spec is published, so the response was checked only against the format recognised from it",
                     subject, url, "an api_spec naming the format", "absent (recognised: " + format + ")", null);
+            payloadCheck = OpenApiPayloadCheck.Result.notChecked("no api_spec is published (the response was only matched with the "
+                    + "format recognised from it: " + format + ")").toJson(mapper, null);
         } else {
             Matcher m = LOT1_SPEC.matcher(spec);
             if (m.find()) {
                 String declared = "Lot-1 " + m.group(1);
+                ObjectNode n = mapper.createObjectNode();
+                n.put("status", "checked");
+                n.put("api_spec", spec);
+                n.put("operation", "the EOSC-Lot-1 " + m.group(1) + " service list");
                 if (declared.equals(format)) {
                     f.info("payload-matches-api-spec", "The response is " + format + ", as the api_spec says", subject, url, declared, format, null);
+                    n.put("result", "PASS");
+                    n.put("violation_count", 0);
+                    n.putArray("violations");
                 } else {
                     f.error("format-differs-from-api-spec", "The response is not the format that api_spec names", subject, url,
                             declared + " (from api_spec " + spec + ")", format, null);
+                    n.put("result", "FAIL");
+                    n.put("violation_count", 1);
+                    n.putArray("violations").add("the response is " + format + ", not " + declared);
                 }
+                payloadCheck = n;
             } else {
-                f.info("api-spec-not-used", "api_spec is not a specification this check can compare the response with", subject, spec,
-                        null, "response recognised as " + format, "Lot-1 releases are recognised by their schema URL");
+                OpenApiPayloadCheck.Result result = openApiResult(spec.trim(), requested, response);
+                if (result.checked()) {
+                    OpenApiPayloadCheck.addFindings(f, subject, url, spec.trim(), result);
+                } else {
+                    f.info("api-spec-not-used", "The response was not checked against the api_spec: " + result.reason(), subject, spec,
+                            null, "response recognised as " + format, "Lot-1 releases are recognised by their schema URL");
+                }
+                payloadCheck = result.toJson(mapper, spec.trim());
             }
         }
 
@@ -190,6 +219,19 @@ public final class StrictCatalogueSelector {
                 }
             }
         }
+        return payloadCheck;
+    }
+
+    /** The first response, checked against the OpenAPI document {@code spec} names; not checked if that cannot be read. */
+    private OpenApiPayloadCheck.Result openApiResult(String spec, URI requested, JsonNode response) throws InterruptedException {
+        if (!CapabilitiesModel.isHttp(spec)) {
+            return OpenApiPayloadCheck.Result.notChecked("the api_spec is not an http(s) URL");
+        }
+        JsonFetcher.Fetched fetched = JsonFetcher.fetch(http, mapper, URI.create(spec));
+        if (!fetched.ok()) {
+            return OpenApiPayloadCheck.Result.notChecked("the api_spec could not be read as a JSON document (" + fetched.problem() + ")");
+        }
+        return OpenApiPayloadCheck.check(fetched.root(), requested, response);
     }
 
     private void reportList(Findings f, Recognised r, CatalogueList list) {
