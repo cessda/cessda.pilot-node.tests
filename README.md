@@ -118,6 +118,7 @@ Application configuration is in `src/main/resources/application.properties`:
 | `check.api-key-argo` | Fallback ARGO API key for `CheckServiceUptime`'s legacy-API source only |
 | `check.check-all.scheduled.enabled` | Run Check All on a schedule (default `false`) — see [Dashboard](DASHBOARD_README.md#scheduled-check-all) |
 | `check.check-all.scheduled.cron` | Cron expression for the scheduled run (default: daily at 03:00) |
+| `check.check-all.scheduled.mode` | `lenient` (default) or `strict` for the scheduled run — see [Strict Mode](STRICT_MODE.md) |
 
 ---
 

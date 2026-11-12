@@ -36,7 +36,13 @@ import eu.cessda.pilotnode.common.CheckMode;
  * <pre>
  *   check.check-all.scheduled.enabled = false               # off by default
  *   check.check-all.scheduled.cron    = 0 0 3 * * *          # daily at 03:00
+ *   check.check-all.scheduled.mode    = lenient              # or strict
  * </pre>
+ *
+ * <p>{@code mode} chooses how the scheduled run checks the Nodes: {@code lenient} (the default) as always, or
+ * {@code strict}, which runs only the checks that have a strict mode (Node Capabilities and Exchange Services),
+ * writes to each node's own folder and never touches the lenient results (in its {@code lenient} folder). See {@code STRICT_MODE.md}.
+ * An unknown value stops the application from starting.</p>
  *
  * <p>The cron expression is always registered with Spring's scheduler (it
  * must be valid even when disabled), but {@code
@@ -55,12 +61,19 @@ public class CheckAllScheduler {
     private static final Logger log = Logger.getLogger(CheckAllScheduler.class.getName());
 
     private final boolean enabled;
+    private final CheckMode mode;
     private final CheckRunnerController checkRunnerController;
 
     public CheckAllScheduler(
             @Value("${check.check-all.scheduled.enabled:false}") boolean enabled,
+            @Value("${check.check-all.scheduled.mode:lenient}") String mode,
             CheckRunnerController checkRunnerController) {
         this.enabled = enabled;
+        try {
+            this.mode = CheckMode.parse(mode);
+        } catch (IllegalArgumentException e) {
+            throw new IllegalArgumentException("check.check-all.scheduled.mode: " + e.getMessage(), e);
+        }
         this.checkRunnerController = checkRunnerController;
     }
 
@@ -71,9 +84,9 @@ public class CheckAllScheduler {
             return;
         }
 
-        log.info("Scheduled Check All run starting");
+        log.log(Level.INFO, "Scheduled Check All run starting ({0} mode)", mode.label());
         try {
-            checkRunnerController.startCheckAll(CheckMode.LENIENT);
+            checkRunnerController.startCheckAll(mode);
         } catch (Exception e) {
             // startCheckAll() only throws before a job is even started (e.g.
             // missing check.api-key-node); anything the job itself does

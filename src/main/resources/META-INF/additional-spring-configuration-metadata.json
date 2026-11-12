@@ -5,6 +5,12 @@
   "defaultValue": "Service Catalogue,Resource Catalogue"
 },
 {
+  "name": "check.check-all.scheduled.mode",
+  "type": "java.lang.String",
+  "description": "How the scheduled Check All checks the Nodes: lenient or strict. A strict run covers only Node Capabilities and Exchange Services and writes under the strict directory.",
+  "defaultValue": "lenient"
+},
+{
   "name": "check.api-key-argo",
   "type": "java.lang.String",
   "description": "A description for 'check.api-key-argo'"

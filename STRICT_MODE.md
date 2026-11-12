@@ -41,6 +41,8 @@ The choice is remembered in the browser.
   (or `"lenient"`, the default); an unknown mode is a `400`. A strict `catalogue-services` request takes no
   `catalogueUrl`, because a strict run reads the endpoints the node published. A job's `type` says `(strict)` when it
   was a strict run.
+- **Scheduled runs.** `check.check-all.scheduled.mode` (`lenient`, the default, or `strict`) sets the mode of the
+  scheduled Check All. It is one mode or the other: to keep both up to date, run the other by hand or from outside.
 - **Check All** in strict mode runs Node Capabilities and then Exchange Services for every node (the other checks have
   no strict mode). It reads and writes each node's own folder, and its summary says which checks were not run.
 
@@ -190,6 +192,7 @@ The capability types and their order are those of lenient mode (`check.catalogue
 
 ## What is not done yet
 
+- Running both modes in one scheduled run (the scheduled run uses one mode, `check.check-all.scheduled.mode`).
 - A strict Service Monitoring and Core Service integrations, and a strict Federated Search (see the status above).
 - The index page's strict node cards list the strict checks (Node Capabilities, Exchange Services) rather than the
   categories of the lenient cards.

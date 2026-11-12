@@ -276,6 +276,7 @@ well as) being triggered from the UI:
 | -------------------------------------- | ------------------ | ----------- |
 | `check.check-all.scheduled.enabled`    | `false`             | Set to `true` to turn the scheduled run on |
 | `check.check-all.scheduled.cron`       | `0 0 3 * * *` (daily at 03:00) | Spring 6-field cron expression (second minute hour day-of-month month day-of-week) |
+| `check.check-all.scheduled.mode`       | `lenient`           | `lenient` or `strict`. A strict scheduled run checks only Node Capabilities and Exchange Services, as published, and writes to each node's own folder (`dashboard/data/<NODE>/`); the lenient results, in `dashboard/data/<NODE>/lenient/`, are not touched (see [Strict Mode](STRICT_MODE.md)). An unknown value stops the application from starting |
 
 `application.properties` is not hot-reloaded, so a restart is needed after
 changing either value. A scheduled run goes through the same `CheckAll` job
