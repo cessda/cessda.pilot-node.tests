@@ -55,6 +55,114 @@ async function fetchNodeReports(nodeName) {
     return result;
 }
 
+// ── Strict mode results ───────────────────────────────────────────────────────
+// A strict run writes its reports in the node's own folder, beside the lenient folder, and never touches the lenient
+// ones. Each has "mode": "strict", strict_result (PASS or FAIL), counts of findings by severity, and the findings
+// themselves.
+
+const STRICT_REPORT_TYPES = [
+    { key: 'strictEndpoint',  file: 'endpoint_report.json',           label: 'Node Capabilities', icon: '🔌' },
+    { key: 'strictCatalogue', file: 'catalogue_services_report.json', label: 'Exchange Services', icon: '📚' },
+];
+
+/** Text that came from a node (a URL, a response) must not be taken for markup. */
+function escapeHtml(value) {
+    return String(value ?? '').replace(/[&<>"']/g,
+        c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+}
+
+// The strict reports of one node, keyed like STRICT_REPORT_TYPES; null where there is none.
+async function fetchStrictReports(nodeName) {
+    const values = await Promise.all(STRICT_REPORT_TYPES.map(t => fetchStrictReport(nodeName, t.file)));
+    const result = {};
+    STRICT_REPORT_TYPES.forEach((t, i) => { result[t.key] = values[i]; });
+    return result;
+}
+
+// One result for a node from its strict reports, or null when none has been run: FAIL if any check failed.
+function summariseStrict(reports) {
+    const ran = STRICT_REPORT_TYPES.map(t => reports[t.key]).filter(Boolean);
+    if (ran.length === 0) return null;
+    const sum = field => ran.reduce((n, r) => n + (Number(r[field]) || 0), 0);
+    return {
+        result:   ran.some(r => r.strict_result === 'FAIL') ? 'FAIL' : 'PASS',
+        errors:   sum('findings_error'),
+        warnings: sum('findings_warning'),
+        infos:    sum('findings_info'),
+    };
+}
+
+const SEVERITY_ORDER = { ERROR: 0, WARNING: 1, INFO: 2 };
+const SEVERITY_BADGE = { ERROR: 'badge-error', WARNING: 'badge-warn', INFO: 'badge-missing' };
+
+function renderFinding(f) {
+    const rows = [['What to change', f.fix], ['What', f.subject], ['URL', f.url], ['Expected', f.expected], ['Found', f.actual], ['More', f.hint]]
+        .filter(([, v]) => v)
+        .map(([k, v]) => `<div class="strict-finding-row${k === 'What to change' ? ' strict-finding-fix' : ''}"><span class="strict-finding-key">${k}</span><span>${escapeHtml(v)}</span></div>`)
+        .join('');
+    return `<details class="strict-finding">
+      <summary><span class="badge ${SEVERITY_BADGE[f.severity] || 'badge-missing'}">${escapeHtml(f.severity)}</span>
+        <code>${escapeHtml(f.code)}</code> ${escapeHtml(f.message)}<span class="strict-finding-more"></span></summary>
+      <div class="strict-finding-body">${rows || '<span class="strict-finding-key">No further detail.</span>'}</div>
+    </details>`;
+}
+
+function renderStrictCheck(type, report) {
+    if (!report) {
+        return `<div class="strict-check"><div class="strict-check-head">
+          <span>${type.icon} ${type.label}</span><span class="badge badge-missing">Not run</span></div></div>`;
+    }
+    const findings = [...(report.findings || [])]
+        .sort((a, b) => (SEVERITY_ORDER[a.severity] ?? 9) - (SEVERITY_ORDER[b.severity] ?? 9));
+    const pass = report.strict_result === 'PASS';
+    const generated = report.generated ? `<span class="strict-check-meta">${escapeHtml(report.generated)}</span>` : '';
+    const count = (n, word) => `${n || 0} ${word}${n === 1 ? '' : 's'}`;
+    // One line per category; it opens to show the findings.
+    return `<details class="strict-check">
+      <summary class="strict-check-head">
+        <span>${type.icon} ${type.label}</span>
+        <span class="badge ${pass ? 'badge-ok' : 'badge-error'}">${pass ? 'Pass' : 'Fail'}</span>
+        <span class="strict-check-meta">${count(report.findings_error, 'error')} · ${count(report.findings_warning, 'warning')} · ${count(report.findings_info, 'note')}</span>
+        ${generated}
+      </summary>
+      ${report.error ? `<div class="panel-missing" style="padding:0.5rem 0.9rem;">✕ ${escapeHtml(report.error)}</div>` : ''}
+      ${findings.length ? findings.map(renderFinding).join('') : '<div class="panel-missing" style="padding:0.5rem 0.9rem;">No findings.</div>'}
+    </details>`;
+}
+
+// The node page in strict mode has the same panels as in lenient mode, built from the strict reports (which have the
+// same content, plus findings). Each panel ends with the strict result of the check or checks behind it: one line that
+// opens to show the findings. A check that has not been run shows as
+// such, under an empty panel.
+function strictChecks(panelHtml, strict, ...keys) {
+    const checks = keys.map(key => renderStrictCheck(STRICT_REPORT_TYPES.find(t => t.key === key), strict[key])).join('');
+    const at = panelHtml.lastIndexOf('</div>');
+    return panelHtml.slice(0, at) + `<div class="strict-checks">${checks}</div>` + panelHtml.slice(at);
+}
+
+// Federated Search has no strict mode yet, so strict mode shows its panel from the last lenient run, and says so.
+function federatedSearchInStrictMode(fom) {
+    const panel = renderFrontOfficeMetricsPanel(fom);
+    const note = `<div class="strict-checks"><div class="strict-check"><div class="strict-check-head">
+      <span>🔗 Federated Search</span><span class="badge badge-missing">No strict mode</span>
+      <span class="strict-check-meta">Strict mode does not check it yet. ${fom
+        ? 'This is the lenient result' + (fom.generated ? ', generated ' + escapeHtml(fom.generated) : '') + '.'
+        : 'There is no lenient result either.'}</span></div></div></div>`;
+    const at = panel.lastIndexOf('</div>');
+    return panel.slice(0, at) + note + panel.slice(at);
+}
+
+function renderStrictNodePanels(strict, fom) {
+    const ep = strict.strictEndpoint, cat = strict.strictCatalogue, argo = null, core = null;
+    return `
+    ${buildOverview(ep, cat, argo)}
+    ${strictChecks(renderEndpointPanel(ep, core), strict, 'strictEndpoint')}
+    ${strictChecks(renderCataloguePanel(cat), strict, 'strictCatalogue')}
+    ${renderArgoPanel(argo)}
+    ${federatedSearchInStrictMode(fom)}
+  `;
+}
+
 // ── Report summarisers ────────────────────────────────────────────────────────
 
 function summariseEndpoint(data) {
@@ -327,6 +435,62 @@ function renderSummaryStats(registry, allReports) {
     </div>`;
 }
 
+// ── Strict mode: the index page ───────────────────────────────────────────────
+
+// A node's card in strict mode: the result of each strict check, from the stored strict reports.
+function renderStrictNodeCard(node, reports) {
+    const summary = summariseStrict(reports);
+    const [statusClass, statusText] = !summary ? ['unknown', 'Not run']
+        : summary.result === 'PASS' ? ['ok', 'Pass'] : ['offline', 'Fail'];
+
+    const rows = STRICT_REPORT_TYPES.map(t => {
+        const r = reports[t.key];
+        if (!r) {
+            return `<div class="report-row"><span class="rr-icon">${t.icon}</span><span class="rr-label">${t.label}</span>
+         <span class="rr-dot grey"></span><span class="rr-val missing">Not run</span></div>`;
+        }
+        const pass = r.strict_result === 'PASS';
+        return `<div class="report-row"><span class="rr-icon">${t.icon}</span><span class="rr-label">${t.label}</span>
+         <span class="rr-dot ${pass ? 'green' : 'red'}"></span><span class="rr-val">${pass ? 'Pass' : 'Fail'}</span>
+         <span class="rr-sub">${plural(r.findings_error, 'error')} · ${plural(r.findings_warning, 'warning')}</span></div>`;
+    }).join('');
+
+    return `
+  <a class="node-card ${statusClass === 'ok' ? '' : statusClass}"
+     href="node.html#${encodeURIComponent(node.node_name)}">
+    <div class="node-header">
+      <div>
+        <div class="node-name">${escapeHtml(node.node_name)}</div>
+        <div class="node-id">${escapeHtml(node.endpoint || '')}</div>
+      </div>
+      <span class="status-badge status-${statusClass}">${statusText}</span>
+    </div>
+    <div class="report-rows">${rows}</div>
+    <div class="node-footer">
+      <span>View node detail</span>
+      <span class="arrow">→</span>
+    </div>
+  </a>`;
+}
+
+function renderStrictSummaryStats(registry, strictReports) {
+    const results = strictReports.map(summariseStrict);
+    const total = registry.nodes.length;
+    const ran = results.filter(Boolean);
+    const pass = ran.filter(s => s.result === 'PASS').length;
+    const sum = field => ran.reduce((n, s) => n + s[field], 0);
+    document.getElementById('summary-stats').innerHTML = `
+    <div class="stat-card"><div class="stat-value orange">${total}</div><div class="stat-label">Total nodes</div></div>
+    <div class="stat-card">
+      <div class="stat-value ${pass === total ? 'green' : pass > 0 ? 'amber' : 'red'}">${pass}<span style="font-size:1.25rem;color:var(--grey-400)">/${total}</span></div>
+      <div class="stat-label">Strict &middot; pass</div>
+    </div>
+    <div class="stat-card"><div class="stat-value ${ran.length - pass > 0 ? 'red' : 'green'}">${ran.length - pass}</div><div class="stat-label">Strict &middot; fail</div></div>
+    <div class="stat-card"><div class="stat-value ${total - ran.length > 0 ? 'amber' : 'green'}">${total - ran.length}</div><div class="stat-label">Not run</div></div>
+    <div class="stat-card"><div class="stat-value ${sum('errors') > 0 ? 'red' : 'green'}">${sum('errors')}</div><div class="stat-label">Errors</div></div>
+    <div class="stat-card"><div class="stat-value ${sum('warnings') > 0 ? 'amber' : 'green'}">${sum('warnings')}</div><div class="stat-label">Warnings</div></div>`;
+}
+
 // ── file:// guard ─────────────────────────────────────────────────────────────
 
 function showCorsError(containerId) {
@@ -367,10 +531,13 @@ const CHECK_POLL_MAX_WAIT_MS = {
 document.addEventListener('click', e => {
     const menu = document.getElementById('run-menu');
     if (menu && !menu.contains(e.target)) menu.setAttribute('aria-expanded', 'false');
+    const modeMenu = document.getElementById('mode-menu');
+    if (modeMenu && !modeMenu.contains(e.target)) modeMenu.setAttribute('aria-expanded', 'false');
 });
 document.addEventListener('keydown', e => {
     if (e.key === 'Escape') {
         document.getElementById('run-menu')?.setAttribute('aria-expanded', 'false');
+        document.getElementById('mode-menu')?.setAttribute('aria-expanded', 'false');
         closeAbout();
     }
 });
@@ -397,9 +564,9 @@ function handleAboutOverlayClick(e) {
 }
 
 // ── Run mode: lenient (the default) or strict ───────────────────────────────
-// Strict mode uses every URL exactly as the node published it and reports deviations as findings (see
-// STRICT_MODE.md). Only Node Capabilities, Exchange Services and Check All have a strict mode. The choice is
-// remembered in this browser.
+// Strict mode uses every URL exactly as the node published it and reports deviations as findings. Every check except
+// The Mode menu in the top bar shows the mode and changes it: the pages show the
+// stored results of that mode, and the checks run in it. The choice is remembered in this browser.
 
 const RUN_MODE_KEY = 'pilotNodeRunMode';
 
@@ -411,16 +578,27 @@ function runMode() {
 function setRunMode(mode) {
     try { localStorage.setItem(RUN_MODE_KEY, mode === 'strict' ? 'strict' : 'lenient'); } catch (e) { /* not stored */ }
     showRunMode();
+    document.getElementById('mode-menu')?.setAttribute('aria-expanded', 'false');
+    // The page shows the stored results of the mode that was chosen (each page defines init)
+    if (typeof init === 'function') {
+        Promise.resolve(init()).catch(e => showToast('err', 'Mode', e.message));
+    }
 }
 
 function showRunMode() {
     const mode = runMode();
     document.querySelectorAll('input[name="run-mode"]').forEach(r => { r.checked = r.value === mode; });
-    const help = document.getElementById('run-mode-help');
-    if (help) {
-        help.textContent = mode === 'strict'
-            ? 'Strict: URLs are used exactly as published, nothing is guessed, and every deviation is a finding. Only Node Capabilities and Exchange Services run in strict mode.'
-            : 'Lenient: the dashboard completes URLs, tries alternatives and falls back to other sources to get an answer.';
+    const label = document.getElementById('mode-current');
+    if (label) label.textContent = mode === 'strict' ? 'Strict' : 'Lenient';
+}
+
+function toggleModeMenu() {
+    const menu = document.getElementById('mode-menu');
+    const isOpen = menu.getAttribute('aria-expanded') === 'true';
+    menu.setAttribute('aria-expanded', !isOpen);
+    if (!isOpen) {
+        document.getElementById('run-menu')?.setAttribute('aria-expanded', 'false');
+        document.getElementById('node-switcher')?.setAttribute('aria-expanded', 'false');
     }
 }
 
@@ -644,13 +822,9 @@ function buildOverview(ep, cat, argo) {
             const vals = items.map(s => s.uptime_percentage ?? s.average_availability ?? s.availability ?? null).filter(v => v !== null);
             if (vals.length) uptime = Math.round((vals.reduce((a, b) => a + b, 0) / vals.length) * 10) / 10;
         }
-        if (uptime !== null) {
-            cards.push(`
-        <div class="ov-card">
-          <div class="ov-value ${uptimeColour(uptime)}">${uptime}%</div>
-          <div class="ov-label">Avg ARGO uptime</div>
-        </div>`);
-        }
+        cards.push(uptime !== null
+            ? `<div class="ov-card"><div class="ov-value ${uptimeColour(uptime)}">${uptime}%</div><div class="ov-label">Avg ARGO uptime</div></div>`
+            : `<div class="ov-card"><div class="ov-value" style="color:var(--grey-400)">—</div><div class="ov-label">Avg ARGO uptime</div></div>`);
     } else {
         cards.push(`<div class="ov-card"><div class="ov-value" style="color:var(--grey-400)">—</div><div class="ov-label">Avg ARGO uptime</div></div>`);
     }
@@ -1293,8 +1467,9 @@ function toggleRunMenu() {
     const menu = document.getElementById('run-menu');
     const isOpen = menu.getAttribute('aria-expanded') === 'true';
     menu.setAttribute('aria-expanded', !isOpen);
-    // Close node switcher if open
+    // Close node switcher and mode menu if open
     if (!isOpen) {
+        document.getElementById('mode-menu')?.setAttribute('aria-expanded', 'false');
         const elementById = document.getElementById('node-switcher');
         if (elementById) {
             elementById.setAttribute('aria-expanded', 'false');
@@ -1305,10 +1480,13 @@ function toggleRunMenu() {
 document.addEventListener('click', e => {
     const menu = document.getElementById('run-menu');
     if (menu && !menu.contains(e.target)) menu.setAttribute('aria-expanded', 'false');
+    const modeMenu = document.getElementById('mode-menu');
+    if (modeMenu && !modeMenu.contains(e.target)) modeMenu.setAttribute('aria-expanded', 'false');
 });
 document.addEventListener('keydown', e => {
     if (e.key === 'Escape') {
         document.getElementById('run-menu')?.setAttribute('aria-expanded', 'false');
+        document.getElementById('mode-menu')?.setAttribute('aria-expanded', 'false');
         closeAbout();
     }
 });
@@ -1327,11 +1505,14 @@ async function runAllNodeChecks() {
     if (btn) { btn.disabled = true; btn.textContent = '…'; }
     showToast('info', 'Run All Node Checks', `Starting all checks for ${nodeName}…`);
 
-    // Strict Exchange Services reads the node's strict endpoint report, which only a strict Node Capabilities run
-    // writes. If there is none yet, run it first. It covers every node in the registry, so it takes longer.
-    if (runMode() === 'strict'
-            && !(await fetchStrictReport(nodeName, 'endpoint_report.json'))) {
-        showToast('info', 'Run All Node Checks', 'No strict report yet: running Node Capabilities for every node first (slower).', 8000);
+    // The checks use the node's Node Capabilities report of the chosen mode (a strict check needs the strict one, which
+    // only a strict Node Capabilities run writes; the dashboard's lenient view needs the lenient one). If there is
+    // none yet, run Node Capabilities first. It covers every node in the registry, so it takes longer.
+    const strict = runMode() === 'strict';
+    const haveEndpoints = strict ? await fetchStrictReport(nodeName, 'endpoint_report.json')
+                                 : await fetchLenientReport(nodeName, 'endpoint_report.json');
+    if (!haveEndpoints) {
+        showToast('info', 'Run All Node Checks', `No ${strict ? 'strict' : 'lenient'} report yet: running Node Capabilities for every node first (slower).`, 8000);
         if (!(await runCheck('node-capabilities'))) {
             showToast('err', 'Run All Node Checks', 'Node Capabilities failed; the other checks were not run.');
             if (btn) { btn.disabled = false; btn.textContent = 'Run all'; }
@@ -1340,7 +1521,7 @@ async function runAllNodeChecks() {
     }
 
     // Only Exchange Services has a strict mode on this page; the other three would run leniently, so in strict mode
-    // they are not run, rather than quietly giving lenient results.
+    // they are not run, rather than quietly giving a lenient result.
     const checks = runMode() === 'strict'
         ? [runCatalogueCheck]
         : [runCatalogueCheck, runServiceUptimeCheck, runCoreIntegrationsCheck, runOtherMetricsCheck];
@@ -1396,7 +1577,8 @@ async function runCoreIntegrationsCheck() {
     const btn      = document.getElementById('btn-core-integrations');
     const nodeName = decodeURIComponent(window.location.hash.substring(1));
     if (btn) { btn.disabled = true; btn.textContent = '…'; }
-    showToast('info', 'Core Service integrations', `Starting for ${nodeName}…`);
+    const title = 'Core Service integrations';
+    showToast('info', title, `Starting for ${nodeName}…`);
 
     let jobId;
     try {
@@ -1406,17 +1588,17 @@ async function runCoreIntegrationsCheck() {
             body: JSON.stringify({ node: nodeName }),
         });
         const data = await res.json();
-        if (!res.ok) { showToast('err', 'Core Service integrations', data.error || 'HTTP ' + res.status); resetBtn(btn); return; }
+        if (!res.ok) { showToast('err', title, data.error || 'HTTP ' + res.status); resetBtn(btn); return; }
         jobId = data.jobId;
     } catch (e) {
-        showToast('err', 'Core Service integrations', 'Request failed: ' + e.message);
+        showToast('err', title, 'Request failed: ' + e.message);
         resetBtn(btn); return;
     }
 
-    showToast('info', 'Core Service integrations', 'Running… (job ' + jobId + ')');
+    showToast('info', title, 'Running… (job ' + jobId + ')');
     const result = await pollJobStatus(jobId);
-    if (result.status === 'DONE') { showToast('ok', 'Core Service integrations', result.message || 'Completed'); init(); }
-    else                          { showToast('err', 'Core Service integrations', result.message || 'Check failed'); }
+    if (result.status === 'DONE') { showToast('ok', title, result.message || 'Completed'); init(); }
+    else                          { showToast('err', title, result.message || 'Check failed'); }
     resetBtn(btn);
 }
 
@@ -1462,7 +1644,8 @@ async function runServiceUptimeCheck() {
     const btn      = document.getElementById('btn-service-uptime');
     const nodeName = decodeURIComponent(window.location.hash.substring(1));
     if (btn) { btn.disabled = true; btn.textContent = '…'; }
-    showToast('info', 'Service Uptime', `Starting for ${nodeName}…`);
+    const title = 'Service Uptime';
+    showToast('info', title, `Starting for ${nodeName}…`);
 
     let jobId;
     try {
@@ -1472,17 +1655,17 @@ async function runServiceUptimeCheck() {
             body: JSON.stringify({ node: nodeName }),
         });
         const data = await res.json();
-        if (!res.ok) { showToast('err', 'Service Uptime', data.error || 'HTTP ' + res.status); resetBtn(btn); return; }
+        if (!res.ok) { showToast('err', title, data.error || 'HTTP ' + res.status); resetBtn(btn); return; }
         jobId = data.jobId;
     } catch (e) {
-        showToast('err', 'Service Uptime', 'Request failed: ' + e.message);
+        showToast('err', title, 'Request failed: ' + e.message);
         resetBtn(btn); return;
     }
 
-    showToast('info', 'Service Uptime', 'Running… (job ' + jobId + ')');
+    showToast('info', title, 'Running… (job ' + jobId + ')');
     const result = await pollJobStatus(jobId);
-    if (result.status === 'DONE') { showToast('ok', 'Service Uptime', result.message || 'Completed'); init(); }
-    else                          { showToast('err', 'Service Uptime', result.message || 'Check failed'); }
+    if (result.status === 'DONE') { showToast('ok', title, result.message || 'Completed'); init(); }
+    else                          { showToast('err', title, explainFailure(result.message || 'Check failed')); }
     resetBtn(btn);
 }
 

@@ -9,7 +9,7 @@ time, or all of them for every node in one go via **Check All**.
 The checks run in two modes, chosen with the **Mode** menu in the top bar: **lenient** (the default), which completes
 URLs and falls back to other sources to get an answer, and **strict**, which uses every URL exactly as the node
 published it and reports each deviation as a finding, with guidance on what to change in the Node Endpoint. The
-strict results are not shown on the pages yet. See [Strict Mode](STRICT_MODE.md).
+dashboard shows the stored results of the chosen mode. See [Strict Mode](STRICT_MODE.md).
 
 ---
 
@@ -208,7 +208,7 @@ files are placed in `data/NEW_NODE_NAME/` or `data/NEW_NODE_NAME/lenient/`, by m
 Missing reports are handled gracefully throughout the UI:
 
 - The landing page shows "No report" rows and greyed-out chips on the node
-    card.
+    card (in strict mode, "Not run").
 - The node detail page shows "Not available" panels for each missing report,
     rather than errors.
 - If all reports of the chosen mode are absent for a node, the detail page says that there are no results for the
@@ -286,6 +286,14 @@ at `GET /api/run/status`.
 
 ## Navigation
 
+### The Mode menu
+
+The **Mode** menu (top bar, both pages) chooses between *Lenient* and *Strict*, and the choice is remembered in the
+browser. It does two things: the pages show the stored results of the chosen mode, and the *Run checks* menus run
+the checks in that mode. Changing it runs nothing and does not touch the other mode's results. If the chosen mode
+has no results yet, the page says so and says how to create them (**Check All** on the landing page, **Run All Node
+Checks** on the Node page).
+
 ### Landing page — `index.html`
 
 Shows all registered nodes in a card grid. Each card displays:
@@ -302,6 +310,10 @@ The summary strip at the top shows aggregate totals across all nodes: total
 nodes, healthy nodes, degraded or missing, capability uptime percentage,
 available capabilities, Federated Search metrics visibility, and nodes
 meeting each compliance tier.
+
+In strict mode each card shows a row for each strict check (Pass or Fail with the number of errors and warnings,
+or Not run) instead, and the summary strip shows the number of nodes that pass, fail or have not been run, and the
+numbers of errors and warnings.
 
 Click any node card to open its detail page.
 
@@ -340,6 +352,12 @@ The page shows:
     and the reporting period.
 - **Federated Search** — one card per metric (4, 5, 6, 9, 10, 11) evidencing
     cross-node visibility, per the Proposed Validation Metrics document.
+
+In strict mode the page has the same panels, built from the strict reports. Each panel ends with the strict result
+of its checks: one line (Pass or Fail, with the numbers of errors, warnings and notes) that opens to show the
+findings. A finding opens to show **what to change** in the Node Endpoint, then what was looked at, the URL, what
+was expected, what was found, and any hint. The Federated Search panel shows its stored lenient result, with a note
+saying it has no strict mode. Service Monitoring and Core Service integrations have no strict result yet.
 
 Use the **Switch node** dropdown (top right) to move directly to another node's
 detail page without returning to the landing page.

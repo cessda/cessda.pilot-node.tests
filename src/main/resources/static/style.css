@@ -1122,40 +1122,35 @@ main {
     border-bottom: 1px solid var(--grey-200);
 }
 
-.run-mode {
-    padding: 0.6rem 0.9rem 0.7rem;
-    border-bottom: 1px solid var(--grey-200);
-}
-
-.run-mode-head {
+.mode-choice {
     display: flex;
-    align-items: center;
-    gap: 1rem;
-    font-size: 0.75rem;
-}
-
-.run-mode-title {
-    font-family: var(--mono);
-    font-size: 0.55rem;
-    color: var(--grey-400);
-    text-transform: uppercase;
-    letter-spacing: 0.1em;
-}
-
-.run-mode-option {
-    display: inline-flex;
-    align-items: center;
-    gap: 0.3rem;
+    align-items: flex-start;
+    gap: 0.55rem;
+    padding: 0.65rem 0.9rem;
     cursor: pointer;
+    font-size: 0.8rem;
+    white-space: normal;
 }
 
-.run-mode-help {
-    margin-top: 0.4rem;
+.mode-choice + .mode-choice {
+    border-top: 1px solid var(--grey-200);
+}
+
+.mode-choice:hover {
+    background: var(--grey-100, #f4f4f4);
+}
+
+.mode-choice input {
+    margin-top: 0.2rem;
+}
+
+.mode-choice small {
+    display: block;
+    margin-top: 0.2rem;
     font-family: var(--mono);
     font-size: 0.57rem;
     color: var(--grey-400);
     line-height: 1.4;
-    white-space: normal;
 }
 
 .run-item {
@@ -1734,4 +1729,137 @@ main {
     margin-top: 0.4rem;
     color: var(--grey-400);
     font-style: italic;
+}
+
+/* ── Strict mode results ── */
+.strict-check {
+    border-top: 1px solid var(--grey-200);
+}
+
+.strict-check:first-child {
+    border-top: none;
+}
+
+.strict-check-head {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.75rem;
+    padding: 0.7rem 0.9rem;
+    font-weight: 600;
+}
+
+/* A category is one line that opens to show its findings. */
+summary.strict-check-head {
+    cursor: pointer;
+    list-style: none;
+}
+
+summary.strict-check-head::-webkit-details-marker {
+    display: none;
+}
+
+summary.strict-check-head::before {
+    content: '▸';
+    color: var(--grey-400);
+    transition: transform 0.15s;
+}
+
+details[open] > summary.strict-check-head::before {
+    transform: rotate(90deg);
+}
+
+.strict-check-meta {
+    font-family: var(--mono);
+    font-size: 0.6rem;
+    font-weight: 400;
+    color: var(--grey-600);
+}
+
+.strict-finding {
+    padding: 0.35rem 0.9rem;
+    border-top: 1px solid var(--grey-200);
+    font-size: 0.8rem;
+}
+
+.strict-finding > summary {
+    cursor: pointer;
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    gap: 0.5rem;
+    list-style: none;
+}
+
+.strict-finding > summary::-webkit-details-marker {
+    display: none;
+}
+
+/* A finding opens to show what to change: the arrow and the label say so. */
+.strict-finding > summary::before {
+    content: '▸';
+    color: var(--grey-400);
+    transition: transform 0.15s;
+}
+
+.strict-finding[open] > summary::before {
+    transform: rotate(90deg);
+}
+
+.strict-finding > summary:hover {
+    background: var(--grey-100, rgba(0, 0, 0, 0.04));
+}
+
+.strict-finding-more {
+    margin-left: auto;
+    font-family: var(--mono);
+    font-size: 0.6rem;
+    color: var(--grey-600);
+    text-decoration: underline;
+}
+
+.strict-finding > summary .strict-finding-more::before {
+    content: 'Show details';
+}
+
+.strict-finding[open] > summary .strict-finding-more::before {
+    content: 'Hide details';
+}
+
+.strict-finding code {
+    font-family: var(--mono);
+    font-size: 0.7rem;
+}
+
+.strict-finding-body {
+    padding: 0.4rem 0 0.4rem 0.5rem;
+    display: grid;
+    gap: 0.25rem;
+    word-break: break-word;
+}
+
+.strict-finding-row {
+    display: grid;
+    grid-template-columns: 5rem 1fr;
+    gap: 0.5rem;
+}
+
+.strict-finding-key {
+    font-family: var(--mono);
+    font-size: 0.6rem;
+    color: var(--grey-600);
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+}
+
+/* The strict result at the foot of a panel in strict mode */
+.strict-checks {
+    border-top: 1px solid var(--grey-200);
+}
+
+/* What a node should change, first in a finding */
+.strict-finding-fix {
+    background: var(--grey-100, #f4f4f4);
+    padding: 0.35rem 0.5rem;
+    margin-bottom: 0.3rem;
 }
