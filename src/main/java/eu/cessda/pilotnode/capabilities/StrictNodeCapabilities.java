@@ -80,7 +80,7 @@ public final class StrictNodeCapabilities {
         this.writeJson = writeJson;
     }
 
-    /** Checks one node, writes its {@code endpoint_report.json} in the strict directory, and returns the report. */
+    /** Checks one node, writes its {@code endpoint_report.json} in the node's own folder, and returns the report. */
     public ObjectNode check(Node node) throws InterruptedException {
         Findings findings = new Findings();
         ArrayNode rows = mapper.createArrayNode();
