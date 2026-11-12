@@ -15,11 +15,22 @@ conformance: it reports the untidiness.
 > **Status.** Strict mode covers **Node Capabilities** and **Exchange Services**. **Service Monitoring** and **Core
 > Service integrations** have no strict mode yet. **Federated Search** cannot be strict as it stands: a Front Office
 > capability publishes a web address, not a search API, so there is no URL to take "as published". The Node page
-> is therefore always a lenient result.
+> therefore shows its stored result in strict mode as well, saying that it is not a strict result.
+
+## Choosing the mode
+
+The **Mode** menu in the top bar of the index and Node pages, *Lenient* (the default) or *Strict*, does two things:
+
+- **The pages show the stored results of that mode.** Changing the mode does not run anything and never hides the
+  other mode's results: change it back and they are there. If the chosen mode has no results yet, the page says so
+  and says how to create them (**Run All Node Checks** on the Node page, **Check All** on the index page).
+- **The checks run in that mode.** The *Run checks* menus have no mode choice of their own.
+
+The choice is remembered in the browser.
 
 ## Running strict mode
 
-- **Dashboard.** The *Run checks* menu has a **Mode** choice, *Lenient* (the default) or *Strict*, remembered in the browser. With *Strict* chosen, *Node Capabilities* and *Exchange Services* run strictly; the other checks have
+- **Dashboard.** With *Strict* chosen, *Node Capabilities* and *Exchange Services* run strictly; the other checks have
   no strict mode and would run leniently. On the Node page, *Run All Node Checks* therefore runs only Exchange
   Services in strict mode, rather than quietly giving lenient results for the others. The strict check that reads a node's endpoints (Exchange Services) needs the node's
   **strict** `endpoint_report.json`, which only a strict *Node Capabilities* run writes, and that run covers every node
@@ -35,8 +46,20 @@ conformance: it reports the untidiness.
 
 ## Seeing the results
 
-The results are the strict reports of each node (see below), which can be read from `/api/data/<NODE>/`. The
-dashboard pages do not show them yet; the lenient results are shown as before.
+- **Node page.** In strict mode the page has the same panels as in lenient mode, in the same order and format,
+  built from the node's strict reports: the summary strip (endpoint availability, Exchange Services and
+  compliance tier), Node Capabilities, Exchange Services, Service Monitoring and Federated Search. Where there is no
+  strict result, as for Service Monitoring, its panel is there and says so.
+  Each panel ends with the strict result of the check or checks behind it: one line with Pass or Fail and the
+  counts of errors, warnings and notes. A line opens to show every finding of that check, most serious first.
+  A finding is a line with its severity, code and message, and a *Show details* link: it opens to show **what to
+  change** in the node's Node Endpoint (see [Findings](#findings)), what was looked at, the URL, what was
+  expected, what was found and any hint. Text that came from the node is shown as text, never as markup.
+- **Federated Search** is shown from its stored (lenient) result, with a note saying so.
+- **Index page.** In strict mode each node card shows a row for each strict check (Pass or Fail, with the counts, or
+  *Not run*) and the summary bar shows the totals: nodes, strict pass, strict fail, not run, errors and warnings. In
+  lenient mode the page is as it always was.
+- The pages read each node's reports of the chosen mode (see below); running a check never changes the other mode's.
 
 ## Where the results go
 
@@ -168,7 +191,8 @@ The capability types and their order are those of lenient mode (`check.catalogue
 ## What is not done yet
 
 - A strict Service Monitoring and Core Service integrations, and a strict Federated Search (see the status above).
-- Showing the strict results on the Node page and the index page.
+- The index page's strict node cards list the strict checks (Node Capabilities, Exchange Services) rather than the
+  categories of the lenient cards.
 - Controlled vocabularies for `protocol` and `status`. Until there are some, the values the model recommends are kept
   in `CapabilitiesModel`; the model is at
   <https://github.com/madgeek-arc/eosc-node-endpoint/tree/main/eosc-node-capabilities-model>.
