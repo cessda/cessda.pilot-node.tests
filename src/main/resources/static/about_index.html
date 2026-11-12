@@ -91,8 +91,11 @@
     discrete tiers on the dashboard — only an aggregate visibility
     percentage.</p>
 <h2 id="data-sources">Data Sources</h2>
-<p>The dashboard reads four types of JSON report file. All files are
-    served from <code>/api/data/</code>.</p>
+<p>The dashboard reads the following types of JSON report file. All files are
+    served from <code>/api/data/</code>. The strict reports are in the node&#39;s own folder,
+    <code>{node_name}/</code>, and the lenient reports in <code>{node_name}/lenient/</code>; the paths
+    below are the strict ones. Core Service integrations has a
+    <code>core_integrations_report.json</code> in the same place.</p>
 <h3 id="node-registry">Node registry</h3>
 <pre><code class="lang-text">/api/<span class="hljs-class"><span class="hljs-keyword">data</span>/node_registry_summary.json</span>
 </code></pre>
@@ -131,9 +134,28 @@
     metrics (4, 5, 6, 9, 10 and 11): whether the node&#39;s own resources and
     Research Outputs are visible in its own Front Office, in peer nodes&#39;
     Front Offices, and in the Sandbox.</p>
+<h2 id="modes">Modes: Lenient and Strict</h2>
+<p>The <strong>Mode</strong> menu in the top bar chooses how the checks are run, and which results
+    the page shows. The choice is remembered in your browser.</p>
+<ul>
+    <li><strong>Lenient</strong> (the default) — the dashboard completes URLs, tries alternatives and
+        falls back to other sources to get an answer, so that it keeps working when a node&#39;s
+        published information is a little untidy.
+    </li>
+    <li><strong>Strict</strong> — every URL is used exactly as the node published it, nothing is
+        guessed, and every deviation is reported as a finding. A finding says what to change in the
+        node&#39;s Node Endpoint. Federated Search is not run in strict mode.
+    </li>
+</ul>
+<p>Changing the mode runs nothing, and the results of the other mode are kept: the page shows the
+    stored results of the mode you chose. If there are none yet, the page says how to create them
+    (<strong>Check All</strong> here, <strong>Run All Node Checks</strong> on a Node Detail page). In
+    strict mode each node card shows a row for each strict check (Pass or Fail, with the numbers of
+    errors and warnings, or Not run), and the summary bar shows how many nodes pass, fail or have not
+    been run.</p>
 <h2 id="running-checks">Running Checks</h2>
 <p>The <strong>Run checks</strong> menu in the top-right corner triggers on-demand
-    data collection for the whole network. The available checks are:</p>
+    data collection for the whole network, in the mode chosen in the Mode menu. The available checks are:</p>
 <ul>
     <li><strong>Check All</strong> — runs Node Capabilities, then Exchange Services,
         Service Monitoring, Core Service integrations, and Federated Search

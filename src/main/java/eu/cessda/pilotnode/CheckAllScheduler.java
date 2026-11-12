@@ -24,8 +24,10 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
 
+import eu.cessda.pilotnode.common.CheckMode;
+
 /**
- * Fires {@link CheckRunnerController#runCheckAll()} (the same "Check All"
+ * Fires {@link CheckRunnerController#startCheckAll(CheckMode)} (the same "Check All"
  * job triggered from the dashboard's Run checks menu) on a cron schedule,
  * so the full set of checks can be kept up to date without an operator
  * clicking the button.
@@ -71,9 +73,9 @@ public class CheckAllScheduler {
 
         log.info("Scheduled Check All run starting");
         try {
-            checkRunnerController.runCheckAll();
+            checkRunnerController.startCheckAll(CheckMode.LENIENT);
         } catch (Exception e) {
-            // runCheckAll() only throws before a job is even started (e.g.
+            // startCheckAll() only throws before a job is even started (e.g.
             // missing check.api-key-node); anything the job itself does
             // once running is captured on its JobRecord, not here.
             log.log(Level.WARNING, "Scheduled Check All run failed to start: " + e.getMessage(), e);

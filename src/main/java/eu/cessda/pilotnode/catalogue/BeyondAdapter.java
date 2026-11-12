@@ -26,7 +26,6 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 
-import eu.cessda.pilotnode.CheckCatalogueServices;
 
 /**
  * The EOSC Beyond Resource Catalogue's own list ({@code <base>/api/service/all}). It already is in the shape
@@ -49,7 +48,7 @@ public final class BeyondAdapter implements CatalogueAdapter {
 
     @Override
     public List<URI> probeUrls(URI endpoint) {
-        return List.of(CheckCatalogueServices.buildApiServiceUrl(endpoint));
+        return List.of(buildApiServiceUrl(endpoint));
     }
 
     @Override
@@ -78,5 +77,30 @@ public final class BeyondAdapter implements CatalogueAdapter {
     @Override
     public CatalogueList read(CatalogueContext context, Probe probe, String format, HttpClient http, ObjectMapper mapper) {
         return new CatalogueList((ObjectNode) probe.root(), List.of(), List.of(), false);
+    }
+
+    /**
+     * Strips a trailing {@code /api} or {@code /api/} from
+     * {@code url}, then appends {@code /api/service/all}, ensuring
+     * exactly one {@code /} between the base and the path.
+     */
+    public static URI buildApiServiceUrl(URI url) {
+        String base = url.toString();
+        // Some nodes advertise the service list itself (…/api/service/all) as their Resource Catalogue
+        // endpoint; appending the path again would ask for …/api/service/all/api/service/all.
+        if (base.endsWith("/api/service/all") || base.endsWith("/api/service/all/")) {
+            return URI.create(base.endsWith("/") ? base.substring(0, base.length() - 1) : base);
+        }
+        if (url.toString().endsWith("/api/")) {
+            base = base.substring(0, base.length() - 5);
+        } else if (base.endsWith("/api")) {
+            base = base.substring(0, base.length() - 4);
+        }
+        // Remove any remaining trailing slash before appending.
+        base = base.stripTrailing();
+        if (base.endsWith("/")) {
+            base = base.substring(0, base.length() - 1);
+        }
+        return URI.create(base + "/api/service/all");
     }
 }
