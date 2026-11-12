@@ -1852,6 +1852,42 @@ details[open] > summary.strict-check-head::before {
     letter-spacing: 0.06em;
 }
 
+.strict-payloads {
+    border-top: 1px solid var(--grey-200);
+    padding: 0.5rem 0.9rem 0.7rem;
+}
+
+.strict-payloads-head {
+    font-family: var(--mono);
+    font-size: 0.55rem;
+    color: var(--grey-400);
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+    margin-bottom: 0.35rem;
+}
+
+.strict-payload {
+    padding: 0.3rem 0;
+    font-size: 0.8rem;
+}
+
+.strict-payload-head {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    gap: 0.5rem;
+}
+
+.strict-payload-detail {
+    padding-left: 0.25rem;
+    word-break: break-word;
+}
+
+.strict-payload .strict-finding {
+    padding: 0.2rem 0;
+    border-top: none;
+}
+
 /* The strict result at the foot of a panel in strict mode */
 .strict-checks {
     border-top: 1px solid var(--grey-200);

@@ -58,7 +58,8 @@ The choice is remembered in the browser.
   counts of errors, warnings and notes. A line opens to show every finding of that check, most serious first.
   A finding is a line with its severity, code and message, and a *Show details* link: it opens to show **what to
   change** in the node's Node Endpoint (see [Findings](#findings)), what was looked at, the URL, what was
-  expected, what was found and any hint. Text that came from the node is shown as text, never as markup.
+  expected, what was found and any hint. Under the line are the answers that were checked against the `api_spec`
+  (see below). Text that came from the node is shown as text, never as markup.
 - **Federated Search** is shown from its stored (lenient) result, with a note saying so.
 - **Index page.** In strict mode each node card shows a row for each strict check (Pass or Fail, with the counts, or
   *Not run*) and the summary bar shows the totals: nodes, strict pass, strict fail, not run, errors and warnings. In
@@ -158,7 +159,8 @@ list of its fields: a field it does not know, such as `id`, is accepted and not 
 - `protocol` and `status` are extensible strings. Values the model recommends (`REST`, `SOAP`, `gRPC`, `SSE`,
   `WebSocket`, `RSocket`; `OPERATIONAL`, `MAINTENANCE`, `UNAVAILABLE`) pass; others such as `OAI-PMH` or `PLANNED`
   are warnings. An absent protocol or status means `REST` and `OPERATIONAL`.
-- Each endpoint is requested **once, with `GET`**; there is no `HEAD` first. A 2xx answer is `Available`. A redirect
+- Each endpoint is requested **once, with `GET`**; there is no `HEAD` first. A 2xx answer is `Available`, and its
+  body (up to 5 MB) is checked against the `api_spec` (see [below](#checking-the-answer-against-the-api_spec)). A redirect
   that was followed is a warning (`endpoint-redirected`); one that was not followed, such as a redirect from https
   to http, names its target without the query string (`endpoint-redirect-not-followed`).
 - `api_spec` is fetched once per distinct URL. A machine-readable OpenAPI document is noted; a documentation page is
@@ -191,6 +193,35 @@ The capability types and their order are those of lenient mode (`check.catalogue
 - A list in another format that reports more services than the response holds is a warning (`list-incomplete`),
   because paging is only followed for Lot-1.
 - There is **no fallback to the Sandbox**.
+
+## Checking the answer against the `api_spec`
+
+When a capability publishes an `api_spec` that is an OpenAPI document (JSON, OpenAPI 3.x or Swagger 2.0), the answer
+the endpoint gave is checked against it, and the result is shown. Otherwise the report says the payload **was not
+checked**, and why.
+
+- **Node Capabilities** checks the answer of every capability's endpoint (the same `GET` that decides whether it is
+  available). Each row of the strict `endpoint_report.json` has a `payload_check`.
+- **Exchange Services** checks the first response of the catalogue endpoint it read, against the Lot-1 release the
+  `api_spec` names (as before) or, for any other `api_spec`, against the OpenAPI document. The result is
+  `source.payload_check` in the strict `catalogue_services_report.json`.
+- **How the check works.** The operation is found from the endpoint's URL: its path, under the specification's
+  `servers` (or `basePath`), matched as a `GET` against the specification's paths (an exact path wins over a template
+  such as `/service/{id}`). The answer is validated against that operation's success response (`200`, else another
+  `2xx`), taking the `application/json` schema. A `payload_check` is either **checked** (`PASS` or `FAIL`, the
+  operation, the number of violations and the first ten) or **not checked**, with the reason:
+  - no `api_spec` is published, or it is not an http(s) URL;
+  - the endpoint did not answer successfully, or the answer is larger than 5 MB;
+  - the `api_spec` could not be read as a JSON document (a documentation page, an error, or YAML, which is not read);
+  - the `api_spec` is JSON but not an OpenAPI document;
+  - the specification has no path for the endpoint, no `GET` for it, no success response, no JSON response or no
+    schema for it;
+  - the specification refers to another document (`$ref` outside itself), which is never fetched.
+- A `FAIL` is an error finding (`payload-differs-from-api-spec`) that quotes the first violations; a pass is a note
+  (`payload-matches-api-spec`). A payload that could not be checked adds no finding: it is recorded in the report, and
+  the Node page lists every answer with *Follows api_spec*, *Breaks api_spec* or *Not checked*.
+- An answer that is not JSON counts as breaking a specification that describes a JSON response.
+- Formats (`uri`, `date-time`, ...) are not asserted, only types, required properties and the other structure.
 
 ## Service Monitoring
 
@@ -258,7 +289,7 @@ categories is in `common`:
 | `monitoring` | `StrictServiceUptime`, `ArgoMetrics` | `CheckServiceUptime` |
 | `core` | `StrictCoreIntegrations`, `ArgoStatus` | `CheckCoreIntegrations` |
 | `federatedsearch` | | `CheckOtherMetrics` |
-| `common` | `CheckMode`, `ReportFiles`, `Finding`, `Findings`, `Guidance` | |
+| `common` | `CheckMode`, `ReportFiles`, `Finding`, `Findings`, `Guidance`, `OpenApiPayloadCheck` | |
 
 `CheckAll`, `CheckAllScheduler` and `CheckRunnerController` are in the root package: they choose the mode. The tests
 are in the same packages.

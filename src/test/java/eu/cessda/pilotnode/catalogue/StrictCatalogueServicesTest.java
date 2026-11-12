@@ -367,4 +367,65 @@ class StrictCatalogueServicesTest {
         assertEquals(0, report.path("services").size());
         assertTrue(node.requests.isEmpty());
     }
+
+    // ── the payload, against the api_spec ────────────────────────────────────
+
+    private static final String LIST_API = "{\"openapi\":\"3.0.3\",\"paths\":{\"/res/api/service/all\":{\"get\":{\"responses\":{\"200\":"
+            + "{\"content\":{\"application/json\":{\"schema\":{\"type\":\"object\",\"required\":[\"total\",\"results\"],"
+            + "\"properties\":{\"total\":{\"type\":\"integer\"},\"results\":{\"type\":\"array\"}}}}}}}}}}}";
+
+    @Test
+    void anOpenApiApiSpecIsUsedToCheckTheListAndTheResultIsInTheReport() throws Exception {
+        node.json("/res/api/service/all", beyondList("A", "B"));
+        node.route("/spec", q -> new FakeNode.Reply(200, LIST_API));
+        strictEndpointReport(rowWith("Resource Catalogue", "/res/api/service/all", node.base() + "/spec", null));
+        var report = run();
+        var check = report.path("source").path("payload_check");
+        assertEquals("checked", check.path("status").asText());
+        assertEquals("PASS", check.path("result").asText());
+        assertEquals("GET /res/api/service/all", check.path("operation").asText());
+        assertEquals(1, findings(report, "payload-matches-api-spec").size());
+    }
+
+    @Test
+    void aListThatBreaksTheOpenApiApiSpecIsAnError() throws Exception {
+        node.json("/res/api/service/all", beyondList("A", "B"));
+        node.route("/spec", q -> new FakeNode.Reply(200, LIST_API.replace("\"integer\"", "\"string\"")));
+        strictEndpointReport(rowWith("Resource Catalogue", "/res/api/service/all", node.base() + "/spec", null));
+        var report = run();
+        var check = report.path("source").path("payload_check");
+        assertEquals("FAIL", check.path("result").asText());
+        assertEquals(1, findings(report, "payload-differs-from-api-spec").size());
+        assertEquals("FAIL", report.path("strict_result").asText());
+    }
+
+    @Test
+    void withNoApiSpecThePayloadIsShownAsNotChecked() throws Exception {
+        node.json("/res/api/service/all", beyondList("A", "B"));
+        strictEndpointReport(rowWith("Resource Catalogue", "/res/api/service/all", null, null));
+        var check = run().path("source").path("payload_check");
+        assertEquals("not_checked", check.path("status").asText());
+        assertTrue(check.path("reason").asText().contains("no api_spec is published"), check.toString());
+    }
+
+    @Test
+    void anApiSpecThatCannotBeReadMeansTheListIsNotChecked() throws Exception {
+        node.json("/res/api/service/all", beyondList("A", "B"));
+        node.status("/spec", 404);
+        strictEndpointReport(rowWith("Resource Catalogue", "/res/api/service/all", node.base() + "/spec", null));
+        var report = run();
+        var check = report.path("source").path("payload_check");
+        assertEquals("not_checked", check.path("status").asText());
+        assertTrue(check.path("reason").asText().contains("could not be read as a JSON document"), check.toString());
+        assertEquals(1, findings(report, "api-spec-not-used").size());
+    }
+
+    @Test
+    void aLot1ApiSpecGivesAPassedPayloadCheckWhenTheFormatMatches() throws Exception {
+        node.lot1("/svc/services", services(2, FakeNode.V2_CATEGORY));
+        strictEndpointReport(rowWith("Service Catalogue", "/svc/services", LOT1_V2_SPEC, null));
+        var check = run().path("source").path("payload_check");
+        assertEquals("checked", check.path("status").asText());
+        assertEquals("PASS", check.path("result").asText());
+    }
 }
