@@ -20,6 +20,7 @@ package eu.cessda.pilotnode;
 import eu.cessda.pilotnode.federatedsearch.lenient.CheckOtherMetrics;
 import eu.cessda.pilotnode.capabilities.CheckNodeCapabilities;
 import eu.cessda.pilotnode.core.lenient.CheckCoreIntegrations;
+import eu.cessda.pilotnode.core.StrictCoreIntegrations;
 import eu.cessda.pilotnode.core.ArgoStatus;
 import java.net.URI;
 import java.net.URISyntaxException;
@@ -49,6 +50,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import eu.cessda.pilotnode.catalogue.StrictCatalogueServices;
 import eu.cessda.pilotnode.catalogue.lenient.CatalogueSelector;
 import eu.cessda.pilotnode.catalogue.lenient.CheckCatalogueServices;
+import eu.cessda.pilotnode.monitoring.StrictServiceUptime;
 import eu.cessda.pilotnode.monitoring.lenient.CheckServiceUptime;
 import eu.cessda.pilotnode.common.CheckMode;
 
@@ -292,7 +294,11 @@ public class CheckRunnerController {
      * the legacy ARGO API; it falls back to {@code check.api-key-argo} from
      * config if not supplied, and may be left blank entirely.</p>
      *
-     * @param body optional JSON body containing {@code node} and/or {@code apiKey}
+     * <p>With {@code "mode": "strict"} only the Monitoring endpoint the node published is used, exactly as published
+     * (no fallbacks and no {@code apiKey}), and the findings go to a report in the node's own folder. See
+     * {@code STRICT_MODE.md}.</p>
+     *
+     * @param body optional JSON body containing {@code node}, {@code apiKey} and/or {@code mode}
      */
     @PostMapping("/service-uptime")
     @ResponseStatus(HttpStatus.ACCEPTED)
@@ -302,12 +308,18 @@ public class CheckRunnerController {
         // Optional: only used by the legacy ARGO API fallback. User-supplied
         // key takes precedence; config value is the fallback; blank is fine.
         String targetArgoApiKey = (body != null ? body.getOrDefault("apiKey", argoApiKey) : argoApiKey).strip();
+        CheckMode mode = modeOf(body);
 
         if (targetNode.isBlank()) {
             throw new IllegalArgumentException("No node specified in request body and check.node-name is not configured");
         }
 
-        JobRecord rec = jobRunner.start("service-uptime", record -> {
+        JobRecord rec = jobRunner.start(jobType("service-uptime", mode), record -> {
+            if (mode == CheckMode.STRICT) {
+                StrictServiceUptime.run(targetNode, dataDirPath, httpClient, mapper);
+                record.markDone("strict argo_uptime_report.json written for " + targetNode);
+                return;
+            }
             LocalDate start = LocalDate.now().minusMonths(1);
             LocalDate end = LocalDate.now();
             CheckServiceUptime.run(targetNode, targetArgoApiKey, start, end, dataDirPath, httpClient, mapper);
@@ -328,19 +340,29 @@ public class CheckRunnerController {
      * come from {@code check.argo-status-api-base} and
      * {@code check.argo-federation-tenant}.</p>
      *
-     * @param body optional JSON body containing {@code node}
+     * <p>With {@code "mode": "strict"} the node's group must be named exactly as the node, every endpoint that is not
+     * OK is a finding, and the endpoints are compared with the node's declarations; the report goes under the
+     * node's own folder. See {@code STRICT_MODE.md}.</p>
+     *
+     * @param body optional JSON body containing {@code node} and/or {@code mode}
      */
     @PostMapping("/core-integrations")
     @ResponseStatus(HttpStatus.ACCEPTED)
     public JobRecord runCoreIntegrations(@RequestBody(required = false) Map<String, String> body) {
 
         String targetNode = (body != null ? body.getOrDefault("node", nodeName) : nodeName).strip();
+        CheckMode mode = modeOf(body);
 
         if (targetNode.isBlank()) {
             throw new IllegalArgumentException("No node specified in request body and check.node-name is not configured");
         }
 
-        JobRecord rec = jobRunner.start("core-integrations", record -> {
+        JobRecord rec = jobRunner.start(jobType("core-integrations", mode), record -> {
+            if (mode == CheckMode.STRICT) {
+                StrictCoreIntegrations.run(dataDirPath, targetNode, coreSource, httpClient, mapper);
+                record.markDone("strict core_integrations_report.json written for " + targetNode);
+                return;
+            }
             CheckCoreIntegrations.run(dataDirPath, targetNode, coreSource, httpClient, mapper);
             record.markDone("core_integrations_report.json written for " + targetNode);
         });

@@ -63,6 +63,8 @@ async function fetchNodeReports(nodeName) {
 const STRICT_REPORT_TYPES = [
     { key: 'strictEndpoint',  file: 'endpoint_report.json',           label: 'Node Capabilities', icon: '🔌' },
     { key: 'strictCatalogue', file: 'catalogue_services_report.json', label: 'Exchange Services', icon: '📚' },
+    { key: 'strictUptime',    file: 'argo_uptime_report.json',        label: 'Service Monitoring', icon: '📡' },
+    { key: 'strictCore',      file: 'core_integrations_report.json',  label: 'Core Service integrations', icon: '🧩' },
 ];
 
 /** Text that came from a node (a URL, a response) must not be taken for markup. */
@@ -153,12 +155,12 @@ function federatedSearchInStrictMode(fom) {
 }
 
 function renderStrictNodePanels(strict, fom) {
-    const ep = strict.strictEndpoint, cat = strict.strictCatalogue, argo = null, core = null;
+    const ep = strict.strictEndpoint, cat = strict.strictCatalogue, argo = strict.strictUptime, core = strict.strictCore;
     return `
     ${buildOverview(ep, cat, argo)}
-    ${strictChecks(renderEndpointPanel(ep, core), strict, 'strictEndpoint')}
+    ${strictChecks(renderEndpointPanel(ep, core), strict, 'strictEndpoint', 'strictCore')}
     ${strictChecks(renderCataloguePanel(cat), strict, 'strictCatalogue')}
-    ${renderArgoPanel(argo)}
+    ${strictChecks(renderArgoPanel(argo), strict, 'strictUptime')}
     ${federatedSearchInStrictMode(fom)}
   `;
 }
@@ -625,7 +627,7 @@ function modeLabel(label) {
 }
 
 // Checks with a strict mode; the others always run leniently.
-const STRICT_CHECKS = new Set(['node-capabilities', 'check-all']);
+const STRICT_CHECKS = new Set(['node-capabilities', 'check-all', 'service-uptime', 'core-integrations']);
 
 // Runs a check from the menu. Resolves to true when the job finished, false when it could not start or failed.
 async function runCheck(type) {
@@ -1520,13 +1522,12 @@ async function runAllNodeChecks() {
         }
     }
 
-    // Only Exchange Services has a strict mode on this page; the other three would run leniently, so in strict mode
-    // they are not run, rather than quietly giving a lenient result.
+    // Federated Search has no strict mode, so in strict mode it is not run, rather than quietly giving a lenient result.
     const checks = runMode() === 'strict'
-        ? [runCatalogueCheck]
+        ? [runCatalogueCheck, runServiceUptimeCheck, runCoreIntegrationsCheck]
         : [runCatalogueCheck, runServiceUptimeCheck, runCoreIntegrationsCheck, runOtherMetricsCheck];
     if (runMode() === 'strict') {
-        showToast('info', 'Run All Node Checks', 'Strict mode: only Exchange Services is run (the others have no strict mode).', 8000);
+        showToast('info', 'Run All Node Checks', 'Strict mode: Federated Search is not run (it has no strict mode).', 8000);
     }
 
     for (const check of checks) {
@@ -1577,7 +1578,7 @@ async function runCoreIntegrationsCheck() {
     const btn      = document.getElementById('btn-core-integrations');
     const nodeName = decodeURIComponent(window.location.hash.substring(1));
     if (btn) { btn.disabled = true; btn.textContent = '…'; }
-    const title = 'Core Service integrations';
+    const title = modeLabel('Core Service integrations');
     showToast('info', title, `Starting for ${nodeName}…`);
 
     let jobId;
@@ -1585,7 +1586,7 @@ async function runCoreIntegrationsCheck() {
         const res  = await fetch('/api/run/core-integrations', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ node: nodeName }),
+            body: modeBody({ node: nodeName }),
         });
         const data = await res.json();
         if (!res.ok) { showToast('err', title, data.error || 'HTTP ' + res.status); resetBtn(btn); return; }
@@ -1644,7 +1645,7 @@ async function runServiceUptimeCheck() {
     const btn      = document.getElementById('btn-service-uptime');
     const nodeName = decodeURIComponent(window.location.hash.substring(1));
     if (btn) { btn.disabled = true; btn.textContent = '…'; }
-    const title = 'Service Uptime';
+    const title = modeLabel('Service Uptime');
     showToast('info', title, `Starting for ${nodeName}…`);
 
     let jobId;
@@ -1652,7 +1653,7 @@ async function runServiceUptimeCheck() {
         const res  = await fetch('/api/run/service-uptime', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ node: nodeName }),
+            body: modeBody({ node: nodeName }),
         });
         const data = await res.json();
         if (!res.ok) { showToast('err', title, data.error || 'HTTP ' + res.status); resetBtn(btn); return; }

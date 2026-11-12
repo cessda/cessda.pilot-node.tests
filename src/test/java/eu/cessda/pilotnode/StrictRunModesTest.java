@@ -120,8 +120,17 @@ class StrictRunModesTest {
         result.mode = CheckMode.STRICT;
         String summary = result.summary();
         assertTrue(summary.startsWith("Strict mode."), summary);
-        assertTrue(summary.contains("have no strict mode and were not run"), summary);
-        assertFalse(summary.contains("Service Monitoring:"), summary);
+        assertTrue(summary.contains("Federated Search has no strict mode and was not run."), summary);
+        assertTrue(summary.contains("Service Monitoring: 0 ok, 0 failed."), summary);
+        assertTrue(summary.contains("Core Service integrations: 0 ok, 0 failed."), summary);
+    }
+
+    @Test
+    void anUnknownModeIsABadRequestForServiceMonitoringAndCoreIntegrations() throws Exception {
+        for (String path : new String[]{"/api/run/service-uptime", "/api/run/core-integrations"}) {
+            mockMvc.perform(post(path).contentType(MediaType.APPLICATION_JSON).content("{\"node\":\"N\",\"mode\":\"harsh\"}"))
+                    .andExpect(status().isBadRequest());
+        }
     }
 
     @Test

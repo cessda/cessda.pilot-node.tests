@@ -12,10 +12,10 @@ The checks can run in two modes.
 Lenient mode is for monitoring: it should keep working when a node is a little untidy. Strict mode is for
 conformance: it reports the untidiness.
 
-> **Status.** Strict mode covers **Node Capabilities** and **Exchange Services**. **Service Monitoring** and **Core
-> Service integrations** have no strict mode yet. **Federated Search** cannot be strict as it stands: a Front Office
-> capability publishes a web address, not a search API, so there is no URL to take "as published". The Node page
-> therefore shows its stored result in strict mode as well, saying that it is not a strict result.
+> **Status.** Strict mode covers **Node Capabilities**, **Exchange Services**, **Service Monitoring** and **Core
+> Service integrations**. **Federated Search** cannot be strict as it stands: a Front Office capability publishes a
+> web address, not a search API, so there is no URL to take "as published". The Node page therefore shows its stored
+> result in strict mode as well, saying that it is not a strict result.
 
 ## Choosing the mode
 
@@ -30,28 +30,30 @@ The choice is remembered in the browser.
 
 ## Running strict mode
 
-- **Dashboard.** With *Strict* chosen, *Node Capabilities* and *Exchange Services* run strictly; the other checks have
-  no strict mode and would run leniently. On the Node page, *Run All Node Checks* therefore runs only Exchange
-  Services in strict mode, rather than quietly giving lenient results for the others. The strict check that reads a node's endpoints (Exchange Services) needs the node's
+- **Dashboard.** With *Strict* chosen, every check in the *Run checks* menu runs strictly except *Federated Search*.
+  On the Node page, *Run All Node Checks* then leaves Federated Search out, rather than quietly giving a lenient
+  result for it. The strict checks that read a node's endpoints (Exchange Services, Service Monitoring) need the node's
   **strict** `endpoint_report.json`, which only a strict *Node Capabilities* run writes, and that run covers every node
   in the registry. *Run All Node Checks* therefore runs it first when the node has no report of the chosen mode yet
   (saying so, as it takes longer), in lenient mode as well as in strict mode. The Node page menu also has a *Node
   Capabilities* item. A strict check that fails for want of the strict report says where to run Node Capabilities.
-- **REST.** `POST /api/run/node-capabilities`, `POST /api/run/catalogue-services` and `POST /api/run/check-all` take an optional JSON body with `"mode": "strict"`
+- **REST.** `POST /api/run/node-capabilities`, `POST /api/run/catalogue-services`, `POST /api/run/service-uptime`,
+  `POST /api/run/core-integrations` and `POST /api/run/check-all` take an optional JSON body with `"mode": "strict"`
   (or `"lenient"`, the default); an unknown mode is a `400`. A strict `catalogue-services` request takes no
   `catalogueUrl`, because a strict run reads the endpoints the node published. A job's `type` says `(strict)` when it
   was a strict run.
 - **Scheduled runs.** `check.check-all.scheduled.mode` (`lenient`, the default, or `strict`) sets the mode of the
   scheduled Check All. It is one mode or the other: to keep both up to date, run the other by hand or from outside.
-- **Check All** in strict mode runs Node Capabilities and then Exchange Services for every node (the other checks have
-  no strict mode). It reads and writes each node's own folder, and its summary says which checks were not run.
+- **Check All** in strict mode runs Node Capabilities and then, for every node, Exchange Services, Service Monitoring
+  and Core Service integrations (not Federated Search). It reads and writes
+  each node's own folder, and its summary says which checks were not run.
 
 ## Seeing the results
 
 - **Node page.** In strict mode the page has the same panels as in lenient mode, in the same order and format,
-  built from the node's strict reports: the summary strip (endpoint availability, Exchange Services and
-  compliance tier), Node Capabilities, Exchange Services, Service Monitoring and Federated Search. Where there is no
-  strict result, as for Service Monitoring, its panel is there and says so.
+  built from the node's strict reports: the summary strip (endpoint availability, Exchange Services, uptime and
+  compliance tier), Node Capabilities with Core Service integrations, Exchange Services, Service Monitoring and
+  Federated Search. Where a strict check has not been run, its panel is there and says so.
   Each panel ends with the strict result of the check or checks behind it: one line with Pass or Fail and the
   counts of errors, warnings and notes. A line opens to show every finding of that check, most serious first.
   A finding is a line with its severity, code and message, and a *Show details* link: it opens to show **what to
@@ -84,7 +86,7 @@ dashboard/data/<NODE>/lenient/catalogue_services_report.json  lenient
   node is in that node's reports.
 - Every strict report says `"mode": "strict"`. That is how a strict report is told from a lenient report written by
   an earlier version of the dashboard, which kept lenient reports in `<NODE>/` (see below).
-- A strict Exchange Services run reads the **strict**
+- A strict Exchange Services, Service Monitoring or Core Service integrations run reads the **strict**
   `endpoint_report.json`, so Node Capabilities has to be run in strict mode first.
 
 ### Moving from the earlier layout
@@ -190,12 +192,53 @@ The capability types and their order are those of lenient mode (`check.catalogue
   because paging is only followed for Lot-1.
 - There is **no fallback to the Sandbox**.
 
+## Service Monitoring
+
+Only the Monitoring endpoint the node published, read from the **strict** `endpoint_report.json`, is used, exactly
+as published. There is no fallback to the metrics API, the public dashboard or the legacy API, no guessing of the
+ARGO tenant, no reading of a dashboard page to find the results, and no `apiKey`.
+
+- The endpoint must be the ARGO capability-metrics API (it ends in `/capabilities/monitoring/metrics`). A dashboard
+  page, or any other URL, is an error (`monitoring-endpoint-not-a-data-api`) that says what to publish instead and
+  that lenient mode would have read the page. A node with no Monitoring capability or endpoint is an error
+  (`monitoring-endpoint-missing`).
+- The URL is requested **once, with `GET`, as published**. The one addition is the reporting period: a URL that
+  names neither `start-date` nor `end-date` is requested with the last month added (as lenient mode does), because a
+  fixed period cannot be kept up to date by hand. This is reported as a note (`monitoring-period-added`), and the
+  report records `period_start` and `period_end`. A URL that names a period is used as published.
+- An HTTP error or an unreachable endpoint (`endpoint-http-error`, `endpoint-unreachable`), an answer in the wrong
+  shape (`monitoring-payload-unreadable`) and a list of no services (`monitoring-no-services`) are errors.
+- The report is `<NODE>/argo_uptime_report.json`. A strict run needs the node's strict `endpoint_report.json`.
+
+## Core Service integrations
+
+The federation tenant's ARGO feed is read as configured (`check.argo-status-api-base`,
+`check.argo-federation-tenant`), and:
+
+- The node's group must be named **exactly** as the node (`node-not-monitored` otherwise, saying so when only the
+  case differs: lenient mode ignores the case).
+- Every endpoint's status is judged: `CRITICAL` is an error (`core-endpoint-critical`); `WARNING`, `UNKNOWN` and
+  `MISSING` are warnings; an endpoint that is OK now but was not earlier today is a note
+  (`core-endpoint-recovered`). Each finding names the capability type and URL, the status, the failing probes and the
+  ARGO page for the node.
+- A capability that the node declares as not operational (for example `UNAVAILABLE`) is judged against that: ARGO
+  reporting it as not OK is a note (`declared-unavailable-confirmed`), and ARGO reporting it OK is a warning
+  (`declared-unavailable-but-ok`).
+- The monitored endpoints are compared with the node's strict `endpoint_report.json`: a monitored URL that differs
+  from the declared one is a warning (`monitored-url-differs`), and a monitored capability the node does not declare
+  is a note (`monitored-capability-not-declared`). The Monitoring capability is not compared: the node declares the
+  metrics of its own Exchange services, whereas the federation monitors the Core Services the node uses, so the two
+  URLs differ by design. Without a strict report the comparison is skipped, with a note.
+- A feed that cannot be read is an error finding (`argo-feed-unavailable`), not an exception, so the report still
+  says what happened.
+- The report is `<NODE>/core_integrations_report.json`.
+
 ## What is not done yet
 
 - Running both modes in one scheduled run (the scheduled run uses one mode, `check.check-all.scheduled.mode`).
-- A strict Service Monitoring and Core Service integrations, and a strict Federated Search (see the status above).
-- The index page's strict node cards list the strict checks (Node Capabilities, Exchange Services) rather than the
-  categories of the lenient cards.
+- A strict Federated Search (see the status above).
+- The index page's strict node cards list the strict checks (Node Capabilities, Exchange Services, Service
+  Monitoring, Core Service integrations) rather than the categories of the lenient cards.
 - Controlled vocabularies for `protocol` and `status`. Until there are some, the values the model recommends are kept
   in `CapabilitiesModel`; the model is at
   <https://github.com/madgeek-arc/eosc-node-endpoint/tree/main/eosc-node-capabilities-model>.
@@ -212,8 +255,8 @@ categories is in `common`:
 | ------- | ----------------- | ---------- |
 | `capabilities` | `StrictNodeCapabilities`, `CapabilitiesModel`, `CheckNodeCapabilities` (the run over the registry, which both modes use) | `LenientNodeCapabilities` |
 | `catalogue` | `StrictCatalogueServices`, `StrictCatalogueSelector`, `CatalogueCandidates`, `CatalogueReport`, the format adapters | `CheckCatalogueServices`, `CatalogueSelector` |
-| `monitoring` | `ArgoMetrics` | `CheckServiceUptime` |
-| `core` | `ArgoStatus` | `CheckCoreIntegrations` |
+| `monitoring` | `StrictServiceUptime`, `ArgoMetrics` | `CheckServiceUptime` |
+| `core` | `StrictCoreIntegrations`, `ArgoStatus` | `CheckCoreIntegrations` |
 | `federatedsearch` | | `CheckOtherMetrics` |
 | `common` | `CheckMode`, `ReportFiles`, `Finding`, `Findings`, `Guidance` | |
 

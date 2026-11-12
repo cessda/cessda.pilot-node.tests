@@ -184,8 +184,8 @@ failed … used existing data" note. It only aborts if there is no existing
 `node_registry_summary.json` to fall back on.
 
 Triggered via: `POST /api/run/check-all` — no body required (an optional `{ "mode": "strict" }` runs Node
-Capabilities and Exchange Services in
-[strict mode](STRICT_MODE.md#running-strict-mode); the other checks have no strict mode and are not run), same
+Capabilities, Exchange Services, Service Monitoring and Core Service integrations in
+[strict mode](STRICT_MODE.md#running-strict-mode); Federated Search has no strict mode and is not run), same
 `check.api-key-node` requirement as `CheckNodeCapabilities`. Can also be run
 on a schedule instead of (or as well as) by hand — see **Scheduled Check
 All** under Configuration below.
@@ -276,7 +276,7 @@ well as) being triggered from the UI:
 | -------------------------------------- | ------------------ | ----------- |
 | `check.check-all.scheduled.enabled`    | `false`             | Set to `true` to turn the scheduled run on |
 | `check.check-all.scheduled.cron`       | `0 0 3 * * *` (daily at 03:00) | Spring 6-field cron expression (second minute hour day-of-month month day-of-week) |
-| `check.check-all.scheduled.mode`       | `lenient`           | `lenient` or `strict`. A strict scheduled run checks only Node Capabilities and Exchange Services, as published, and writes to each node's own folder (`dashboard/data/<NODE>/`); the lenient results, in `dashboard/data/<NODE>/lenient/`, are not touched (see [Strict Mode](STRICT_MODE.md)). An unknown value stops the application from starting |
+| `check.check-all.scheduled.mode`       | `lenient`           | `lenient` or `strict`. A strict scheduled run checks Node Capabilities, Exchange Services, Service Monitoring and Core Service integrations, as published (not Federated Search), and writes to each node's own folder (`dashboard/data/<NODE>/`); the lenient results, in `dashboard/data/<NODE>/lenient/`, are not touched (see [Strict Mode](STRICT_MODE.md)). An unknown value stops the application from starting |
 
 `application.properties` is not hot-reloaded, so a restart is needed after
 changing either value. A scheduled run goes through the same `CheckAll` job
@@ -358,7 +358,7 @@ In strict mode the page has the same panels, built from the strict reports. Each
 of its checks: one line (Pass or Fail, with the numbers of errors, warnings and notes) that opens to show the
 findings. A finding opens to show **what to change** in the Node Endpoint, then what was looked at, the URL, what
 was expected, what was found, and any hint. The Federated Search panel shows its stored lenient result, with a note
-saying it has no strict mode. Service Monitoring and Core Service integrations have no strict result yet.
+saying it has no strict mode.
 
 Use the **Switch node** dropdown (top right) to move directly to another node's
 detail page without returning to the landing page.
@@ -370,7 +370,7 @@ none of them needs any credentials:
   another (a check that fails or is skipped doesn't stop the rest). If the
   chosen mode has no Node Capabilities report for the node yet, it runs Node
   Capabilities first (for every node, so it takes longer). In strict mode it
-  runs only Exchange Services.
+  leaves out Federated Search.
 - **Node Capabilities** — runs the check for every node, in the chosen mode.
 - **Exchange Services** — runs immediately using the node's Resource
     Catalogue endpoint, read from `endpoint_report.json`.

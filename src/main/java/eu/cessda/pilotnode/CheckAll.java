@@ -20,6 +20,7 @@ package eu.cessda.pilotnode;
 import eu.cessda.pilotnode.federatedsearch.lenient.CheckOtherMetrics;
 import eu.cessda.pilotnode.capabilities.CheckNodeCapabilities;
 import eu.cessda.pilotnode.core.lenient.CheckCoreIntegrations;
+import eu.cessda.pilotnode.core.StrictCoreIntegrations;
 import eu.cessda.pilotnode.core.ArgoStatus;
 import java.io.IOException;
 import java.net.http.HttpClient;
@@ -35,6 +36,7 @@ import java.util.logging.Logger;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 
+import eu.cessda.pilotnode.monitoring.StrictServiceUptime;
 import eu.cessda.pilotnode.monitoring.lenient.CheckServiceUptime;
 import eu.cessda.pilotnode.common.ReportFiles;
 import eu.cessda.pilotnode.catalogue.NoCatalogueEndpointException;
@@ -115,8 +117,8 @@ public class CheckAll {
 
     /**
      * As {@link #run(Path, String, String, ArgoStatus.Source, CatalogueSelector, Map, HttpClient, ObjectMapper)},
-     * in the given mode. In {@link CheckMode#STRICT} only the checks that have a strict mode run (Node Capabilities and
-     * Exchange Services); the others are left alone and the result says so. Strict results are written to each node's
+     * in the given mode. In {@link CheckMode#STRICT} every check except Federated Search (which cannot be strict) runs
+     * in strict mode; Federated Search is left alone and the result says so. Strict results are written to each node's
      * own folder and never replace the lenient ones, which are in its {@code lenient} folder.
      */
     public static Result run(Path dashboardDir, String nodeApiKey, String argoApiKey,
@@ -181,12 +183,12 @@ public class CheckAll {
                         new Object[]{nodeName, e.getMessage()});
             }
 
-            if (mode == CheckMode.STRICT) {
-                continue;   // the other checks have no strict mode yet; see Result.summary()
-            }
-
             try {
-                CheckServiceUptime.run(nodeName, argoApiKey, startDate, endDate, dashboardDir, http, mapper);
+                if (mode == CheckMode.STRICT) {
+                    StrictServiceUptime.run(nodeName, dashboardDir, http, mapper);
+                } else {
+                    CheckServiceUptime.run(nodeName, argoApiKey, startDate, endDate, dashboardDir, http, mapper);
+                }
                 result.uptimeOk++;
             } catch (InterruptedException e) {
                 Thread.currentThread().interrupt();
@@ -198,7 +200,11 @@ public class CheckAll {
             }
 
             try {
-                CheckCoreIntegrations.run(dashboardDir, nodeName, coreSource, http, mapper);
+                if (mode == CheckMode.STRICT) {
+                    StrictCoreIntegrations.run(dashboardDir, nodeName, coreSource, http, mapper);
+                } else {
+                    CheckCoreIntegrations.run(dashboardDir, nodeName, coreSource, http, mapper);
+                }
                 result.coreOk++;
             } catch (InterruptedException e) {
                 Thread.currentThread().interrupt();
@@ -207,6 +213,10 @@ public class CheckAll {
                 result.coreFailed++;
                 log.log(Level.WARNING, "Check All — Core Service integrations failed for {0}: {1}",
                         new Object[]{nodeName, e.getMessage()});
+            }
+
+            if (mode == CheckMode.STRICT) {
+                continue;   // Federated Search has no strict mode; see Result.summary()
             }
 
             try {
@@ -326,11 +336,11 @@ public class CheckAll {
                                     + (nodeProblems.size() > 3 ? " and " + (nodeProblems.size() - 3) + " more" : "")))
                     + "Checked %d node(s). Exchange Services: %d ok, %d skipped, %d failed. "
                     .formatted(totalNodes, catalogueOk, catalogueSkipped, catalogueFailed)
-                    + (mode == CheckMode.STRICT
-                    ? "Service Monitoring, Core Service integrations and Federated Search have no strict mode and were not run."
-                    : "Service Monitoring: %d ok, %d failed. ".formatted(uptimeOk, uptimeFailed)
+                    + "Service Monitoring: %d ok, %d failed. ".formatted(uptimeOk, uptimeFailed)
                     + "Core Service integrations: %d ok, %d failed. ".formatted(coreOk, coreFailed)
-                    + "Federated Search: %d ok, %d failed.".formatted(metricsOk, metricsFailed));
+                    + (mode == CheckMode.STRICT
+                    ? "Federated Search has no strict mode and was not run."
+                    : "Federated Search: %d ok, %d failed.".formatted(metricsOk, metricsFailed));
         }
     }
 }
