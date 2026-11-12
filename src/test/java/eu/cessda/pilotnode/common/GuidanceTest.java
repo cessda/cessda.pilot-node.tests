@@ -32,10 +32,18 @@ class GuidanceTest {
     @Test
     void errorsAndWarningsSayWhatToChangeInTheNodeEndpoint() {
         for (String code : new String[]{"endpoint-http-error", "api-spec-unreachable", "catalogue-unreachable",
-                "node-endpoint-unavailable"}) {
+                "monitoring-endpoint-not-a-data-api", "node-endpoint-unavailable"}) {
             assertNotNull(Guidance.fix(code), code);
         }
         assertTrue(Guidance.fix("api-spec-not-machine-readable").contains("api_spec"));
+    }
+
+    @Test
+    void coreServiceStatusesShareOneText() {
+        assertNotNull(Guidance.fix("core-endpoint-critical"));
+        assertNotNull(Guidance.fix("core-endpoint-warning"));
+        assertNotNull(Guidance.fix("core-endpoint-unknown"));
+        assertNull(Guidance.fix("core-endpoint-recovered"));
     }
 
     @Test

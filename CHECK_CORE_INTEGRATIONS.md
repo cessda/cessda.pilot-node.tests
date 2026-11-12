@@ -48,7 +48,7 @@ Use **Core Service integrations** in a Node's Run checks menu on `node.html`
 or **Check All** (see [Dashboard](DASHBOARD_README.md)).
 
 Triggered via: `POST /api/run/core-integrations` with optional JSON body
-`{ "node": "..." }`.
+`{ "node": "...", "mode": "strict" }` (`mode` is optional; see [Strict Mode](STRICT_MODE.md#core-service-integrations)).
 No credentials are required.
 
 ## Running Directly
@@ -69,7 +69,7 @@ java -cp "target/classes:$(cat cp.txt)" \
 
 ## Output JSON
 
-Written to `<dashboard_dir>/<NODE_NAME>/lenient/core_integrations_report.json`:
+Written to `<dashboard_dir>/<NODE_NAME>/lenient/core_integrations_report.json` (a strict run writes `<dashboard_dir>/<NODE_NAME>/core_integrations_report.json`):
 
 ```json
 {

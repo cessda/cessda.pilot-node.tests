@@ -112,19 +112,50 @@ public final class Guidance {
             Map.entry("list-incomplete", "The list says one thing and holds another. Check the total and the paging in the "
                     + "response of your catalogue so that every service can be read."),
 
+            // Service Monitoring
+            Map.entry("monitoring-endpoint-missing", "Add a Monitoring capability to your Node Endpoint, with the ARGO "
+                    + "capability-metrics API as its endpoint: https://<host>/v1/public/nodes/<NODE>/capabilities/"
+                    + "monitoring/metrics."),
+            Map.entry("monitoring-endpoint-not-a-data-api", "Change the endpoint of your Monitoring capability to the ARGO "
+                    + "capability-metrics API, whose address ends in /capabilities/monitoring/metrics, instead of the "
+                    + "dashboard page."),
             Map.entry("endpoint-unreachable", "Make the endpoint reachable: check the address in your Node Endpoint, that "
                     + "the service is running and that it can be reached from outside your network."),
             Map.entry("endpoint-http-error", "Make the endpoint answer with HTTP 200. Check the address in your Node "
-                    + "Endpoint and the service behind it.")
+                    + "Endpoint and the service behind it."),
+            Map.entry("monitoring-no-services", "ARGO answered but lists no services for your node. Check the node name in "
+                    + "the endpoint, and ask the federation's monitoring team to add the node's endpoints."),
+            Map.entry("monitoring-payload-unreadable", "Make the Monitoring endpoint return the ARGO metrics JSON, "
+                    + "{\"data\": [...]}. Check that its address is the capability-metrics API."),
+
+            // Core Service integrations
+            Map.entry("argo-feed-unavailable", "Nothing to change in your Node Endpoint: the federation's ARGO status "
+                    + "service could not be read. Try again later, or tell the federation operators."),
+            Map.entry("node-not-monitored", "Ask the federation operators to add your node's Core Service endpoints to the "
+                    + "ARGO tenant, in a group named exactly as your node is named."),
+            Map.entry("core-endpoint-critical", "ARGO reports this endpoint as failing. Make it answer correctly; the ARGO "
+                    + "status page, linked under More, shows which probes fail."),
+            Map.entry("declared-unavailable-but-ok", "Change the status of this capability in your Node Endpoint to "
+                    + "OPERATIONAL, as ARGO finds it working, or stop it answering if it is meant to be unavailable."),
+            Map.entry("monitored-capability-not-declared", "Add this capability to your Node Endpoint, with the endpoint that "
+                    + "ARGO monitors, or ask the federation to stop monitoring it."),
+            Map.entry("monitored-url-differs", "Make the capability's endpoint in your Node Endpoint the same as the URL that "
+                    + "ARGO monitors, or ask the federation to monitor the URL you have published.")
     );
 
     /**
-     * What to change for a finding with this code, or {@code null} if there is nothing for the node to do.
+     * What to change for a finding with this code, or {@code null} if there is nothing for the node to do. The Core
+     * Service statuses other than CRITICAL (WARNING, UNKNOWN, MISSING) share one text.
      */
     public static String fix(String code) {
         if (code == null) {
             return null;
         }
-        return FIX.get(code);
+        String text = FIX.get(code);
+        if (text == null && code.startsWith("core-endpoint-") && !code.equals("core-endpoint-recovered")) {
+            return "ARGO is not reporting this endpoint as healthy. Make it answer correctly; the ARGO status page, "
+                    + "linked under More, shows which probes fail.";
+        }
+        return text;
     }
 }

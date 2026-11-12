@@ -28,6 +28,13 @@ The two public fallbacks need a tenant name, tried in this order:
 4. If still unresolved (any `4xx`) and the node name contains whitespace, its first
    whitespace-separated token, e.g. `EGI Pilot Node -> EGI`.
 
+This is the lenient behaviour. Strict mode will use the declared URL only, with no fallback.
+
+## Strict mode
+
+`POST /api/run/service-uptime` with `"mode": "strict"` uses only the Monitoring endpoint the node published, exactly
+as published, with none of the fallbacks above. See [Strict Mode](STRICT_MODE.md#service-monitoring).
+
 ## Usage
 
 ```text
