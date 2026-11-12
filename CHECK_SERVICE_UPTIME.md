@@ -1,13 +1,13 @@
 # CheckServiceUptime
 
-Java check that writes `argo_uptime_report.json` to `<dashboard_dir>/<NODE_NAME>/`.
+Java check that writes `argo_uptime_report.json` to `<dashboard_dir>/<NODE_NAME>/lenient/`.
 
 ## Data-source strategy
 
 `CheckServiceUptime` uses a single output contract and tries sources in order:
 
 1. **The declared Monitoring URL.** The `Monitoring` capability's endpoint in `endpoint_report.json`
-   (read from `<dashboard_dir>/<NODE_NAME>/`, written earlier by `CheckNodeCapabilities`) is requested
+   (read from `<dashboard_dir>/<NODE_NAME>/lenient/`, written earlier by `CheckNodeCapabilities`) is requested
    exactly as the node publishes it. The public results API is found from the script that page loads,
    and the ARGO tenant is the `/tenants/<TENANT>/` segment of that URL (URL-decoded). The report's
    `data_source` is `declared-monitoring-url`. If the node declares no Monitoring endpoint, the endpoint
@@ -28,8 +28,6 @@ The two public fallbacks need a tenant name, tried in this order:
 4. If still unresolved (any `4xx`) and the node name contains whitespace, its first
    whitespace-separated token, e.g. `EGI Pilot Node -> EGI`.
 
-This is the lenient behaviour. Strict mode will use the declared URL only, with no fallback.
-
 ## Usage
 
 ```text
@@ -38,7 +36,7 @@ CheckServiceUptime NODE_NAME [API_KEY] [START_DATE] [END_DATE] [dashboard_dir]
 
 | Argument | Required | Default | Description |
 | -------- | -------- | ------- | ----------- |
-| `NODE_NAME` | Yes | — | Node name used for output directory and tenant resolution (the declared Monitoring URL and node name are also read from `<dashboard_dir>/NODE_NAME/endpoint_report.json`, if present) |
+| `NODE_NAME` | Yes | — | Node name used for output directory and tenant resolution (the declared Monitoring URL and node name are also read from `<dashboard_dir>/NODE_NAME/lenient/endpoint_report.json`, if present) |
 | `API_KEY` | No | — | Legacy ARGO API key used only if the capability-metrics API and public-dashboard flow are both unavailable |
 | `START_DATE` | No | 1 month ago | Start date (`YYYY-MM-DD`) |
 | `END_DATE` | No | Today | End date (`YYYY-MM-DD`) |
@@ -49,7 +47,7 @@ CheckServiceUptime NODE_NAME [API_KEY] [START_DATE] [END_DATE] [dashboard_dir]
 The report is written to:
 
 ```text
-dashboard/data/<NODE_NAME>/argo_uptime_report.json
+dashboard/data/<NODE_NAME>/lenient/argo_uptime_report.json
 ```
 
 Example shape (capability-metrics API source):

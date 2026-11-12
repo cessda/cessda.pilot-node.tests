@@ -17,6 +17,10 @@
 
 package eu.cessda.pilotnode;
 
+import eu.cessda.pilotnode.federatedsearch.lenient.CheckOtherMetrics;
+import eu.cessda.pilotnode.capabilities.CheckNodeCapabilities;
+import eu.cessda.pilotnode.core.lenient.CheckCoreIntegrations;
+import eu.cessda.pilotnode.core.ArgoStatus;
 import java.net.URI;
 import java.net.URISyntaxException;
 import java.net.http.HttpClient;
@@ -42,7 +46,11 @@ import org.springframework.web.bind.annotation.RestController;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 
-import eu.cessda.pilotnode.catalogue.CatalogueSelector;
+import eu.cessda.pilotnode.catalogue.StrictCatalogueServices;
+import eu.cessda.pilotnode.catalogue.lenient.CatalogueSelector;
+import eu.cessda.pilotnode.catalogue.lenient.CheckCatalogueServices;
+import eu.cessda.pilotnode.monitoring.lenient.CheckServiceUptime;
+import eu.cessda.pilotnode.common.CheckMode;
 
 /**
  * REST controller that triggers the three data-collection checks
@@ -99,7 +107,7 @@ public class CheckRunnerController {
     private final String nodeName;
     private final String argoApiKey;
     private final String nodeApiKey;
-    private final CheckCoreIntegrations.Source coreSource;
+    private final ArgoStatus.Source coreSource;
     private final Map<String, String> discoveryHubNodeAliases;
     private final CatalogueSelector catalogueSelector;
     private final JobRunner jobRunner;
@@ -118,9 +126,9 @@ public class CheckRunnerController {
             @Value("${check.node-name:}")     String nodeName,
             @Value("${check.api-key-argo:}")  String argoApiKey,
             @Value("${check.api-key-node:}") String nodeApiKey,
-            @Value("${check.argo-status-api-base:" + CheckCoreIntegrations.Source.DEFAULT_API_BASE + "}") String argoStatusApiBase,
-            @Value("${check.argo-federation-tenant:" + CheckCoreIntegrations.Source.DEFAULT_TENANT + "}") String argoFederationTenant,
-            @Value("${check.argo-status-ui-base:" + CheckCoreIntegrations.Source.DEFAULT_UI_BASE + "}") String argoStatusUiBase,
+            @Value("${check.argo-status-api-base:" + ArgoStatus.Source.DEFAULT_API_BASE + "}") String argoStatusApiBase,
+            @Value("${check.argo-federation-tenant:" + ArgoStatus.Source.DEFAULT_TENANT + "}") String argoFederationTenant,
+            @Value("${check.argo-status-ui-base:" + ArgoStatus.Source.DEFAULT_UI_BASE + "}") String argoStatusUiBase,
             @Value("${check.discovery-hub-node-aliases:}") String discoveryHubNodeAliases,
             @Value("${check.catalogue.capability-order:Service Catalogue,Resource Catalogue}") List<String> catalogueCapabilityOrder,
             JobRunner jobRunner,
@@ -130,7 +138,7 @@ public class CheckRunnerController {
         this.nodeName    = nodeName;
         this.argoApiKey  = argoApiKey;
         this.nodeApiKey  = nodeApiKey;
-        this.coreSource  = new CheckCoreIntegrations.Source(
+        this.coreSource  = new ArgoStatus.Source(
                 argoStatusApiBase.strip(), argoFederationTenant.strip(), argoStatusUiBase.strip());
         this.discoveryHubNodeAliases = CheckOtherMetrics.parseDiscoveryHubNodeAliases(discoveryHubNodeAliases);
         this.jobRunner = jobRunner;
@@ -147,12 +155,17 @@ public class CheckRunnerController {
      * <p>Requires {@code check.node-name} and {@code check.api-key-node} to be
      * set in {@code application.properties}.</p>
      *
+     * <p>Accepts an optional JSON body: {@code { "mode": "lenient" | "strict" } } (default lenient). A strict run
+     * uses every URL exactly as published and writes its results to each node's own folder; see
+     * {@code STRICT_MODE.md}.</p>
+     *
      * @throws IllegalStateException if {@code check.api-key-node} or
      *                               {@code check.node-name} is unset
      */
     @PostMapping("/node-capabilities")
     @ResponseStatus(HttpStatus.ACCEPTED)
-    public JobRecord runNodeCapabilities() {
+    public JobRecord runNodeCapabilities(@RequestBody(required = false) Map<String, String> body) {
+        CheckMode mode = modeOf(body);
         if (nodeApiKey.isBlank()) {
             throw new IllegalStateException("check.api-key-node is not configured");
         }
@@ -160,13 +173,14 @@ public class CheckRunnerController {
             throw new IllegalStateException("check.node-name is not configured");
         }
 
-        JobRecord rec = jobRunner.start("node-capabilities", record -> {
+        JobRecord rec = jobRunner.start(jobType("node-capabilities", mode), record -> {
             CheckNodeCapabilities.Result result = CheckNodeCapabilities.run(
                     nodeApiKey,
                     EnumSet.of(CheckNodeCapabilities.OutputFormat.JSON),
                     dataDirPath,
                     httpClient,
-                    mapper);
+                    mapper,
+                    mode);
             record.markDone(result.message());
         });
 
@@ -232,7 +246,11 @@ public class CheckRunnerController {
         String targetNode   = body.getOrDefault("node", nodeName).strip();
         String catalogueUrlString = body.getOrDefault("catalogueUrl", "").strip();
         String nodePid      = body.getOrDefault("nodePid", "").strip();
+        CheckMode mode      = modeOf(body);
 
+        if (mode == CheckMode.STRICT && !catalogueUrlString.isBlank()) {
+            throw new IllegalArgumentException("A strict run reads the endpoints the node published, so it takes no catalogueUrl");
+        }
         if (targetNode.isBlank()) {
             throw new IllegalArgumentException("No node specified in request body and check.node-name is not configured");
         }
@@ -241,8 +259,11 @@ public class CheckRunnerController {
         // decides which of its catalogue endpoints to read.
         URI catalogueUrl = catalogueUrlString.isBlank() ? null : new URI(catalogueUrlString);
 
-        JobRecord rec = jobRunner.start("catalogue-services", record -> {
-                if (catalogueUrl == null) {
+        JobRecord rec = jobRunner.start(jobType("catalogue-services", mode), record -> {
+                if (mode == CheckMode.STRICT) {
+                    StrictCatalogueServices.run(dataDirPath, targetNode,
+                            nodePid.isBlank() ? null : nodePid, catalogueSelector.candidateSource(), httpClient, mapper);
+                } else if (catalogueUrl == null) {
                     CheckCatalogueServices.runSelected(dataDirPath, targetNode,
                             nodePid.isBlank() ? null : nodePid, 10, catalogueSelector, httpClient, mapper);
                 } else {
@@ -251,7 +272,7 @@ public class CheckRunnerController {
                             nodePid.isBlank() ? null : nodePid,
                             catalogueUrl, 10, httpClient, mapper);
                 }
-                record.markDone("catalogue_services_report.json written for " + targetNode);
+                record.markDone((mode == CheckMode.STRICT ? "strict " : "") + "catalogue_services_report.json written for " + targetNode);
             }
         );
 
@@ -348,19 +369,41 @@ public class CheckRunnerController {
      */
     @PostMapping("/check-all")
     @ResponseStatus(HttpStatus.ACCEPTED)
-    public JobRecord runCheckAll() {
+    public JobRecord runCheckAll(@RequestBody(required = false) Map<String, String> body) {
+        return startCheckAll(modeOf(body));
+    }
+
+    /**
+     * Starts Check All in the given mode. In strict mode only Node Capabilities and Exchange Services run; the other
+     * checks have no strict mode.
+     *
+     * @throws IllegalStateException if {@code check.api-key-node} is unset
+     */
+    public JobRecord startCheckAll(CheckMode mode) {
         if (nodeApiKey.isBlank()) {
             throw new IllegalStateException("check.api-key-node is not configured");
         }
 
-        JobRecord rec = jobRunner.start("check-all", record -> {
-            CheckAll.Result result = CheckAll.run(dataDirPath, nodeApiKey, argoApiKey, coreSource, catalogueSelector, discoveryHubNodeAliases, httpClient, mapper);
+        JobRecord rec = jobRunner.start(jobType("check-all", mode), record -> {
+            CheckAll.Result result = CheckAll.run(dataDirPath, nodeApiKey, argoApiKey, coreSource, catalogueSelector, discoveryHubNodeAliases, httpClient, mapper, mode);
             record.markDone(result.summary());
         });
 
         jobs.put(rec.getJobId(), rec);
 
         return rec;
+    }
+
+    // ── Mode ──────────────────────────────────────────────────────────────────
+
+    /** The {@code mode} of a request body: {@code lenient} (the default) or {@code strict}. */
+    private static CheckMode modeOf(Map<String, String> body) {
+        return CheckMode.parse(body == null ? null : body.get("mode"));
+    }
+
+    /** The job type shown in the job's status: a strict run says so. */
+    private static String jobType(String type, CheckMode mode) {
+        return mode == CheckMode.STRICT ? type + " (strict)" : type;
     }
 
     // ── Status endpoints ──────────────────────────────────────────────────────

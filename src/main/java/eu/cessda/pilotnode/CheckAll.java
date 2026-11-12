@@ -17,6 +17,10 @@
 
 package eu.cessda.pilotnode;
 
+import eu.cessda.pilotnode.federatedsearch.lenient.CheckOtherMetrics;
+import eu.cessda.pilotnode.capabilities.CheckNodeCapabilities;
+import eu.cessda.pilotnode.core.lenient.CheckCoreIntegrations;
+import eu.cessda.pilotnode.core.ArgoStatus;
 import java.io.IOException;
 import java.net.http.HttpClient;
 import java.nio.file.Path;
@@ -31,7 +35,13 @@ import java.util.logging.Logger;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 
-import eu.cessda.pilotnode.catalogue.CatalogueSelector;
+import eu.cessda.pilotnode.monitoring.lenient.CheckServiceUptime;
+import eu.cessda.pilotnode.common.ReportFiles;
+import eu.cessda.pilotnode.catalogue.NoCatalogueEndpointException;
+import eu.cessda.pilotnode.catalogue.StrictCatalogueServices;
+import eu.cessda.pilotnode.catalogue.lenient.CatalogueSelector;
+import eu.cessda.pilotnode.catalogue.lenient.CheckCatalogueServices;
+import eu.cessda.pilotnode.common.CheckMode;
 
 /**
  * Runs every data-collection check in one pass: {@link CheckNodeCapabilities}
@@ -96,11 +106,25 @@ public class CheckAll {
      *                      is no earlier summary to fall back on
      */
     public static Result run(Path dashboardDir, String nodeApiKey, String argoApiKey,
-                              CheckCoreIntegrations.Source coreSource, CatalogueSelector catalogueSelector,
+                              ArgoStatus.Source coreSource, CatalogueSelector catalogueSelector,
                               Map<String, String> discoveryHubNodeAliases,
                               HttpClient http, ObjectMapper mapper) throws IOException {
+        return run(dashboardDir, nodeApiKey, argoApiKey, coreSource, catalogueSelector, discoveryHubNodeAliases, http,
+                mapper, CheckMode.LENIENT);
+    }
 
-        log.info("Check All — starting with CheckNodeCapabilities");
+    /**
+     * As {@link #run(Path, String, String, ArgoStatus.Source, CatalogueSelector, Map, HttpClient, ObjectMapper)},
+     * in the given mode. In {@link CheckMode#STRICT} only the checks that have a strict mode run (Node Capabilities and
+     * Exchange Services); the others are left alone and the result says so. Strict results are written to each node's
+     * own folder and never replace the lenient ones, which are in its {@code lenient} folder.
+     */
+    public static Result run(Path dashboardDir, String nodeApiKey, String argoApiKey,
+                              ArgoStatus.Source coreSource, CatalogueSelector catalogueSelector,
+                              Map<String, String> discoveryHubNodeAliases,
+                              HttpClient http, ObjectMapper mapper, CheckMode mode) throws IOException {
+
+        log.log(Level.INFO, "Check All ({0}) — starting with CheckNodeCapabilities", mode.label());
         String capabilitiesError = null;
         List<CheckNodeCapabilities.NodeProblem> nodeProblems = List.of();
         try {
@@ -109,7 +133,8 @@ public class CheckAll {
                     EnumSet.of(CheckNodeCapabilities.OutputFormat.JSON),
                     dashboardDir,
                     http,
-                    mapper);
+                    mapper,
+                    mode);
             nodeProblems = capabilities.problems();
         } catch (IOException | RuntimeException e) {
             capabilitiesError = String.valueOf(e.getMessage());
@@ -133,6 +158,7 @@ public class CheckAll {
                         nodeNames.size()});
 
         Result result = new Result(nodeNames.size());
+        result.mode = mode;
         result.capabilitiesError = capabilitiesError;
         result.nodeProblems = nodeProblems;
         LocalDate startDate = LocalDate.now().minusMonths(1);
@@ -140,7 +166,7 @@ public class CheckAll {
 
         for (String nodeName : nodeNames) {
             try {
-                runCatalogueServices(dashboardDir, nodeName, catalogueSelector, mapper, http);
+                runCatalogueServices(dashboardDir, nodeName, catalogueSelector, mapper, http, mode);
                 result.catalogueOk++;
             } catch (SkippedException e) {
                 result.catalogueSkipped++;
@@ -153,6 +179,10 @@ public class CheckAll {
                 result.catalogueFailed++;
                 log.log(Level.WARNING, "Check All — Exchange Services failed for {0}: {1}",
                         new Object[]{nodeName, e.getMessage()});
+            }
+
+            if (mode == CheckMode.STRICT) {
+                continue;   // the other checks have no strict mode yet; see Result.summary()
             }
 
             try {
@@ -222,18 +252,28 @@ public class CheckAll {
      * @throws SkippedException if the Node has no Resource Catalogue
      *                           capability endpoint to check
      */
-    static void runCatalogueServices(Path dashboardDir, String nodeName, CatalogueSelector selector,
+    public static void runCatalogueServices(Path dashboardDir, String nodeName, CatalogueSelector selector,
                                       ObjectMapper mapper, HttpClient http)
             throws IOException, InterruptedException, SkippedException {
+        runCatalogueServices(dashboardDir, nodeName, selector, mapper, http, CheckMode.LENIENT);
+    }
 
-        Path reportPath = dashboardDir.resolve(nodeName).resolve("endpoint_report.json");
-        if (!java.nio.file.Files.isRegularFile(reportPath)) {
-            throw new SkippedException("no endpoint_report.json for this node");
+    /** As above, in the given mode: a strict run reads and writes each node's own folder. */
+    public static void runCatalogueServices(Path dashboardDir, String nodeName, CatalogueSelector selector,
+                                      ObjectMapper mapper, HttpClient http, CheckMode mode)
+            throws IOException, InterruptedException, SkippedException {
+
+        if (ReportFiles.find(dashboardDir, mode, nodeName, "endpoint_report.json", mapper).isEmpty()) {
+            throw new SkippedException((mode == CheckMode.STRICT ? "no strict " : "no ") + "endpoint_report.json for this node");
         }
 
         try {
-            CheckCatalogueServices.runSelected(dashboardDir, nodeName, null, CATALOGUE_QUANTITY, selector, http, mapper);
-        } catch (CheckCatalogueServices.NoCatalogueEndpointException e) {
+            if (mode == CheckMode.STRICT) {
+                StrictCatalogueServices.run(dashboardDir, nodeName, null, selector.candidateSource(), http, mapper);
+            } else {
+                CheckCatalogueServices.runSelected(dashboardDir, nodeName, null, CATALOGUE_QUANTITY, selector, http, mapper);
+            }
+        } catch (NoCatalogueEndpointException e) {
             throw new SkippedException(e.getMessage());
         }
     }
@@ -261,6 +301,8 @@ public class CheckAll {
         public int metricsFailed;
         public int coreOk;
         public int coreFailed;
+        /** The mode the run was in. */
+        public CheckMode mode = CheckMode.LENIENT;
         /** Non-null if the initial CheckNodeCapabilities pass failed and existing data was used. */
         public String capabilitiesError;
         /** Nodes listed by the registry whose capabilities could not be checked (they still appear in the summary). */
@@ -270,19 +312,25 @@ public class CheckAll {
             this.totalNodes = totalNodes;
         }
 
-        /** A short human-readable summary, suitable for {@code JobRecord.markDone(...)}. */
+        /**
+         * A short human-readable summary, suitable for {@code JobRecord.markDone(...)}. It names problem nodes and counts
+         * results; why a node failed is in the logs and in its reports, not here.
+         */
         public String summary() {
-            return (capabilitiesError == null ? ""
-                    : "Node Capabilities failed (%s) — used existing data. ".formatted(capabilitiesError))
+            return (mode == CheckMode.STRICT ? "Strict mode. " : "") + (capabilitiesError == null ? ""
+                    : "Node Capabilities failed — used existing data. ")
                     + (nodeProblems.isEmpty() ? ""
                     : "Node Capabilities had problems with %d node(s): %s. ".formatted(nodeProblems.size(),
-                            nodeProblems.stream().map(p -> p.node() + " (" + p.reason() + ")")
-                                    .collect(java.util.stream.Collectors.joining("; "))))
+                            nodeProblems.stream().limit(3).map(CheckNodeCapabilities.NodeProblem::node)
+                                    .collect(java.util.stream.Collectors.joining(", "))
+                                    + (nodeProblems.size() > 3 ? " and " + (nodeProblems.size() - 3) + " more" : "")))
                     + "Checked %d node(s). Exchange Services: %d ok, %d skipped, %d failed. "
                     .formatted(totalNodes, catalogueOk, catalogueSkipped, catalogueFailed)
-                    + "Service Monitoring: %d ok, %d failed. ".formatted(uptimeOk, uptimeFailed)
+                    + (mode == CheckMode.STRICT
+                    ? "Service Monitoring, Core Service integrations and Federated Search have no strict mode and were not run."
+                    : "Service Monitoring: %d ok, %d failed. ".formatted(uptimeOk, uptimeFailed)
                     + "Core Service integrations: %d ok, %d failed. ".formatted(coreOk, coreFailed)
-                    + "Federated Search: %d ok, %d failed.".formatted(metricsOk, metricsFailed);
+                    + "Federated Search: %d ok, %d failed.".formatted(metricsOk, metricsFailed));
         }
     }
 }

@@ -203,13 +203,38 @@
 <pre><code class="lang-text">/api/<span class="hljs-class"><span class="hljs-keyword">data</span>/{<span
         class="hljs-title">node_name</span>}/front_office_metrics_report.json</span>
 </code></pre>
+<h2 id="modes">Modes: Lenient and Strict</h2>
+<p>The <strong>Mode</strong> menu in the top bar chooses whether the page shows the results of the
+    lenient or the strict checks, and in which mode the checks are run. Changing it runs nothing and
+    does not remove the other mode&#39;s results. If the node has no results in the chosen mode, the
+    page says so; <strong>Run All Node Checks</strong> creates them.</p>
+<p>In strict mode the panels are the same as in lenient mode, built from the strict results, and each
+    panel ends with the strict result of its checks: one line showing Pass or Fail and the numbers of
+    errors, warnings and notes. Click the line to see the findings, most serious first. Click a
+    finding (the line with ERROR, WARNING or INFO, marked <em>Show details</em>) to see:</p>
+<ul>
+    <li><strong>What to change</strong> — what the node should change in its Node Endpoint, or elsewhere, to
+        put the finding right.
+    </li>
+    <li><strong>What</strong>, <strong>URL</strong>, <strong>Expected</strong> and <strong>Found</strong> — what was
+        checked and what came back.
+    </li>
+    <li><strong>More</strong> — any further hint.</li>
+</ul>
+<p>An ERROR means the node does not conform, or something it publishes does not work; the check then
+    shows Fail. A WARNING is accepted but not as recommended, and an INFO is worth knowing. Federated
+    Search has no strict mode: its panel shows the last lenient result, and says so.</p>
 <h2 id="running-checks">Running Checks</h2>
 <p>The <strong>Run checks</strong> menu in the top bar triggers on-demand data
-    collection for the currently selected node. None of the checks
+    collection for the currently selected node, in the mode chosen in the Mode menu. None of the checks
     require any credentials to be entered. The available checks are:</p>
 <ul>
-    <li><strong>Run All Node Checks</strong> — runs the four checks below for this node, one
-        after another.
+    <li><strong>Run All Node Checks</strong> — runs the checks below for this node, one
+        after another. If the node has no Node Capabilities result in the chosen mode yet, it runs
+        Node Capabilities first, for every node, which takes longer. In strict mode it leaves out
+        Federated Search.
+    </li>
+    <li><strong>Node Capabilities</strong> — runs the check for every registered node, in the chosen mode.
     </li>
     <li><strong>Exchange Services</strong> — runs <code>CheckCatalogueServices</code> and
         refreshes <code>catalogue_services_report.json</code> for this node, using the
@@ -220,6 +245,9 @@
         capability-metrics API (falling back to a dashboard scrape, then a
         legacy API, if needed) — no API key prompt, since the default
         source is public.
+    </li>
+    <li><strong>Core Service integrations</strong> — reads the ARGO monitoring status of this node&#39;s
+        endpoints and refreshes <code>core_integrations_report.json</code>.
     </li>
     <li><strong>Federated Search</strong> — runs <code>CheckOtherMetrics</code> and refreshes
         <code>front_office_metrics_report.json</code> for this node. No credentials or

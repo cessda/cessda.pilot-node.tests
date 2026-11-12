@@ -17,6 +17,28 @@ async function loadRegistry() {
     return data;
 }
 
+// Where a node's reports are (the same for every mode):
+//   /api/data/<NODE>/            strict reports (each says "mode": "strict")
+//   /api/data/<NODE>/lenient/    lenient reports
+// An earlier version kept the lenient reports in /api/data/<NODE>/, so until a lenient run has written to the lenient
+// folder the file there is used, if it is not a strict report. Once strict mode is the default the lenient folder can
+// simply be dropped.
+
+/** A lenient report of a node, or null. */
+async function fetchLenientReport(nodeName, file) {
+    const base = `/api/data/${encodeURIComponent(nodeName)}`;
+    const report = await tryFetchJSON(`${base}/lenient/${file}`);
+    if (report) return report;
+    const earlier = await tryFetchJSON(`${base}/${file}`);
+    return earlier && earlier.mode !== 'strict' ? earlier : null;
+}
+
+/** A strict report of a node, or null: a file in the node's folder that does not say it is strict is not one. */
+async function fetchStrictReport(nodeName, file) {
+    const report = await tryFetchJSON(`/api/data/${encodeURIComponent(nodeName)}/${file}`);
+    return report && report.mode === 'strict' ? report : null;
+}
+
 // Fetch all report files for one node, return an object keyed by
 // REPORT_TYPES[].key (e.g. { endpoint, catalogue, argo, frontOffice }).
 // Each value is the parsed JSON object, or null if the file was absent /
@@ -25,9 +47,8 @@ async function loadRegistry() {
 // here — a fixed-position destructure previously meant a new REPORT_TYPES
 // entry would silently drop its own fetched data.
 async function fetchNodeReports(nodeName) {
-    const base = `/api/data/${encodeURIComponent(nodeName)}`;
     const values = await Promise.all(
-        REPORT_TYPES.map(rt => tryFetchJSON(`${base}/${rt.file}`))
+        REPORT_TYPES.map(rt => fetchLenientReport(nodeName, rt.file))
     );
     const result = {};
     REPORT_TYPES.forEach((rt, i) => { result[rt.key] = values[i]; });
@@ -375,33 +396,92 @@ function handleAboutOverlayClick(e) {
     if (e.target === document.getElementById('about-overlay')) closeAbout();
 }
 
+// ── Run mode: lenient (the default) or strict ───────────────────────────────
+// Strict mode uses every URL exactly as the node published it and reports deviations as findings (see
+// STRICT_MODE.md). Only Node Capabilities, Exchange Services and Check All have a strict mode. The choice is
+// remembered in this browser.
+
+const RUN_MODE_KEY = 'pilotNodeRunMode';
+
+function runMode() {
+    try { return localStorage.getItem(RUN_MODE_KEY) === 'strict' ? 'strict' : 'lenient'; }
+    catch (e) { return 'lenient'; }
+}
+
+function setRunMode(mode) {
+    try { localStorage.setItem(RUN_MODE_KEY, mode === 'strict' ? 'strict' : 'lenient'); } catch (e) { /* not stored */ }
+    showRunMode();
+}
+
+function showRunMode() {
+    const mode = runMode();
+    document.querySelectorAll('input[name="run-mode"]').forEach(r => { r.checked = r.value === mode; });
+    const help = document.getElementById('run-mode-help');
+    if (help) {
+        help.textContent = mode === 'strict'
+            ? 'Strict: URLs are used exactly as published, nothing is guessed, and every deviation is a finding. Only Node Capabilities and Exchange Services run in strict mode.'
+            : 'Lenient: the dashboard completes URLs, tries alternatives and falls back to other sources to get an answer.';
+    }
+}
+
+document.addEventListener('DOMContentLoaded', showRunMode);
+
+/** The request body that carries the mode: only a strict run needs to say so. */
+function modeBody(extra = {}) {
+    return JSON.stringify({ ...extra, mode: runMode() });
+}
+
+/**
+ * A short failure message, saying where to fix it when the cause is a strict check that needs the node's strict
+ * endpoint report (which only a strict Node Capabilities run writes).
+ */
+function explainFailure(message) {
+    return /run Node Capabilities in strict mode first/.test(message || '')
+        ? 'Run Node Capabilities in strict mode first (Run checks menu).'
+        : message;
+}
+
+/** A check's name for toasts, with the mode when it is strict. */
+function modeLabel(label) {
+    return runMode() === 'strict' ? label + ' (strict)' : label;
+}
+
+// Checks with a strict mode; the others always run leniently.
+const STRICT_CHECKS = new Set(['node-capabilities', 'check-all']);
+
+// Runs a check from the menu. Resolves to true when the job finished, false when it could not start or failed.
 async function runCheck(type) {
     const btn = document.getElementById('btn-' + type);
     if (btn) { btn.disabled = true; btn.textContent = '…'; }
 
-    const label = CHECK_LABELS[type] || type;
+    const hasMode = STRICT_CHECKS.has(type);
+    const label = hasMode ? modeLabel(CHECK_LABELS[type] || type) : (CHECK_LABELS[type] || type);
     showToast('info', label, 'Starting…');
 
     let jobId;
     try {
-        const res  = await fetch(`/api/run/${type}`, { method: 'POST' });
+        const res  = await fetch(`/api/run/${type}`, hasMode
+            ? { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: modeBody() }
+            : { method: 'POST' });
         const data = await res.json();
-        if (!res.ok) { showToast('err', label, data.error || 'HTTP ' + res.status); resetBtn(btn); return; }
+        if (!res.ok) { showToast('err', label, data.error || 'HTTP ' + res.status); resetBtn(btn); return false; }
         jobId = data.jobId;
     } catch (e) {
         showToast('err', label, 'Request failed: ' + e.message);
-        resetBtn(btn); return;
+        resetBtn(btn); return false;
     }
 
     showToast('info', label, 'Running… (job ' + jobId + ')');
     const maxWaitMs = CHECK_POLL_MAX_WAIT_MS[type];
     const result = await (maxWaitMs ? pollJobStatus(jobId, 1500, maxWaitMs) : pollJobStatus(jobId));
 
-    if (result.status === 'DONE') { showToast('ok', label, result.message || 'Completed'); init(); }
-    else                          { showToast('err', label, result.message || 'Check failed'); }
+    const done = result.status === 'DONE';
+    if (done) { showToast('ok', label, result.message || 'Completed'); init(); }
+    else      { showToast('err', label, result.message || 'Check failed'); }
 
     resetBtn(btn);
     document.getElementById('run-menu')?.setAttribute('aria-expanded', 'false');
+    return done;
 }
 
 async function pollJobStatus(jobId, intervalMs = 1500, maxWaitMs = 300_000) {
@@ -420,18 +500,30 @@ async function pollJobStatus(jobId, intervalMs = 1500, maxWaitMs = 300_000) {
 
 function resetBtn(btn) { if (btn) { btn.disabled = false; btn.textContent = 'Run'; } }
 
+// A toast is a short note, not a report: the message is cut to MAX_TOAST_CHARS (the whole text is the tooltip, and is
+// shown as text, never as markup), an error stays longer than other toasts, and a click dismisses it.
+const MAX_TOAST_CHARS = 140;
+const ERROR_TOAST_MS  = 10_000;
+
 function showToast(kind, title, message, durationMs = 6000) {
     const icons = { ok: '✓', err: '✕', info: '↻' };
+    const full = String(message ?? '');
+    const shown = full.length > MAX_TOAST_CHARS ? full.slice(0, MAX_TOAST_CHARS - 1).trimEnd() + '…' : full;
     const el = document.createElement('div');
     el.className = `toast toast-${kind}`;
     el.innerHTML = `
     <span class="toast-icon">${icons[kind] || '·'}</span>
     <div class="toast-body">
       <div class="toast-title">${title}</div>
-      <div class="toast-msg">${message}</div>
+      <div class="toast-msg"></div>
     </div>`;
+    el.querySelector('.toast-msg').textContent = shown;
+    if (shown !== full) el.title = full;
+    el.style.cursor = 'pointer';
+    el.addEventListener('click', () => el.remove());
     document.getElementById('toast-container').appendChild(el);
-    setTimeout(() => { el.style.transition = 'opacity 0.3s'; el.style.opacity = '0'; setTimeout(() => el.remove(), 320); }, durationMs);
+    const lifetime = kind === 'err' ? Math.max(durationMs, ERROR_TOAST_MS) : durationMs;
+    setTimeout(() => { el.style.transition = 'opacity 0.3s'; el.style.opacity = '0'; setTimeout(() => el.remove(), 320); }, lifetime);
 }
 
 // ── Fetch helper ──────────────────────────────────────────────────────────────
@@ -1235,7 +1327,28 @@ async function runAllNodeChecks() {
     if (btn) { btn.disabled = true; btn.textContent = '…'; }
     showToast('info', 'Run All Node Checks', `Starting all checks for ${nodeName}…`);
 
-    for (const check of [runCatalogueCheck, runServiceUptimeCheck, runCoreIntegrationsCheck, runOtherMetricsCheck]) {
+    // Strict Exchange Services reads the node's strict endpoint report, which only a strict Node Capabilities run
+    // writes. If there is none yet, run it first. It covers every node in the registry, so it takes longer.
+    if (runMode() === 'strict'
+            && !(await fetchStrictReport(nodeName, 'endpoint_report.json'))) {
+        showToast('info', 'Run All Node Checks', 'No strict report yet: running Node Capabilities for every node first (slower).', 8000);
+        if (!(await runCheck('node-capabilities'))) {
+            showToast('err', 'Run All Node Checks', 'Node Capabilities failed; the other checks were not run.');
+            if (btn) { btn.disabled = false; btn.textContent = 'Run all'; }
+            return;
+        }
+    }
+
+    // Only Exchange Services has a strict mode on this page; the other three would run leniently, so in strict mode
+    // they are not run, rather than quietly giving lenient results.
+    const checks = runMode() === 'strict'
+        ? [runCatalogueCheck]
+        : [runCatalogueCheck, runServiceUptimeCheck, runCoreIntegrationsCheck, runOtherMetricsCheck];
+    if (runMode() === 'strict') {
+        showToast('info', 'Run All Node Checks', 'Strict mode: only Exchange Services is run (the others have no strict mode).', 8000);
+    }
+
+    for (const check of checks) {
         try { await check(); } catch (e) { showToast('err', 'Run All Node Checks', 'Check failed: ' + e.message); }
     }
 
@@ -1248,11 +1361,12 @@ async function runCatalogueCheck() {
     const btn      = document.getElementById('btn-catalogue-services');
     const nodeName = decodeURIComponent(window.location.hash.substring(1));
     if (btn) { btn.disabled = true; btn.textContent = '…'; }
-    showToast('info', 'Exchange Services', `Starting for ${nodeName}…`);
+    const title = modeLabel('Exchange Services');
+    showToast('info', title, `Starting for ${nodeName}…`);
 
     // The backend chooses which of the node's catalogue endpoints to read (a Service Catalogue first, then a
     // Resource Catalogue, in whichever format it can read); the page only names the node and its PID.
-    const epData = await tryFetchJSON(`/api/data/${encodeURIComponent(nodeName)}/endpoint_report.json`);
+    const epData = await fetchLenientReport(nodeName, 'endpoint_report.json') || await fetchStrictReport(nodeName, 'endpoint_report.json');
     const nodePid = epData?.node_pid || null;
 
     let jobId;
@@ -1260,20 +1374,20 @@ async function runCatalogueCheck() {
         const res  = await fetch('/api/run/catalogue-services', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ node: nodeName, nodePid }),
+            body: modeBody({ node: nodeName, nodePid }),
         });
         const data = await res.json();
-        if (!res.ok) { showToast('err', 'Exchange Services', data.error || 'HTTP ' + res.status); resetBtn(btn); return; }
+        if (!res.ok) { showToast('err', title, data.error || 'HTTP ' + res.status); resetBtn(btn); return; }
         jobId = data.jobId;
     } catch (e) {
-        showToast('err', 'Exchange Services', 'Request failed: ' + e.message);
+        showToast('err', title, 'Request failed: ' + e.message);
         resetBtn(btn); return;
     }
 
-    showToast('info', 'Exchange Services', 'Running… (job ' + jobId + ')');
+    showToast('info', title, 'Running… (job ' + jobId + ')');
     const result = await pollJobStatus(jobId);
-    if (result.status === 'DONE') { showToast('ok', 'Exchange Services', result.message || 'Completed'); init(); }
-    else                          { showToast('err', 'Exchange Services', result.message || 'Check failed'); }
+    if (result.status === 'DONE') { showToast('ok', title, result.message || 'Completed'); init(); }
+    else                          { showToast('err', title, explainFailure(result.message || 'Check failed')); }
     resetBtn(btn);
 }
 

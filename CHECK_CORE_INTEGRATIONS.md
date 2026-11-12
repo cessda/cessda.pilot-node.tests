@@ -1,6 +1,6 @@
 # Check Core Integrations
 
-`eu.cessda.pilotnode.CheckCoreIntegrations` fetches the monitoring status of
+`eu.cessda.pilotnode.core.lenient.CheckCoreIntegrations` fetches the monitoring status of
 a Node's Core Service integration endpoints (the fabric: AAI, Resource
 Catalogue, Helpdesk, Monitoring ...) from the federation-wide ARGO tenant and
 writes `core_integrations_report.json`. On the dashboard this check is
@@ -48,14 +48,15 @@ Use **Core Service integrations** in a Node's Run checks menu on `node.html`
 or **Check All** (see [Dashboard](DASHBOARD_README.md)).
 
 Triggered via: `POST /api/run/core-integrations` with optional JSON body
-`{ "node": "..." }`. No credentials are required.
+`{ "node": "..." }`.
+No credentials are required.
 
 ## Running Directly
 
 ```bash
 mvn compile dependency:build-classpath -Dmdep.outputFile=cp.txt
 java -cp "target/classes:$(cat cp.txt)" \
-  eu.cessda.pilotnode.CheckCoreIntegrations NODE_NAME [dashboard_dir] [api_base] [tenant] [ui_base]
+  eu.cessda.pilotnode.core.lenient.CheckCoreIntegrations NODE_NAME [dashboard_dir] [api_base] [tenant] [ui_base]
 ```
 
 | Argument        | Required | Default                                     | Description |
@@ -68,7 +69,7 @@ java -cp "target/classes:$(cat cp.txt)" \
 
 ## Output JSON
 
-Written to `<dashboard_dir>/<NODE_NAME>/core_integrations_report.json`:
+Written to `<dashboard_dir>/<NODE_NAME>/lenient/core_integrations_report.json`:
 
 ```json
 {

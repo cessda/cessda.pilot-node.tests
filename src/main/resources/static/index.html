@@ -41,6 +41,14 @@
         <svg viewBox="0 0 10 6" fill="currentColor" aria-hidden="true"><path d="M0 0l5 6 5-6z"/></svg>
       </button>
       <div class="run-dropdown" id="run-dropdown" role="menu">
+        <div class="run-mode" role="group" aria-labelledby="run-mode-label">
+          <div class="run-mode-head">
+            <span class="run-mode-title" id="run-mode-label">Mode</span>
+            <label class="run-mode-option"><input type="radio" name="run-mode" value="lenient" onchange="setRunMode(this.value)" checked> Lenient</label>
+            <label class="run-mode-option"><input type="radio" name="run-mode" value="strict" onchange="setRunMode(this.value)"> Strict</label>
+          </div>
+          <div class="run-mode-help" id="run-mode-help"></div>
+        </div>
         <div class="run-dropdown-header">Data collection checks</div>
         <div class="run-item" role="menuitem">
           <div class="run-item-info">
