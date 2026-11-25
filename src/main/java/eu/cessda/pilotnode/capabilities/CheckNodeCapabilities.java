@@ -17,20 +17,18 @@
 
 package eu.cessda.pilotnode.capabilities;
 
-import eu.cessda.pilotnode.HttpUtils;
-import eu.cessda.pilotnode.JobRecord;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
+import eu.cessda.pilotnode.HttpUtils;
 import eu.cessda.pilotnode.capabilities.lenient.LenientNodeCapabilities;
 import eu.cessda.pilotnode.common.CheckMode;
-import eu.cessda.pilotnode.capabilities.StrictNodeCapabilities;
 
 import java.io.IOException;
 import java.io.InputStream;
+import java.io.Writer;
 import java.net.URI;
-import java.net.URISyntaxException;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
@@ -45,6 +43,8 @@ import java.util.List;
 import java.util.Set;
 import java.util.logging.Level;
 import java.util.logging.Logger;
+
+import static eu.cessda.pilotnode.common.JsonConstants.*;
 
 /**
  * EOSC Beyond Node Registry Endpoint Capabilities Checker.
@@ -74,6 +74,7 @@ public class CheckNodeCapabilities {
             "(KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36";
 
     private static final Logger log = Logger.getLogger(CheckNodeCapabilities.class.getName());
+
 
     private final EnumSet<OutputFormat> format;
 
@@ -249,6 +250,37 @@ public class CheckNodeCapabilities {
 
     // ── JSON helpers ──────────────────────────────────────────────────────────
 
+    /** A node entry with no capabilities and an {@code error} explaining why. */
+    public static ObjectNode failedNodeSummary(ObjectMapper mapper, CheckMode mode, Path dashboardDir, Node node, String reason) {
+        Path reportPath = mode.nodeDir(dashboardDir, node.name()).resolve("endpoint_report.json");
+        ObjectNode n = buildNodeSummary(mapper, mode, node, 0, 0, mapper.createArrayNode(), reportPath);
+        n.put(ERROR_PATH, reason);
+        return n;
+    }
+
+    // ── Text report helpers ───────────────────────────────────────────────────
+
+    public static ObjectNode buildNodeSummary(ObjectMapper mapper, CheckMode mode, Node node,
+            int total, int available, ArrayNode capabilities, Path reportPath) {
+
+        ObjectNode n = mapper.createObjectNode();
+        n.put("generated", nowIso());
+        n.put("mode", mode.label());
+        n.put(NODE_NAME_PATH, node.name());
+        n.put(NODE_ID_PATH, node.id());
+        n.put(NODE_PID_PATH, node.pid());
+        n.put(NODE_ENDPOINT_PATH, node.endpoint());
+        n.put(LOGO_PATH, node.logo());
+        ObjectNode le = n.putObject(LEGAL_ENTITY_PATH);
+        le.put(NAME_PATH, node.legalEntityName());
+        le.put(ROR_ID_PATH, node.legalEntityRor());
+        n.put("total_capabilities", total);
+        n.put("available_capabilities", available);
+        n.put("report_file", reportPath.toString().replace('\\', '/'));
+        n.set("capabilities", capabilities);
+        return n;
+    }
+
     private Result check(String apiKey, URI registry) throws IOException {
         // ── Fetch node list ───────────────────────────────────────────────────
 
@@ -296,65 +328,78 @@ public class CheckNodeCapabilities {
         Files.createDirectories(dashboardDir);
         Path summaryJsonPath = dashboardDir.resolve("node_registry_summary.json");
         Path summaryTxtPath  = dashboardDir.resolve("node_registry_summary.txt");
-        LenientNodeCapabilities lenientCheck = new LenientNodeCapabilities(format, dashboardDir, http, mapper, retryDelay);
-        StrictNodeCapabilities strictCheck = new StrictNodeCapabilities(http, mapper, dashboardDir, retryDelay,
-                format.contains(OutputFormat.JSON));
-
-        if (format.contains(OutputFormat.TEXT) && mode != CheckMode.STRICT) {
-            LenientNodeCapabilities.writeTextHeader(summaryTxtPath);
-        }
 
         List<ObjectNode> nodeSummaries = new ArrayList<>();
         List<NodeProblem> problems = new ArrayList<>();
 
-        // ── Process each node ─────────────────────────────────────────────────
 
-        log.info("Processing nodes from registry...");
+        NodeCapabilities nodeCheck;
+        if (mode == CheckMode.STRICT) {
+            nodeCheck = new StrictNodeCapabilities(http, mapper, dashboardDir, retryDelay, format.contains(OutputFormat.JSON));
+        } else {
+            nodeCheck = new LenientNodeCapabilities(format, dashboardDir, http, mapper, retryDelay);
+        }
 
-        for (JsonNode nodeJson : nodesArray) {
-            String nodeName = text(nodeJson, "name");
-            String nodeId = text(nodeJson, "id");
-            String nodePid = text(nodeJson, "pid");
-            String nodeEndpointString = text(nodeJson, "node_endpoint");
-            String nodeLogo = text(nodeJson, "logo");
-            String legalEntityName = nodeJson.path("legal_entity").path("name").asText();
-            String legalEntityRor = nodeJson.path("legal_entity").path("ror_id").asText();
+        Writer summaryTxtWriter;
+        if (format.contains(OutputFormat.TEXT) && nodeCheck instanceof LenientNodeCapabilities) {
+            summaryTxtWriter = Files.newBufferedWriter(summaryTxtPath);
+        } else {
+            summaryTxtWriter = Writer.nullWriter();
+        }
 
-            ObjectNode summary;
-            try {
-                summary = mode == CheckMode.STRICT
-                        ? strictCheck.check(new StrictNodeCapabilities.Node(nodeName, nodeId, nodePid, nodeEndpointString,
-                                nodeLogo, legalEntityName, legalEntityRor))
-                        : lenientCheck.check(
-                                nodeName, nodeId, nodePid, new URI(nodeEndpointString),
-                                nodeLogo, legalEntityName, legalEntityRor);
-            } catch (InterruptedException e) {
-                Thread.currentThread().interrupt();
-                throw new IOException("Interrupted while checking node " + nodeName, e);
-            } catch (URISyntaxException | IOException | RuntimeException e) {
-                // One bad node must not hide the others, nor stop the summary being written:
-                // record it with an error so that it stays visible.
-                String reason = describe(e);
-                log.log(Level.SEVERE, "Node {0} could not be checked: {1}", new Object[]{nodeName, reason});
-                summary = failedNodeSummary(mapper, mode, dashboardDir, nodeName, nodeId, nodePid, nodeEndpointString, nodeLogo,
-                        legalEntityName, legalEntityRor, reason);
-                writeFailureReport(nodeName, summary);
-            }
+        try (summaryTxtWriter) {
 
-            if (summary.hasNonNull("error")) {
-                String reason = summary.get("error").asText();
-                if (summary.path("capabilities_stale").asBoolean(false)) {
-                    reason += "; showing capabilities last fetched " + summary.path("capabilities_last_fetched").asText("earlier");
+            LenientNodeCapabilities.writeTextHeader(summaryTxtWriter);
+
+
+            // ── Process each node ─────────────────────────────────────────────────
+
+            log.info("Processing nodes from registry...");
+
+            for (JsonNode nodeJson : nodesArray) {
+
+                var node = new Node(
+                        nodeJson.path(NAME_PATH).asText(),
+                        nodeJson.path(ID_PATH).asText(),
+                        nodeJson.path(PID_PATH).asText(),
+                        nodeJson.path(NODE_ENDPOINT_PATH).asText(),
+                        nodeJson.path(LOGO_PATH).asText(),
+                        nodeJson.path(LEGAL_ENTITY_PATH).path(NAME_PATH).asText(),
+                        nodeJson.path(LEGAL_ENTITY_PATH).path(ROR_ID_PATH).asText()
+                );
+
+                ObjectNode summary;
+
+                try {
+                    summary = nodeCheck.check(node);
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                    throw new IOException("Interrupted while checking node " + node.name(), e);
+                } catch (IOException | RuntimeException e) {
+                    // One bad node must not hide the others, nor stop the summary being written:
+                    // record it with an error so that it stays visible.
+                    String reason = describe(e);
+                    log.log(Level.SEVERE, "Node {0} could not be checked: {1}", new Object[]{node.name(), reason});
+                    summary = failedNodeSummary(mapper, mode, dashboardDir, node, reason);
+                    if (format.contains(OutputFormat.JSON)) {
+                        writeFailureReport(node.name(), summary);
+                    }
                 }
-                problems.add(new NodeProblem(nodeName, reason));
-            }
-            if (!summary.hasNonNull("error") && "FAIL".equals(summary.path("strict_result").asText())) {
-                problems.add(new NodeProblem(nodeName, strictReason(summary)));
-            }
-            nodeSummaries.add(summary);
 
-            if (format.contains(OutputFormat.TEXT) && mode != CheckMode.STRICT) {
-                LenientNodeCapabilities.appendTextSummaryEntry(summaryTxtPath, summary);
+                if (summary.hasNonNull(ERROR_PATH)) {
+                    String reason = summary.get(ERROR_PATH).asText();
+                    if (summary.path("capabilities_stale").asBoolean(false)) {
+                        reason += "; showing capabilities last fetched " + summary.path("capabilities_last_fetched").asText("earlier");
+                    }
+                    problems.add(new NodeProblem(node.name(), reason));
+                }
+                if (!summary.hasNonNull(ERROR_PATH) && "FAIL".equals(summary.path("strict_result").asText())) {
+                    problems.add(new NodeProblem(node.name(), strictReason(summary)));
+                }
+
+                nodeSummaries.add(summary);
+
+                LenientNodeCapabilities.appendTextSummaryEntry(summaryTxtWriter, summary);
             }
         }
 
@@ -384,50 +429,12 @@ public class CheckNodeCapabilities {
         return new Result(nodeSummaries.size(), problems);
     }
 
-    // ── Text report helpers ───────────────────────────────────────────────────
-
     /** What the Node Registry says about a node (not what a check found), as {@code node_registry_summary.json} lists it. */
     private ObjectNode registryEntry(ObjectNode summary) {
         ObjectNode n = mapper.createObjectNode();
-        for (String field : List.of("node_name", "node_id", "node_pid", "node_endpoint", "logo")) {
+        for (String field : new String[]{NODE_NAME_PATH, NODE_ID_PATH, NODE_PID_PATH, NODE_ENDPOINT_PATH, LOGO_PATH, LEGAL_ENTITY_PATH}) {
             n.set(field, summary.path(field).isMissingNode() ? mapper.nullNode() : summary.get(field));
         }
-        n.set("legal_entity", summary.path("legal_entity").isMissingNode() ? mapper.nullNode() : summary.get("legal_entity"));
-        return n;
-    }
-
-    /** A node entry with no capabilities and an {@code error} explaining why. */
-    public static ObjectNode failedNodeSummary(ObjectMapper mapper, CheckMode mode, Path dashboardDir,
-            String nodeName, String nodeId, String nodePid, String nodeEndpoint, String nodeLogo,
-            String legalEntityName, String legalEntityRor, String reason) {
-        Path reportPath = mode.nodeDir(dashboardDir, nodeName).resolve("endpoint_report.json");
-        ObjectNode n = buildNodeSummary(mapper, mode, nodeName, nodeId, nodePid, nodeEndpoint, nodeLogo,
-                legalEntityName, legalEntityRor, 0, 0, mapper.createArrayNode(), reportPath);
-        n.put("error", reason);
-        return n;
-    }
-
-    public static ObjectNode buildNodeSummary(ObjectMapper mapper, CheckMode mode,
-            
-            String nodeName, String nodeId, String nodePid, String nodeEndpoint, String nodeLogo,
-            String legalEntityName, String legalEntityRor,
-            int total, int available, ArrayNode capabilities, Path reportPath) {
-
-        ObjectNode n = mapper.createObjectNode();
-        n.put("generated", nowIso());
-        n.put("mode", mode.label());
-        n.put("node_name", nodeName);
-        n.put("node_id", nodeId);
-        n.put("node_pid", nodePid);
-        n.put("node_endpoint", nodeEndpoint);
-        n.put("logo", nodeLogo == null || nodeLogo.isBlank() ? null : nodeLogo);
-        ObjectNode le = n.putObject("legal_entity");
-        le.put("name", legalEntityName);
-        le.put("ror_id", legalEntityRor);
-        n.put("total_capabilities", total);
-        n.put("available_capabilities", available);
-        n.put("report_file", reportPath.toString().replace('\\', '/'));
-        n.set("capabilities", capabilities);
         return n;
     }
 
@@ -437,14 +444,11 @@ public class CheckNodeCapabilities {
      * cannot be written the summary entry still records the problem.
      */
     private void writeFailureReport(String nodeName, ObjectNode report) {
-        if (!format.contains(OutputFormat.JSON) || nodeName.isBlank()) {
-            return;
-        }
         try {
             Path nodeDir = mode.nodeDir(dashboardDir, nodeName);
             Files.createDirectories(nodeDir);
             mapper.writerWithDefaultPrettyPrinter().writeValue(nodeDir.resolve("endpoint_report.json").toFile(), report);
-        } catch (IOException | RuntimeException e) {
+        } catch (IOException e) {
             log.log(Level.WARNING, "Could not write the failure report for {0}: {1}", new Object[]{nodeName, e});
         }
     }
@@ -469,10 +473,6 @@ public class CheckNodeCapabilities {
     }
 
     // ── Utility ───────────────────────────────────────────────────────────────
-
-    public static String text(JsonNode node, String field) {
-        return node.path(field).asText();
-    }
 
     public static String nowIso() {
         return OffsetDateTime.now().format(DateTimeFormatter.ISO_OFFSET_DATE_TIME);

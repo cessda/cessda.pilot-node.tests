@@ -39,6 +39,24 @@ pipeline {
                 }
             }
         }
+        stage('Run Sonar Scan') {
+            steps {
+                withSonarQubeEnv('cessda-sonar') {
+                    withMaven {
+                        sh './mvnw sonar:sonar'
+                    }
+                }
+            }
+            when { branch 'main' }
+        }
+        stage("Get Sonar Quality Gate") {
+            steps {
+                timeout(time: 1, unit: 'HOURS') {
+                    waitForQualityGate abortPipeline: true
+                }
+            }
+            when { branch 'main' }
+        }
         stage('Build Docker Image') {
             steps {
                 withMaven {

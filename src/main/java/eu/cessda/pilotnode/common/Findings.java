@@ -17,20 +17,19 @@
 
 package eu.cessda.pilotnode.common;
 
-import java.util.ArrayList;
-import java.util.List;
-
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 
+import java.util.*;
+
 /** The findings of a strict check, and how they are written into its report. */
 public final class Findings {
 
-    private final List<Finding> all = new ArrayList<>();
+    private final EnumMap<Finding.Severity, ArrayList<Finding>> all = new EnumMap<>(Finding.Severity.class);
 
     public Findings add(Finding finding) {
-        all.add(finding);
+        all.computeIfAbsent(finding.severity(), k -> new ArrayList<>()).add(finding);
         return this;
     }
 
@@ -50,16 +49,29 @@ public final class Findings {
     }
 
     public Findings addAll(Findings other) {
-        all.addAll(other.all);
+        for (var finding : other.all.entrySet()) {
+            all.merge(finding.getKey(), finding.getValue(), (a, b) -> {
+                a.addAll(b);
+                return a;
+            });
+        }
         return this;
     }
 
     public List<Finding> all() {
-        return List.copyOf(all);
+        var allList = new ArrayList<Finding>();
+        for (var severity : all.values()) {
+            allList.addAll(severity);
+        }
+        return allList;
+    }
+
+    private List<Finding> getBySeverity(Finding.Severity severity) {
+        return Objects.requireNonNullElse(all.get(severity), Collections.emptyList());
     }
 
     public long count(Finding.Severity severity) {
-        return all.stream().filter(f -> f.severity() == severity).count();
+        return getBySeverity(severity).size();
     }
 
     public boolean hasErrors() {
@@ -67,13 +79,13 @@ public final class Findings {
     }
 
     /** The first error, which is the one to name when a single reason is needed. */
-    public Finding firstError() {
-        return all.stream().filter(f -> f.severity() == Finding.Severity.ERROR).findFirst().orElse(null);
+    public Optional<Finding> firstError() {
+        return getBySeverity(Finding.Severity.ERROR).stream().findFirst();
     }
 
     public ArrayNode toJson(ObjectMapper mapper) {
         ArrayNode array = mapper.createArrayNode();
-        all.forEach(f -> array.add(f.toJson(mapper)));
+        all().forEach(f -> array.add(mapper.valueToTree(f)));
         return array;
     }
 

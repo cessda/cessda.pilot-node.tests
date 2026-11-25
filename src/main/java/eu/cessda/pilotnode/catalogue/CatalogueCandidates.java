@@ -17,44 +17,55 @@
 
 package eu.cessda.pilotnode.catalogue;
 
+import com.fasterxml.jackson.databind.JsonNode;
+
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
 import java.util.Locale;
 
-import com.fasterxml.jackson.databind.JsonNode;
-
 /**
  * The catalogue endpoints a node declares, in the order they are to be tried, and what became of them. This is the
  * same in both modes: the capability types that count and their order ({@code check.catalogue.capability-order}).
  */
-public final class CatalogueCandidates {
-
-    private final List<String> capabilityOrder;
+public record CatalogueCandidates(List<String> capabilityOrder) {
 
     public CatalogueCandidates(List<String> capabilityOrder) {
         this.capabilityOrder = capabilityOrder.stream().map(CatalogueCandidates::normalise).toList();
     }
 
-    /** The capability types that count, in order, normalised. */
+    /**
+     * The capability types that count, in order, normalised.
+     */
+    @Override
     public List<String> capabilityOrder() {
         return capabilityOrder;
     }
 
-    /** What was chosen: the endpoint, how it was recognised, and its services. */
-    public record Selection(CatalogueCandidate candidate, String adapterId, String format, CatalogueList list) {}
-
-    /** What happened to one candidate. */
-    public record Attempt(CatalogueCandidate candidate, String outcome) {}
-
-    /** The node's catalogue endpoints in the order they will be tried: by type, then OPERATIONAL, then document order. */
+    /**
+     * The node's catalogue endpoints in the order they will be tried: by type, then OPERATIONAL, then document order.
+     */
     public List<CatalogueCandidate> candidates(JsonNode endpointReport) {
         return collect(endpointReport, true);
     }
 
-    /** The node's catalogue capabilities including any that give no endpoint, to tell "none declared" from "declared without one". */
+    /**
+     * The node's catalogue capabilities including any that give no endpoint, to tell "none declared" from "declared without one".
+     */
     public List<CatalogueCandidate> declaredCandidates(JsonNode endpointReport) {
         return collect(endpointReport, false);
+    }
+
+    /**
+     * What was chosen: the endpoint, how it was recognised, and its services.
+     */
+    public record Selection(CatalogueCandidate candidate, String adapterId, String format, CatalogueList list) {
+    }
+
+    /**
+     * What happened to one candidate.
+     */
+    public record Attempt(CatalogueCandidate candidate, String outcome) {
     }
 
     private List<CatalogueCandidate> collect(JsonNode endpointReport, boolean requireEndpoint) {

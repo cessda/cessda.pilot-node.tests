@@ -25,8 +25,6 @@ import java.util.Optional;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 
-import eu.cessda.pilotnode.common.CheckMode;
-
 /**
  * Finds a node's report of a given mode, allowing for the places earlier versions of the dashboard wrote them.
  *

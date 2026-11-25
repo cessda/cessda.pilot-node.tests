@@ -17,6 +17,14 @@
 
 package eu.cessda.pilotnode.catalogue;
 
+import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.node.ArrayNode;
+import com.fasterxml.jackson.databind.node.ObjectNode;
+import eu.cessda.pilotnode.common.CheckMode;
+import eu.cessda.pilotnode.common.Findings;
+
 import java.io.IOException;
 import java.io.InputStream;
 import java.net.URI;
@@ -31,19 +39,37 @@ import java.time.Instant;
 import java.util.List;
 import java.util.logging.Level;
 import java.util.logging.Logger;
-import com.fasterxml.jackson.databind.JsonNode;
-import eu.cessda.pilotnode.common.Findings;
-import eu.cessda.pilotnode.common.CheckMode;
-import eu.cessda.pilotnode.catalogue.CatalogueList;
-import com.fasterxml.jackson.databind.ObjectMapper;
-import com.fasterxml.jackson.databind.node.ArrayNode;
-import com.fasterxml.jackson.databind.node.ObjectNode;
+
+import static eu.cessda.pilotnode.common.JsonConstants.GENERATED_FIELD;
+import static eu.cessda.pilotnode.common.JsonConstants.NODE_NAME_PATH;
 
 /**
  * What the Exchange Services checks have in common, whichever mode they run in: checking the services of a list
  * (is each one's webpage available, and how fast) and writing {@code catalogue_services_report.json}.
  */
 public final class CatalogueReport {
+
+    public static final String NAME_FIELD = "name";
+    public static final String WEBPAGE_FIELD = "webpage";
+    public static final String ID_FIELD = "id";
+    public static final String ABBREVIATION_FIELD = "abbreviation";
+    public static final String API_SOURCE_FIELD = "api_source";
+    public static final String MODE_FIELD = "mode";
+    public static final String FALLBACK_FIELD = "fallback";
+    public static final String FALLBACK_REASON_FIELD = "fallback_reason";
+    public static final String SOURCE_FIELD = "source";
+    public static final String TRIED_FIELD = "tried";
+    public static final String INVALID_RECORDS_FIELD = "invalid_records";
+    public static final String INVALID_DETAILS_FIELD = "invalid_details";
+    public static final String PROBLEMS_FIELD = "problems";
+    public static final String WARNINGS_FIELD = "warnings";
+    public static final String TOTAL_SERVICES_FIELD = "total_services";
+    public static final String HEALTHY_SERVICES_FIELD = "healthy_services";
+    public static final String PCT_HEALTHY_FIELD = "pct_healthy";
+    public static final String AVG_RESPONSE_TIME_MS_FIELD = "avg_response_time_ms";
+    public static final String RESPONSE_TIME_TARGET_MS_FIELD = "response_time_target_ms";
+    public static final String RESPONSE_TIME_THRESHOLD_MS_FIELD = "response_time_threshold_ms";
+    public static final String SERVICES_FIELD = "services";
 
     private CatalogueReport() {}
 
@@ -120,10 +146,10 @@ public final class CatalogueReport {
         double responseTimeSumMs   = 0;
 
         for (JsonNode service : results) {
-            String name         = service.path("name").asText();
-            String webpage = service.path("webpage").asText();
-            String serviceId    = service.path("id").asText();
-            String abbreviation = service.path("abbreviation").asText();
+            String name = service.path(NAME_FIELD).asText();
+            String webpage = service.path(WEBPAGE_FIELD).asText();
+            String serviceId = service.path(ID_FIELD).asText();
+            String abbreviation = service.path(ABBREVIATION_FIELD).asText();
 
             String  status;
             Integer httpCode;
@@ -145,10 +171,8 @@ public final class CatalogueReport {
                     contentValid   = check.contentValid();
                     responseTimeMs = check.responseTimeMs();
 
-                    if (responseTimeMs != null) {
-                        responseTimeSumMs += responseTimeMs;
-                        responseTimeSampleN++;
-                    }
+                    responseTimeSumMs += responseTimeMs;
+                    responseTimeSampleN++;
 
                     if (httpCode == 404) {
                         status = "Not found";
@@ -157,7 +181,7 @@ public final class CatalogueReport {
                         if (Boolean.FALSE.equals(contentValid)) {
                             status = "Available (content check failed)";
                             colour = YELLOW;
-                        } else if (responseTimeMs != null && responseTimeMs > RESPONSE_TIME_THRESHOLD_MS) {
+                        } else if (responseTimeMs > RESPONSE_TIME_THRESHOLD_MS) {
                             status = "Available (slow: " + responseTimeMs + "ms)";
                             colour = YELLOW;
                         } else {
@@ -191,13 +215,13 @@ public final class CatalogueReport {
 
             // Build JSON entry
             ObjectNode entry = mapper.createObjectNode();
-            entry.put("name", name);
-            entry.put("abbreviation", abbreviation);
+            entry.put(NAME_FIELD, name);
+            entry.put(ABBREVIATION_FIELD, abbreviation);
             entry.put("service_id", serviceId);
             if (!webpage.isEmpty()) {
-                entry.put("webpage", webpage);
+                entry.put(WEBPAGE_FIELD, webpage);
             } else                 {
-                entry.putNull("webpage");
+                entry.putNull(WEBPAGE_FIELD);
             }
             entry.put("status", status);
             if (httpCode != null) {
@@ -232,51 +256,51 @@ public final class CatalogueReport {
                 ? Math.round(responseTimeSumMs / responseTimeSampleN) : null;
 
         ObjectNode report = mapper.createObjectNode();
-        report.put("generated", Instant.now().toString());
-        report.put("node_name",      nodeName);
-        report.put("api_source", apiUrl.toString());
+        report.put(GENERATED_FIELD, Instant.now().toString());
+        report.put(NODE_NAME_PATH, nodeName);
+        report.put(API_SOURCE_FIELD, apiUrl.toString());
         if (source.findings() != null) {
             source.findings().writeTo(report, mapper);
         } else {
-            report.put("mode", CheckMode.LENIENT.label());
+            report.put(MODE_FIELD, CheckMode.LENIENT.label());
         }
         if (fallbackReason != null) {
-            report.put("fallback", true);
-            report.put("fallback_reason", fallbackReason);
+            report.put(FALLBACK_FIELD, true);
+            report.put(FALLBACK_REASON_FIELD, fallbackReason);
             report.put("note", "The node's own catalogue could not be read (" + fallbackReason
                     + "). These are the services the Sandbox has registered for " + nodePid + "; the node may"
                     + " publish others.");
         }
         if (source.provenance() != null) {
-            report.set("source", source.provenance());
+            report.set(SOURCE_FIELD, source.provenance());
         }
         if (source.tried() != null && !source.tried().isEmpty()) {
-            report.set("tried", source.tried());
+            report.set(TRIED_FIELD, source.tried());
         }
         if (!source.invalid().isEmpty()) {
-            report.put("invalid_records", source.invalid().size());
-            ArrayNode details = report.putArray("invalid_details");
+            report.put(INVALID_RECORDS_FIELD, source.invalid().size());
+            ArrayNode details = report.putArray(INVALID_DETAILS_FIELD);
             for (CatalogueList.InvalidRecord r : source.invalid()) {
                 ObjectNode d = details.addObject();
-                d.put("id", r.id());
-                d.put("problems", String.join("; ", r.messages()));
+                d.put(ID_FIELD, r.id());
+                d.put(PROBLEMS_FIELD, String.join("; ", r.messages()));
             }
         }
         if (!source.warnings().isEmpty()) {
-            ArrayNode w = report.putArray("warnings");
+            ArrayNode w = report.putArray(WARNINGS_FIELD);
             source.warnings().forEach(w::add);
         }
-        report.put("total_services", total);
-        report.put("healthy_services", healthyCount);
-        report.put("pct_healthy", pctHealthy);
+        report.put(TOTAL_SERVICES_FIELD, total);
+        report.put(HEALTHY_SERVICES_FIELD, healthyCount);
+        report.put(PCT_HEALTHY_FIELD, pctHealthy);
         if (avgResponseTimeMs != null) {
-            report.put("avg_response_time_ms", avgResponseTimeMs);
+            report.put(AVG_RESPONSE_TIME_MS_FIELD, avgResponseTimeMs);
         } else {
-            report.putNull("avg_response_time_ms");
+            report.putNull(AVG_RESPONSE_TIME_MS_FIELD);
         }
-        report.put("response_time_target_ms", RESPONSE_TIME_TARGET_MS);
-        report.put("response_time_threshold_ms", RESPONSE_TIME_THRESHOLD_MS);
-        report.set("services", servicesArray);
+        report.put(RESPONSE_TIME_TARGET_MS_FIELD, RESPONSE_TIME_TARGET_MS);
+        report.put(RESPONSE_TIME_THRESHOLD_MS_FIELD, RESPONSE_TIME_THRESHOLD_MS);
+        report.set(SERVICES_FIELD, servicesArray);
 
         mapper.writerWithDefaultPrettyPrinter()
               .writeValue(reportFileJson.toFile(), report);
@@ -378,7 +402,7 @@ public final class CatalogueReport {
             try {
                 JsonNode parsed = new ObjectMapper().readTree(body);
                 return !(parsed.isContainerNode() && parsed.isEmpty());
-            } catch (IOException e) {
+            } catch (JsonProcessingException e) {
                 return false;
             }
         }

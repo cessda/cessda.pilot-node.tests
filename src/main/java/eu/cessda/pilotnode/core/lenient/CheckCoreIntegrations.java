@@ -60,9 +60,9 @@ import eu.cessda.pilotnode.common.CheckMode;
  *   dashboard_dir: Path to the dashboard data directory
  *                  (default: ../dashboard/data). Output is written to
  *                  &lt;dashboard_dir&gt;/&lt;NODE_NAME&gt;/core_integrations_report.json
- *   api_base:      ARGO status API base URL (default: {@link Source#DEFAULT_API_BASE})
- *   tenant:        ARGO federation tenant (default: {@link Source#DEFAULT_TENANT})
- *   ui_base:       ARGO status web UI base URL (default: {@link Source#DEFAULT_UI_BASE})
+ *   api_base:      ARGO status API base URL (default: {@value Source#DEFAULT_API_BASE})
+ *   tenant:        ARGO federation tenant (default: {@value Source#DEFAULT_TENANT})
+ *   ui_base:       ARGO status web UI base URL (default: {@value Source#DEFAULT_UI_BASE})
  */
 public class CheckCoreIntegrations {
 
@@ -70,8 +70,15 @@ public class CheckCoreIntegrations {
 
     public static void main(String[] args) throws IOException, InterruptedException {
         if (args.length < 1) {
-            System.err.println("Error: NODE_NAME is required");
-            System.err.println("Usage: java CheckCoreIntegrations <NODE_NAME> [<dashboard_dir>] [<api_base>] [<tenant>] [<ui_base>]");
+            System.err.println("Error: NODE_NAME is required\n" +
+                               "Usage: java CheckCoreIntegrations <NODE_NAME> [<dashboard_dir>] [<api_base>] [<tenant>] [<ui_base>]\n" +
+                               "   NODE_NAME:     Node name, as in node_registry_summary.json (required)\n" +
+                               "   dashboard_dir: Path to the dashboard data directory\n" +
+                               "                  (default: ../dashboard/data). Output is written to\n" +
+                               "                  <dashboard_dir>/<NODE_NAME>/core_integrations_report.json\n" +
+                               "   api_base:      ARGO status API base URL (default: " + Source.DEFAULT_API_BASE + ")\n" +
+                               "   tenant:        ARGO federation tenant (default: " + Source.DEFAULT_TENANT + ")\n" +
+                               "   ui_base:       ARGO status web UI base URL (default: " + Source.DEFAULT_UI_BASE + ")");
             System.exit(-1);
         }
         String nodeName     = args[0];

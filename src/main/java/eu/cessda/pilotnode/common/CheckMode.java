@@ -36,16 +36,15 @@ import java.util.Locale;
  * list of nodes, {@code <data>/node_registry_summary.json}, is the same for both and exists once.</p>
  */
 public enum CheckMode {
-    LENIENT("lenient"),
-    STRICT("strict");
-
-    /** The folder, inside a node's folder, that holds its lenient results. */
-    public static final String LENIENT_FOLDER = "lenient";
+    LENIENT("lenient", "lenient"),
+    STRICT("strict", null);
 
     private final String label;
+    private final String subdirectory;
 
-    CheckMode(String label) {
+    CheckMode(String label, String subdirectory) {
         this.label = label;
+        this.subdirectory = subdirectory;
     }
 
     /** The name used in reports and requests: {@code lenient} or {@code strict}. */
@@ -59,7 +58,7 @@ public enum CheckMode {
      */
     public Path nodeDir(Path dataDir, String nodeName) {
         Path node = dataDir.resolve(nodeName);
-        return this == LENIENT ? node.resolve(LENIENT_FOLDER) : node;
+        return subdirectory == null ? node : node.resolve(subdirectory);
     }
 
     /** Reads a mode from a request or setting; blank means lenient. */

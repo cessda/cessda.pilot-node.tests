@@ -56,8 +56,7 @@ public final class ArgoStatus {
     }
 
     // Worst-first, so the worst value seen in the window can be picked.
-    public static final List<String> STATUS_SEVERITY =
-            List.of("CRITICAL", "WARNING", "UNKNOWN", "MISSING", "OK");
+    public enum StatusSeverity { CRITICAL, WARNING, UNKNOWN, MISSING, OK }
 
     /** The ARGO federation tenant's status of every endpoint, for today, as the API answered it. */
     public record Feed(URI url, String start, String end, JsonNode root) { }
@@ -228,8 +227,13 @@ public final class ArgoStatus {
     }
 
     public static int severityRank(String status) {
-        int i = STATUS_SEVERITY.indexOf(status);
-        return i >= 0 ? i : STATUS_SEVERITY.indexOf("UNKNOWN");
+        StatusSeverity statusSeverity;
+        try {
+            statusSeverity = StatusSeverity.valueOf(status);
+        } catch (IllegalArgumentException e) {
+            statusSeverity = StatusSeverity.UNKNOWN;
+        }
+        return statusSeverity.ordinal();
     }
 
     public static InputStream fetchData(HttpClient httpClient, URI url) throws IOException, InterruptedException {

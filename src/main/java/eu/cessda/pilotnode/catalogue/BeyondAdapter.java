@@ -17,14 +17,16 @@
 
 package eu.cessda.pilotnode.catalogue;
 
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.node.ObjectNode;
+
 import java.net.URI;
 import java.net.http.HttpClient;
 import java.util.List;
 import java.util.Optional;
 
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
-import com.fasterxml.jackson.databind.node.ObjectNode;
+import static eu.cessda.pilotnode.common.JsonConstants.RESULTS_FIELD;
 
 
 /**
@@ -35,6 +37,11 @@ import com.fasterxml.jackson.databind.node.ObjectNode;
 public final class BeyondAdapter implements CatalogueAdapter {
 
     static final String FORMAT = "EOSC Beyond service list";
+
+    public static final String CONTEXT_FIELD = "@context";
+    public static final String FACETS_FIELD = "facets";
+    public static final String NAME_FIELD = "name";
+    public static final String SERVICE_FIELD = "service";
 
     @Override
     public String id() {
@@ -53,13 +60,13 @@ public final class BeyondAdapter implements CatalogueAdapter {
 
     @Override
     public Optional<String> detect(JsonNode sample) {
-        if (!sample.isObject() || sample.has("@context") || !sample.path("results").isArray()) {
+        if (!sample.isObject() || sample.has(CONTEXT_FIELD) || !sample.path(RESULTS_FIELD).isArray()) {
             return Optional.empty();
         }
-        JsonNode results = sample.get("results");
+        JsonNode results = sample.get(RESULTS_FIELD);
         if (results.isEmpty()) {
             // An empty list could be any format; the Beyond catalogue's list carries its facets.
-            return sample.has("facets") ? Optional.of(FORMAT) : Optional.empty();
+            return sample.has(FACETS_FIELD) ? Optional.of(FORMAT) : Optional.empty();
         }
         int looked = 0;
         for (JsonNode item : results) {
@@ -67,7 +74,7 @@ public final class BeyondAdapter implements CatalogueAdapter {
                 break;
             }
             // Lot-1 wraps each service as {id, service: {...}}; a Beyond list has the service's fields directly.
-            if (!item.isObject() || item.path("name").asText("").isBlank() || item.path("service").isObject()) {
+            if (!item.isObject() || item.path(NAME_FIELD).asText("").isBlank() || item.path(SERVICE_FIELD).isObject()) {
                 return Optional.empty();
             }
         }

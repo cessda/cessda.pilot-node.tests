@@ -17,6 +17,11 @@
 
 package eu.cessda.pilotnode.catalogue;
 
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import eu.cessda.pilotnode.capabilities.CapabilitiesModel;
+import eu.cessda.pilotnode.common.Findings;
+
 import java.io.IOException;
 import java.net.URI;
 import java.net.http.HttpClient;
@@ -27,11 +32,9 @@ import java.util.Optional;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
-
-import eu.cessda.pilotnode.capabilities.CapabilitiesModel;
-import eu.cessda.pilotnode.common.Findings;
+import static eu.cessda.pilotnode.catalogue.BeyondAdapter.CONTEXT_FIELD;
+import static eu.cessda.pilotnode.common.JsonConstants.RESULTS_FIELD;
+import static eu.cessda.pilotnode.common.JsonConstants.TOTAL_FIELD;
 
 /**
  * The strict version of choosing and reading a node's catalogue.
@@ -192,6 +195,25 @@ public final class StrictCatalogueSelector {
         }
     }
 
+    private static String describe(JsonNode root) {
+        if (root.has(CONTEXT_FIELD) || root.toString().contains("\"dcat:")) {
+            return "a DCAT feed";
+        }
+        if (root.path(RESULTS_FIELD).isArray()) {
+            return "a list in a format that is not supported";
+        }
+        return "JSON that is not a service list";
+    }
+
+    // ── helpers ──────────────────────────────────────────────────────────────
+
+    /** What lenient mode would have asked for instead, if that differs from the published URL. */
+    private String lenientHint(URI published) {
+        URI lenient = beyond.probeUrls(published).get(0);
+        return lenient.equals(published) ? null
+                : "Lenient mode would request " + lenient + " instead of the URL as published";
+    }
+
     private void reportList(Findings f, Recognised r, CatalogueList list) {
         int shown = 0;
         for (CatalogueList.InvalidRecord invalid : list.invalid()) {
@@ -205,37 +227,18 @@ public final class StrictCatalogueSelector {
         }
         list.warnings().forEach(w -> f.warning("list-incomplete", w, r.subject(), r.candidate().endpoint(),
                 "every service in the list", w, null));
-        long reported = r.probe().root().path("total").asLong(0);
-        int returned = r.probe().root().path("results").size();
+        long reported = r.probe().root().path(TOTAL_FIELD).asLong(0);
+        int returned = r.probe().root().path(RESULTS_FIELD).size();
         if (!(r.adapter() instanceof Lot1Adapter) && reported > returned) {
             // A list in this format is read as returned; how it is paged is not known.
             f.warning("list-incomplete", "The list reports " + reported + " services but the response holds " + returned,
                     r.subject(), r.candidate().endpoint(), "every service in the response", returned + " of " + reported,
                     "Paging is only followed for the EOSC-Lot-1 format");
         }
-        if (r.adapter() instanceof Lot1Adapter && r.probe().root().path("total").asLong(0) > r.probe().root().path("results").size()) {
+        if (r.adapter() instanceof Lot1Adapter && r.probe().root().path(TOTAL_FIELD).asLong(0) > r.probe().root().path(RESULTS_FIELD).size()) {
             f.info("paged-with-from-quantity", "The first response held part of the list; the rest was read with the from and quantity "
                     + "parameters that the Lot-1 model defines", r.subject(), r.candidate().endpoint(), null,
-                    r.probe().root().path("results").size() + " of " + r.probe().root().path("total").asLong() + " in the first response", null);
+                    r.probe().root().path(RESULTS_FIELD).size() + " of " + r.probe().root().path(TOTAL_FIELD).asLong() + " in the first response", null);
         }
-    }
-
-    // ── helpers ──────────────────────────────────────────────────────────────
-
-    /** What lenient mode would have asked for instead, if that differs from the published URL. */
-    private String lenientHint(URI published) {
-        URI lenient = beyond.probeUrls(published).get(0);
-        return lenient.equals(published) ? null
-                : "Lenient mode would request " + lenient + " instead of the URL as published";
-    }
-
-    private static String describe(JsonNode root) {
-        if (root.has("@context") || root.toString().contains("\"dcat:")) {
-            return "a DCAT feed";
-        }
-        if (root.path("results").isArray()) {
-            return "a list in a format that is not supported";
-        }
-        return "JSON that is not a service list";
     }
 }
