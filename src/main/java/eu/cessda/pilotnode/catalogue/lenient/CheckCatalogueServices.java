@@ -17,9 +17,18 @@
 
 package eu.cessda.pilotnode.catalogue.lenient;
 
-import eu.cessda.pilotnode.catalogue.NoCatalogueEndpointException;
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.node.ArrayNode;
+import com.fasterxml.jackson.databind.node.ObjectNode;
+import eu.cessda.pilotnode.HttpUtils;
 import eu.cessda.pilotnode.catalogue.BeyondAdapter;
 import eu.cessda.pilotnode.catalogue.CatalogueCandidates;
+import eu.cessda.pilotnode.catalogue.CatalogueContext;
+import eu.cessda.pilotnode.catalogue.NoCatalogueEndpointException;
+import eu.cessda.pilotnode.common.CheckMode;
+import eu.cessda.pilotnode.common.ReportFiles;
+
 import java.io.IOException;
 import java.io.InputStream;
 import java.net.URI;
@@ -33,23 +42,14 @@ import java.util.List;
 import java.util.logging.Level;
 import java.util.logging.Logger;
 
-import com.fasterxml.jackson.databind.JsonNode;
-import eu.cessda.pilotnode.HttpUtils;
-import eu.cessda.pilotnode.catalogue.*;
 import static eu.cessda.pilotnode.catalogue.CatalogueReport.*;
-import eu.cessda.pilotnode.common.ReportFiles;
-import eu.cessda.pilotnode.common.CheckMode;
-import eu.cessda.pilotnode.catalogue.CatalogueContext;
-import com.fasterxml.jackson.databind.ObjectMapper;
-import com.fasterxml.jackson.databind.node.ArrayNode;
-import com.fasterxml.jackson.databind.node.ObjectNode;
 
 /**
  * Service Catalogue Resource Checker
- *
+ * <p>
  * Reads JSON from API and checks availability of each resource webpage.
- *
- * Usage: java CheckCatalogueServices NODE_NAME [api_base_url] [quantity] [dashboard_dir]
+ * <p>
+ * Usage: java CheckCatalogueServices NODE_NAME [api_base_url] [quantity] [dashboard_dir]<br>
  *   NODE_NAME:    Node name to use as keyword filter (required)
  *   api_base_url: Base URL of the node's Resource Catalogue API
  *                 (default: the CESSDA staging URL below)
@@ -75,13 +75,37 @@ public class CheckCatalogueServices {
     private static final Logger log =
             Logger.getLogger(CheckCatalogueServices.class.getName());
 
+    public static final String ERROR_FIELD = "error";
+    public static final String TOTAL_FIELD = "total";
+    public static final String RESULTS_FIELD = "results";
+    public static final String NODE_PID_FIELD = "nodePID";
+    public static final String NODE_ENDPOINT_FIELD = "node_endpoint";
+    public static final String CAPABILITY_TYPE_FIELD = "capability_type";
+    public static final String ENDPOINT_FIELD = "endpoint";
+    public static final String PROTOCOL_FIELD = "protocol";
+    public static final String ADAPTER_FIELD = "adapter";
+    public static final String FORMAT_FIELD = "format";
+    public static final String CONVERTED_FIELD = "converted";
+
     public static void main(String[] args) throws IOException, URISyntaxException, InterruptedException {
 
         // ── Argument parsing ──────────────────────────────────────────
         if (args.length < 1) {
-            System.err.println("Error: NODE_NAME is required");
-            System.err.println("Usage: java CheckCatalogueServices <NODE_NAME>"
-                    + " [<api_base_url>] [<quantity>] [<dashboard_dir>]");
+            System.err.println("""       
+                    Error: NODE_NAME is required
+                    Usage: java CheckCatalogueServices NODE_NAME [api_base_url] [quantity] [dashboard_dir]
+                       NODE_NAME:    Node name to use as keyword filter (required)
+                       api_base_url: Base URL of the node's Resource Catalogue API
+                                     (default: the CESSDA staging URL below)
+                                     Should be the endpoint value for capability_type
+                                     "Resource Catalogue" from that node's
+                                     endpoint_report.json. Any trailing "/api" or "/api/"
+                                     is stripped before "/api/service/all" is appended.
+                       quantity:     Maximum number of services to retrieve (default: 10)
+                       dashboard_dir: Path to the dashboard data directory
+                                     (default: ../dashboard/data)
+                                     Output is written to
+                                     <dashboard_dir>/<NODE_NAME>/catalogue_services_report.json""");
             System.exit(-1);
         }
 
@@ -124,7 +148,7 @@ public class CheckCatalogueServices {
             int quantity,
             HttpClient httpClient,
             ObjectMapper mapper)
-            throws IOException, URISyntaxException, InterruptedException {
+            throws IOException, InterruptedException {
         run(dashboardDir, nodeName, nodePid, apiBaseUrl, quantity, httpClient, mapper, FALLBACK_BASE_URL);
     }
 
@@ -137,7 +161,7 @@ public class CheckCatalogueServices {
             HttpClient httpClient,
             ObjectMapper mapper,
             URI fallbackBase)
-            throws IOException, URISyntaxException, InterruptedException {
+            throws IOException, InterruptedException {
 
         // When calling the node's own Resource Catalogue endpoint the API returns all services for that node
         // without filtering. The Sandbox fallback aggregates the services of many nodes, so it is filtered.
@@ -187,7 +211,7 @@ public class CheckCatalogueServices {
                 new Object[]{nodeName, Instant.now(), selector.candidates(endpointReport)});
 
         if (selector.candidates(endpointReport).isEmpty()) {
-            String error = endpointReport.path("error").asText("");
+            String error = endpointReport.path(ERROR_FIELD).asText("");
             throw new NoCatalogueEndpointException(error.isBlank()
                     ? "no Service Catalogue or Resource Catalogue endpoint in endpoint_report.json"
                     : "no Service Catalogue or Resource Catalogue endpoint: endpoint_report.json records an error ("
@@ -198,8 +222,8 @@ public class CheckCatalogueServices {
         ArrayNode tried = mapper.createArrayNode();
         for (CatalogueCandidates.Attempt attempt : result.attempts()) {
             ObjectNode a = tried.addObject();
-            a.put("capability_type", attempt.candidate().capabilityType());
-            a.put("endpoint", attempt.candidate().endpoint());
+            a.put(CAPABILITY_TYPE_FIELD, attempt.candidate().capabilityType());
+            a.put(ENDPOINT_FIELD, attempt.candidate().endpoint());
             a.put("outcome", attempt.outcome());
         }
 
@@ -207,12 +231,12 @@ public class CheckCatalogueServices {
         if (result.selection().isPresent()) {
             CatalogueCandidates.Selection chosen = result.selection().get();
             ObjectNode provenance = mapper.createObjectNode();
-            provenance.put("capability_type", chosen.candidate().capabilityType());
-            provenance.put("endpoint", chosen.candidate().endpoint());
-            provenance.put("protocol", chosen.candidate().protocol());
-            provenance.put("adapter", chosen.adapterId());
-            provenance.put("format", chosen.format());
-            provenance.put("converted", chosen.list().converted());
+            provenance.put(CAPABILITY_TYPE_FIELD, chosen.candidate().capabilityType());
+            provenance.put(ENDPOINT_FIELD, chosen.candidate().endpoint());
+            provenance.put(PROTOCOL_FIELD, chosen.candidate().protocol());
+            provenance.put(ADAPTER_FIELD, chosen.adapterId());
+            provenance.put(FORMAT_FIELD, chosen.format());
+            provenance.put(CONVERTED_FIELD, chosen.list().converted());
             log.log(Level.INFO, "Using {0} ({1})", new Object[]{chosen.candidate(), chosen.format()});
             source = new Source(chosen.list().root(), URI.create(chosen.candidate().endpoint()), null, pid, provenance,
                     tried, chosen.list().invalid(), chosen.list().warnings(), null);
@@ -221,7 +245,7 @@ public class CheckCatalogueServices {
                     ? "no Service Catalogue or Resource Catalogue endpoint"
                     : "no catalogue endpoint could be read (" + result.attempts().stream()
                             .map(a -> a.candidate().endpoint() + ": " + a.outcome()).collect(java.util.stream.Collectors.joining("; ")) + ")";
-            source = sandboxSource(httpClient, mapper, pid, endpointReport.path("node_endpoint").asText(""), reason,
+            source = sandboxSource(httpClient, mapper, pid, endpointReport.path(NODE_ENDPOINT_FIELD).asText(""), reason,
                     quantity, fallbackBase, null);
             source = new Source(source.root(), source.apiUrl(), source.fallbackReason(), source.nodePid(), null, tried,
                     List.of(), List.of(), null);
@@ -266,10 +290,10 @@ public class CheckCatalogueServices {
         }
 
         // Belt and braces: even if the Sandbox ignored the filter, never report another node's services.
-        JsonNode results = root.path("results");
+        JsonNode results = root.path(RESULTS_FIELD);
         ArrayNode own = mapper.createArrayNode();
         for (JsonNode service : results) {
-            if (nodePid.equalsIgnoreCase(service.path("nodePID").asText())) {
+            if (nodePid.equalsIgnoreCase(service.path(NODE_PID_FIELD).asText())) {
                 own.add(service);
             }
         }
@@ -277,13 +301,13 @@ public class CheckCatalogueServices {
         if (own.size() != results.size()) {
             log.log(Level.WARNING, "The Sandbox returned {0} service(s) of other nodes; ignoring them",
                     results.size() - own.size());
-            filtered.put("total", own.size());
+            filtered.put(TOTAL_FIELD, own.size());
         } else {
-            filtered.put("total", root.path("total").asLong(0));
+            filtered.put(TOTAL_FIELD, root.path(TOTAL_FIELD).asLong(0));
         }
-        filtered.set("results", own);
-        if (root.has("error")) {
-            filtered.set("error", root.get("error"));
+        filtered.set(RESULTS_FIELD, own);
+        if (root.has(ERROR_FIELD)) {
+            filtered.set(ERROR_FIELD, root.get(ERROR_FIELD));
         }
         return new Source(filtered, fallbackUrl, reason, nodePid, null, null, List.of(), List.of(), null);
     }

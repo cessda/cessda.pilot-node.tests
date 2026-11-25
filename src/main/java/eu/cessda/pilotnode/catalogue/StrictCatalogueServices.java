@@ -17,6 +17,14 @@
 
 package eu.cessda.pilotnode.catalogue;
 
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.node.ArrayNode;
+import com.fasterxml.jackson.databind.node.ObjectNode;
+import eu.cessda.pilotnode.common.CheckMode;
+import eu.cessda.pilotnode.common.Findings;
+import eu.cessda.pilotnode.common.ReportFiles;
+
 import java.io.IOException;
 import java.net.URI;
 import java.net.http.HttpClient;
@@ -25,14 +33,10 @@ import java.time.Duration;
 import java.util.List;
 import java.util.logging.Level;
 import java.util.logging.Logger;
-import com.fasterxml.jackson.databind.JsonNode;
-import eu.cessda.pilotnode.common.ReportFiles;
-import eu.cessda.pilotnode.common.Findings;
-import eu.cessda.pilotnode.common.CheckMode;
-import com.fasterxml.jackson.databind.ObjectMapper;
-import com.fasterxml.jackson.databind.node.ArrayNode;
-import com.fasterxml.jackson.databind.node.ObjectNode;
-import static eu.cessda.pilotnode.catalogue.CatalogueReport.*;
+
+import static eu.cessda.pilotnode.catalogue.CatalogueReport.Source;
+import static eu.cessda.pilotnode.catalogue.CatalogueReport.checkAndReport;
+import static eu.cessda.pilotnode.catalogue.lenient.CheckCatalogueServices.*;
 
 /** The strict Exchange Services check. */
 public final class StrictCatalogueServices {
@@ -70,9 +74,9 @@ public final class StrictCatalogueServices {
                         "See the findings of the strict Node Capabilities report for this capability");
             }
             ObjectNode empty = mapper.createObjectNode();
-            empty.put("total", 0).put("from", 0).put("to", 0);
-            empty.putArray("results");
-            Source source = new Source(empty, URI.create(endpointReport.path("node_endpoint").asText("http://invalid.invalid")), null,
+            empty.put(TOTAL_FIELD, 0).put("from", 0).put("to", 0);
+            empty.putArray(RESULTS_FIELD);
+            Source source = new Source(empty, URI.create(endpointReport.path(NODE_ENDPOINT_FIELD).asText("http://invalid.invalid")), null,
                     pid, null, mapper.createArrayNode(), List.of(), List.of(), findings);
             checkAndReport(CheckMode.STRICT.nodeDir(dataDir, nodeName), nodeName, source, httpClient, mapper);
             return;

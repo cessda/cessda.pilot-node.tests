@@ -17,16 +17,19 @@
 
 package eu.cessda.pilotnode.capabilities.lenient;
 
-import eu.cessda.pilotnode.catalogue.lenient.CheckCatalogueServices;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
-import eu.cessda.pilotnode.common.ReportFiles;
+import eu.cessda.pilotnode.capabilities.Node;
+import eu.cessda.pilotnode.capabilities.NodeCapabilities;
 import eu.cessda.pilotnode.common.CheckMode;
+import eu.cessda.pilotnode.common.ReportFiles;
+
 import java.io.BufferedWriter;
 import java.io.IOException;
 import java.io.InputStream;
+import java.io.Writer;
 import java.net.URI;
 import java.net.URISyntaxException;
 import java.net.http.HttpClient;
@@ -35,14 +38,11 @@ import java.net.http.HttpResponse;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Duration;
-import java.util.ArrayList;
-import java.util.EnumSet;
-import java.util.HashSet;
-import java.util.List;
-import java.util.Set;
+import java.util.*;
 import java.util.logging.Level;
 import java.util.logging.LogRecord;
 import java.util.logging.Logger;
+
 import static eu.cessda.pilotnode.capabilities.CheckNodeCapabilities.*;
 
 /**
@@ -50,7 +50,7 @@ import static eu.cessda.pilotnode.capabilities.CheckNodeCapabilities.*;
  * what was last known (flagged as stale), every endpoint is probed, and the text and JSON reports are written to the
  * node's lenient folder.
  */
-public final class LenientNodeCapabilities {
+public final class LenientNodeCapabilities implements NodeCapabilities {
 
     private static final Logger log = Logger.getLogger(LenientNodeCapabilities.class.getName());
 
@@ -60,17 +60,16 @@ public final class LenientNodeCapabilities {
     private final HttpClient http;
     private final ObjectMapper mapper;
 
-    public LenientNodeCapabilities(EnumSet<OutputFormat> format, Path dashboardDir, HttpClient http, ObjectMapper mapper,
-                                   Duration retryDelay) {
-        this.format = format;
+    public LenientNodeCapabilities(Set<OutputFormat> format, Path dashboardDir, HttpClient http, ObjectMapper mapper, Duration retryDelay) {
+        this.format = EnumSet.copyOf(format);
         this.dashboardDir = dashboardDir;
         this.http = http;
         this.mapper = mapper;
         this.retryDelay = retryDelay;
     }
 
-    public static void writeTextHeader(Path path) throws IOException {
-        String header = """
+    public static void writeTextHeader(Writer writer) throws IOException {
+        writer.write("""
                 ==========================================
                 EOSC Beyond Node Registry
                 Endpoint Availability Summary
@@ -79,12 +78,11 @@ public final class LenientNodeCapabilities {
                 Registry:  %s
                 ==========================================
 
-                """.formatted(nowIso(), NODE_REGISTRY_URL);
-        Files.writeString(path, header);
+                """.formatted(nowIso(), NODE_REGISTRY_URL));
     }
 
-    public static void appendTextSummaryEntry(Path path, ObjectNode nodeSummary) throws IOException {
-        String entry = """
+    public static void appendTextSummaryEntry(Writer writer, ObjectNode nodeSummary) throws IOException {
+        writer.write("""
                 Node: %s
                   Endpoint:               %s
                   Total Capabilities:     %d
@@ -94,13 +92,62 @@ public final class LenientNodeCapabilities {
                 nodeSummary.path("node_name").asText(),
                 nodeSummary.path("node_endpoint").asText(),
                 nodeSummary.path("total_capabilities").asInt(),
-                nodeSummary.path("available_capabilities").asInt());
-        Files.writeString(path, entry, java.nio.file.StandardOpenOption.APPEND);
+                nodeSummary.path("available_capabilities").asInt()));
     }
 
-    public ObjectNode check(
-            String nodeName, String nodeId, String nodePid, URI nodeEndpoint,
-            String nodeLogo, String legalEntityName, String legalEntityRor) throws IOException, InterruptedException {
+    /**
+     * The endpoints a capability offers. Nodes report them in two shapes:
+     * <ul>
+     *   <li>flat: {@code endpoint}, {@code protocol} and {@code api_spec} on the capability itself;</li>
+     *   <li>nested: an {@code endpoints} list of {@code {protocol, endpoint, api_spec}}, so that one capability
+     *       (a catalogue with a REST and an OAI-PMH interface, say) can offer several.</li>
+     * </ul>
+     * Nested entries take their own protocol and API description, falling back to the capability's. A node
+     * that gives both shapes has both reported, without repeating an endpoint. A capability with no
+     * endpoint at all (for example one the node says is planned) still gets one row, with an empty endpoint.
+     */
+    static List<EndpointRow> endpointsOf(JsonNode cap) {
+        String capProtocol = optionalText(cap, PROTOCOL_FIELD);
+        String capApiSpec = optionalText(cap, API_SPEC_FIELD);
+        List<EndpointRow> rows = new ArrayList<>();
+        Set<String> seen = new HashSet<>();
+
+        JsonNode nested = cap.path(ENDPOINTS_FIELD);
+        if (nested.isArray()) {
+            for (JsonNode entry : nested) {
+                String url;
+                String protocol = capProtocol;
+                String apiSpec = capApiSpec;
+                if (entry.isTextual()) {
+                    url = entry.asText().trim();
+                } else if (entry.isObject()) {
+                    url = entry.path(ENDPOINT_FIELD).asText("").trim();
+                    protocol = firstNonNull(optionalText(entry, PROTOCOL_FIELD), capProtocol);
+                    apiSpec = firstNonNull(optionalText(entry, API_SPEC_FIELD), capApiSpec);
+                } else {
+                    continue;
+                }
+                if (!url.isEmpty() && seen.add(url)) {
+                    rows.add(new EndpointRow(url, protocol, apiSpec));
+                }
+            }
+        }
+
+        String flat = cap.path(ENDPOINT_FIELD).asText("").trim();
+        if (!flat.isEmpty() && seen.add(flat)) {
+            rows.add(new EndpointRow(flat, capProtocol, capApiSpec));
+        }
+
+        if (rows.isEmpty()) {
+            rows.add(new EndpointRow("", capProtocol, capApiSpec));
+        }
+        return rows;
+    }
+
+    /** Outcome of fetching a node's capability list: the parsed body, or why it could not be had. */
+    private record Fetch(JsonNode root, String failure) {}
+
+    public ObjectNode check(Node node) throws IOException, InterruptedException {
 
         log.log(Level.INFO, """
                         Node: {0}
@@ -109,43 +156,42 @@ public final class LenientNodeCapabilities {
                         PID:          {2}
                         Endpoint:     {3}
                         Legal Entity: {4}""",
-                new Object[]{nodeName, nodeId, nodePid, nodeEndpoint, legalEntityName}
+                new Object[]{node.name(), node.id(), node.pid(), node.endpoint(), node.legalEntityName()}
         );
 
 
-        Path nodeDir = CheckMode.LENIENT.nodeDir(dashboardDir, nodeName);
+        Path nodeDir = CheckMode.LENIENT.nodeDir(dashboardDir, node.name());
         Files.createDirectories(nodeDir);
         Path reportJsonPath = nodeDir.resolve("endpoint_report.json");
         Path reportTxtPath  = nodeDir.resolve("endpoint_report.txt");
 
         // ── Fetch capabilities ────────────────────────────────────────────────
 
-        log.log(Level.INFO, "Fetching capabilities for {0}...", nodeName);
+        log.log(Level.INFO, "Fetching capabilities for {0}...", node.name());
 
         JsonNode capsRoot;
         String staleReason = null;
         String lastFetched = null;
 
-        Fetch fetched = fetchCapabilities(nodeEndpoint);
+        Fetch fetched = fetchCapabilities(URI.create(node.endpoint()));
         if (fetched.root() != null) {
             capsRoot = fetched.root();
         } else {
-            log.log(Level.WARNING, "Failed to fetch capabilities from {0}: {1}", new Object[]{nodeEndpoint, fetched.failure()});
+            log.log(Level.WARNING, "Failed to fetch capabilities from {0}: {1}", new Object[]{node.endpoint(), fetched.failure()});
 
             // A failed fetch must not throw away what we last knew about the node: keep its last
             // capability list, re-probe those endpoints, and flag the report as stale.
             // The last lenient report: in this mode's folder or, until a lenient run has written there, where earlier
             // versions kept it.
             Previous previous = readPreviousCapabilities(
-                    ReportFiles.find(dashboardDir, CheckMode.LENIENT, nodeName, "endpoint_report.json", mapper).orElse(reportJsonPath));
+                    ReportFiles.find(dashboardDir, CheckMode.LENIENT, node.name(), "endpoint_report.json", mapper).orElse(reportJsonPath));
             if (previous == null) {
-                return unreachableNode(nodeName, nodeId, nodePid, nodeEndpoint, nodeLogo, legalEntityName, legalEntityRor,
-                        reportJsonPath, fetched.failure());
+                return unreachableNode(node, reportJsonPath, fetched.failure());
             }
             capsRoot = previous.capsRoot();
             staleReason = fetched.failure();
             lastFetched = previous.lastFetched();
-            log.log(Level.WARNING, "Using the capabilities of {0} last fetched {1}", new Object[]{nodeName, lastFetched});
+            log.log(Level.WARNING, "Using the capabilities of {0} last fetched {1}", new Object[]{node.name(), lastFetched});
         }
 
         log.info("Checking capabilities...");
@@ -153,8 +199,7 @@ public final class LenientNodeCapabilities {
         try (BufferedWriter reportTxtPathWriter = (format.contains(OutputFormat.TEXT) ? Files.newBufferedWriter(reportTxtPath) : null)) {
 
             if (reportTxtPathWriter != null) {
-                 var header = buildNodeTextHeader(nodeName, nodeId, nodePid,
-                         nodeEndpoint, nodeLogo, legalEntityName, legalEntityRor);
+                var header = buildNodeTextHeader(node);
                  reportTxtPathWriter.write(header);
              }
 
@@ -165,13 +210,13 @@ public final class LenientNodeCapabilities {
              int total = 0;
              int available = 0;
 
-             JsonNode capsArray = capsRoot.path("capabilities");
+            JsonNode capsArray = capsRoot.path(CAPABILITIES_FIELD);
              for (JsonNode cap : capsArray) {
-                 String capType = cap.path("capability_type").asText();
-                 String version = optionalText(cap, "version");
+                 String capType = cap.path(CAPABILITY_TYPE_FIELD).asText();
+                 String version = optionalText(cap, VERSION_FIELD);
                  // The node's own claim about the capability (e.g. OPERATIONAL). Kept apart from
                  // "status", which is the result of our own availability probe.
-                 String declaredStatus = optionalText(cap, "status");
+                 String declaredStatus = optionalText(cap, STATUS_FIELD);
 
                  // A capability may list several endpoints; each is probed and reported on its own row.
                  for (EndpointRow row : endpointsOf(cap)) {
@@ -201,14 +246,14 @@ public final class LenientNodeCapabilities {
                      }
 
                      ObjectNode capOut = mapper.createObjectNode();
-                     capOut.put("capability_type", capType);
-                     capOut.put("endpoint", endpoint);
-                     capOut.put("version", version);
-                     capOut.put("api_spec", apiSpec);
-                     capOut.put("protocol", protocol);
-                     capOut.put("declared_status", declaredStatus);
-                     capOut.put("status", status.label());
-                     capOut.put("http_code", status.httpCode());
+                     capOut.put(NodeCapabilities.CAPABILITY_TYPE_FIELD, capType);
+                     capOut.put(ENDPOINT_FIELD, endpoint);
+                     capOut.put(VERSION_FIELD, version);
+                     capOut.put(API_SPEC_FIELD, apiSpec);
+                     capOut.put(PROTOCOL_FIELD, protocol);
+                     capOut.put(DECLARED_STATUS_FIELD, declaredStatus);
+                     capOut.put(STATUS_FIELD, status.label());
+                     capOut.put(HTTP_CODE_FIELD, status.httpCode());
                      capabilitiesOut.add(capOut);
                  } catch (URISyntaxException e) {
                      LogRecord logRecord = new LogRecord(Level.SEVERE, "URI {} is not a valid URI");
@@ -222,16 +267,15 @@ public final class LenientNodeCapabilities {
 
              // ── Write per-node JSON report ────────────────────────────────────────
 
-             ObjectNode nodeReport = buildNodeSummary(mapper, CheckMode.LENIENT, nodeName, nodeId, nodePid, nodeEndpoint.toString(), nodeLogo,
-                     legalEntityName, legalEntityRor, total, available, capabilitiesOut, reportJsonPath);
+            ObjectNode nodeReport = buildNodeSummary(mapper, CheckMode.LENIENT, node, total, available, capabilitiesOut, reportJsonPath);
              // Free-form description some nodes publish about themselves; kept as returned.
-             if (capsRoot.path("node_details").isObject()) {
-                 nodeReport.set("node_details", capsRoot.get("node_details"));
+            if (capsRoot.path(NODE_DETAILS_FIELD).isObject()) {
+                nodeReport.set(NODE_DETAILS_FIELD, capsRoot.get(NODE_DETAILS_FIELD));
              }
              if (staleReason != null) {
-                 nodeReport.put("error", staleReason);
-                 nodeReport.put("capabilities_stale", true);
-                 nodeReport.put("capabilities_last_fetched", lastFetched);
+                 nodeReport.put(ERROR_PATH, staleReason);
+                 nodeReport.put(CAPABILITIES_STALE_FIELD, true);
+                 nodeReport.put(CAPABILITIES_LAST_FETCHED_FIELD, lastFetched);
              }
 
 
@@ -252,8 +296,8 @@ public final class LenientNodeCapabilities {
         }
     }
 
-    /** Outcome of fetching a node's capability list: the parsed body, or why it could not be had. */
-    private record Fetch(JsonNode root, String failure) {}
+    /** The last known capability list of a node, rebuilt in the shape the node itself returns it. */
+    private record Previous(ObjectNode capsRoot, String lastFetched) {}
 
     /**
      * Fetches the node's capability list. Network errors and 5xx responses are usually momentary
@@ -267,8 +311,8 @@ public final class LenientNodeCapabilities {
                 .GET()
                 .build();
 
-        String failure = "no attempt made";
-        for (int attempt = 1; attempt <= MAX_FETCH_ATTEMPTS; attempt++) {
+        String failure;
+        for (int attempt = 1; true; attempt++) {
             boolean transientFailure;
             try {
                 HttpResponse<InputStream> resp = http.send(req, HttpResponse.BodyHandlers.ofInputStream());
@@ -295,50 +339,6 @@ public final class LenientNodeCapabilities {
             Thread.sleep(retryDelay.toMillis() * attempt);
         }
         return new Fetch(null, failure);
-    }
-
-    /** The last known capability list of a node, rebuilt in the shape the node itself returns it. */
-    private record Previous(ObjectNode capsRoot, String lastFetched) {}
-
-    /**
-     * Reads the capabilities from the node's existing {@code endpoint_report.json}, if there are any.
-     * Our own probe result is not carried over (it is measured again); the node's own declared status is.
-     */
-    private Previous readPreviousCapabilities(Path reportJsonPath) {
-        if (!Files.isRegularFile(reportJsonPath)) {
-            return null;
-        }
-        try {
-            JsonNode previous = mapper.readTree(reportJsonPath.toFile());
-            JsonNode caps = previous.path("capabilities");
-            if (!caps.isArray() || caps.isEmpty()) {
-                return null;
-            }
-            ObjectNode root = mapper.createObjectNode();
-            ArrayNode out = root.putArray("capabilities");
-            for (JsonNode c : caps) {
-                ObjectNode o = out.addObject();
-                for (String field : new String[]{"capability_type", "endpoint", "version", "api_spec", "protocol"}) {
-                    if (c.has(field)) {
-                        o.set(field, c.get(field));
-                    }
-                }
-                if (c.hasNonNull("declared_status")) {
-                    o.set("status", c.get("declared_status"));
-                }
-            }
-            if (previous.path("node_details").isObject()) {
-                root.set("node_details", previous.get("node_details"));
-            }
-            // A report that is itself stale keeps pointing at the last successful fetch.
-            String lastFetched = previous.hasNonNull("capabilities_last_fetched")
-                    ? previous.get("capabilities_last_fetched").asText()
-                    : previous.path("generated").asText(null);
-            return new Previous(root, lastFetched);
-        } catch (IOException | RuntimeException e) {
-            log.log(Level.WARNING, "Could not read the previous report {0}: {1}", new Object[]{reportJsonPath, e});
-            return null;
-        }
     }
 
     private CapabilityStatus probeEndpoint(URI url) {
@@ -400,18 +400,44 @@ public final class LenientNodeCapabilities {
     }
 
     /**
-     * The summary entry for a node whose capabilities could not be fetched, also written as the
-     * node's own {@code endpoint_report.json} so that its detail page shows the failure.
+     * Reads the capabilities from the node's existing {@code endpoint_report.json}, if there are any.
+     * Our own probe result is not carried over (it is measured again); the node's own declared status is.
      */
-    private ObjectNode unreachableNode(
-            String nodeName, String nodeId, String nodePid, URI nodeEndpoint, String nodeLogo,
-            String legalEntityName, String legalEntityRor, Path reportJsonPath, String reason) throws IOException {
-        ObjectNode report = failedNodeSummary(mapper, CheckMode.LENIENT, dashboardDir, nodeName, nodeId, nodePid, nodeEndpoint.toString(), nodeLogo,
-                legalEntityName, legalEntityRor, reason);
-        if (format.contains(OutputFormat.JSON)) {
-            mapper.writerWithDefaultPrettyPrinter().writeValue(reportJsonPath.toFile(), report);
+    private Previous readPreviousCapabilities(Path reportJsonPath) {
+        if (!Files.isRegularFile(reportJsonPath)) {
+            return null;
         }
-        return report;
+        try {
+            JsonNode previous = mapper.readTree(reportJsonPath.toFile());
+            JsonNode caps = previous.path(CAPABILITIES_FIELD);
+            if (!caps.isArray() || caps.isEmpty()) {
+                return null;
+            }
+            ObjectNode root = mapper.createObjectNode();
+            ArrayNode out = root.putArray(CAPABILITIES_FIELD);
+            for (JsonNode c : caps) {
+                ObjectNode o = out.addObject();
+                for (String field : new String[]{CAPABILITY_TYPE_FIELD, ENDPOINT_FIELD, VERSION_FIELD, API_SPEC_FIELD, PROTOCOL_FIELD}) {
+                    if (c.has(field)) {
+                        o.set(field, c.get(field));
+                    }
+                }
+                if (c.hasNonNull(DECLARED_STATUS_FIELD)) {
+                    o.set(STATUS_FIELD, c.get(DECLARED_STATUS_FIELD));
+                }
+            }
+            if (previous.path(NODE_DETAILS_FIELD).isObject()) {
+                root.set(NODE_DETAILS_FIELD, previous.get(NODE_DETAILS_FIELD));
+            }
+            // A report that is itself stale keeps pointing at the last successful fetch.
+            String lastFetched = previous.hasNonNull(CAPABILITIES_LAST_FETCHED_FIELD)
+                    ? previous.get(CAPABILITIES_LAST_FETCHED_FIELD).asText()
+                    : previous.path("generated").asText(null);
+            return new Previous(root, lastFetched);
+        } catch (IOException | RuntimeException e) {
+            log.log(Level.WARNING, "Could not read the previous report {0}: {1}", new Object[]{reportJsonPath, e});
+            return null;
+        }
     }
 
     private String appendCapabilityToText(String capType, String endpoint,
@@ -425,72 +451,33 @@ public final class LenientNodeCapabilities {
         return value == null ? "-" : value;
     }
 
-    private String buildNodeTextHeader(
-            String nodeName, String nodeId, String nodePid, URI nodeEndpoint,
-            String nodeLogo, String legalEntityName, String legalEntityRor) {
-        return ("==========================================\n" +
-                "Node: " + nodeName + "\n" +
-                "==========================================\n" +
-                "Generated:          " + nowIso() + "\n" +
-                "Node ID:            " + nodeId + "\n" +
-                "Node PID:           " + nodePid + "\n" +
-                "Node Endpoint:      " + nodeEndpoint + "\n" +
-                "Legal Entity:       " + legalEntityName + "\n" +
-                "Legal Entity ROR:   " + legalEntityRor + "\n" +
-                "Logo:               " + nodeLogo + "\n" +
-                "==========================================\n\n");
+    /**
+     * The summary entry for a node whose capabilities could not be fetched, also written as the
+     * node's own {@code endpoint_report.json} so that its detail page shows the failure.
+     */
+    private ObjectNode unreachableNode(Node node, Path reportJsonPath, String reason) throws IOException {
+        ObjectNode report = failedNodeSummary(mapper, CheckMode.LENIENT, dashboardDir, node, reason);
+        if (format.contains(OutputFormat.JSON)) {
+            mapper.writerWithDefaultPrettyPrinter().writeValue(reportJsonPath.toFile(), report);
+        }
+        return report;
     }
 
     /** One endpoint of a capability, with the protocol and API description that belong to it. */
     record EndpointRow(String endpoint, String protocol, String apiSpec) {}
 
-    /**
-     * The endpoints a capability offers. Nodes report them in two shapes:
-     * <ul>
-     *   <li>flat: {@code endpoint}, {@code protocol} and {@code api_spec} on the capability itself;</li>
-     *   <li>nested: an {@code endpoints} list of {@code {protocol, endpoint, api_spec}}, so that one capability
-     *       (a catalogue with a REST and an OAI-PMH interface, say) can offer several.</li>
-     * </ul>
-     * Nested entries take their own protocol and API description, falling back to the capability's. A node
-     * that gives both shapes has both reported, without repeating an endpoint. A capability with no
-     * endpoint at all (for example one the node says is planned) still gets one row, with an empty endpoint.
-     */
-    static List<EndpointRow> endpointsOf(JsonNode cap) {
-        String capProtocol = optionalText(cap, "protocol");
-        String capApiSpec = optionalText(cap, "api_spec");
-        List<EndpointRow> rows = new ArrayList<>();
-        Set<String> seen = new HashSet<>();
-
-        JsonNode nested = cap.path("endpoints");
-        if (nested.isArray()) {
-            for (JsonNode entry : nested) {
-                String url;
-                String protocol = capProtocol;
-                String apiSpec = capApiSpec;
-                if (entry.isTextual()) {
-                    url = entry.asText().trim();
-                } else if (entry.isObject()) {
-                    url = entry.path("endpoint").asText("").trim();
-                    protocol = firstNonNull(optionalText(entry, "protocol"), capProtocol);
-                    apiSpec = firstNonNull(optionalText(entry, "api_spec"), capApiSpec);
-                } else {
-                    continue;
-                }
-                if (!url.isEmpty() && seen.add(url)) {
-                    rows.add(new EndpointRow(url, protocol, apiSpec));
-                }
-            }
-        }
-
-        String flat = cap.path("endpoint").asText("").trim();
-        if (!flat.isEmpty() && seen.add(flat)) {
-            rows.add(new EndpointRow(flat, capProtocol, capApiSpec));
-        }
-
-        if (rows.isEmpty()) {
-            rows.add(new EndpointRow("", capProtocol, capApiSpec));
-        }
-        return rows;
+    private String buildNodeTextHeader(Node node) {
+        return ("==========================================\n" +
+                "Node: " + node.name() + "\n" +
+                "==========================================\n" +
+                "Generated:          " + nowIso() + "\n" +
+                "Node ID:            " + node.id() + "\n" +
+                "Node PID:           " + node.pid() + "\n" +
+                "Node Endpoint:      " + node.endpoint() + "\n" +
+                "Legal Entity:       " + node.legalEntityName() + "\n" +
+                "Legal Entity ROR:   " + node.legalEntityRor() + "\n" +
+                "Logo:               " + node.logo() + "\n" +
+                "==========================================\n\n");
     }
 
     static String firstNonNull(String first, String second) {

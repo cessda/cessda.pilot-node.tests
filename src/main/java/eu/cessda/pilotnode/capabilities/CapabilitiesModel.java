@@ -17,16 +17,16 @@
 
 package eu.cessda.pilotnode.capabilities;
 
+import com.fasterxml.jackson.databind.JsonNode;
+import eu.cessda.pilotnode.common.Finding;
+import eu.cessda.pilotnode.common.Findings;
+
 import java.net.URI;
+import java.net.URISyntaxException;
 import java.util.List;
 import java.util.Locale;
-import java.util.Map;
-import java.util.Set;
 
-import com.fasterxml.jackson.databind.JsonNode;
-
-import eu.cessda.pilotnode.common.Findings;
-import eu.cessda.pilotnode.common.Finding;
+import static eu.cessda.pilotnode.capabilities.NodeCapabilities.*;
 
 /**
  * Checks a node's capability document against the EOSC Node Endpoint capabilities model, release 1.1.0
@@ -56,8 +56,8 @@ public final class CapabilitiesModel {
 
     /** A short name for a capability in findings: its type and, if it has one, its endpoint. */
     public static String subject(JsonNode capability, int index) {
-        String type = capability.path("capability_type").asText("").trim();
-        String endpoint = capability.path("endpoint").asText("").trim();
+        String type = capability.path(CAPABILITY_TYPE_FIELD).asText("").trim();
+        String endpoint = capability.path(ENDPOINT_FIELD).asText("").trim();
         String name = type.isEmpty() ? "capability #" + (index + 1) : type;
         return endpoint.isEmpty() ? name : name + " " + endpoint;
     }
@@ -85,7 +85,7 @@ public final class CapabilitiesModel {
         JsonNode nodeEndpoint = document.path("node_endpoint");
         if (nodeEndpoint.isMissingNode() || nodeEndpoint.isNull()) {
             f.warning("node-endpoint-missing", "The document does not give its node_endpoint", null, null,
-                    "node_endpoint: an absolute URI", "absent", null);
+                    "node_endpoint: an absolute URI", ABSENT, null);
         } else if (!isAbsoluteUri(nodeEndpoint.asText(""))) {
             f.error("node-endpoint-invalid", "node_endpoint is not an absolute URI", null, null,
                     "an absolute URI", nodeEndpoint.asText(""), null);
@@ -94,7 +94,7 @@ public final class CapabilitiesModel {
         JsonNode capabilities = document.path("capabilities");
         if (!capabilities.isArray()) {
             return f.error("capabilities-missing", "The document has no list of capabilities", null, null,
-                    "capabilities: an array", capabilities.isMissingNode() ? "absent" : capabilities.getNodeType().name().toLowerCase(Locale.ROOT), null);
+                    "capabilities: an array", capabilities.isMissingNode() ? ABSENT : capabilities.getNodeType().name().toLowerCase(Locale.ROOT), null);
         }
         if (capabilities.isEmpty()) {
             f.warning("capabilities-empty", "The document advertises no capabilities", null, null,
@@ -118,16 +118,16 @@ public final class CapabilitiesModel {
         String subject = subject(cap, index);
 
         // capability_type
-        if (cap.path("capability_type").asText("").isBlank()) {
+        if (cap.path(CAPABILITY_TYPE_FIELD).asText("").isBlank()) {
             f.error("capability-type-missing", "The capability has no capability_type", subject, null,
                     "capability_type: a non-empty string", "absent or empty", null);
         }
 
         // status first: it decides how serious a missing endpoint is
-        String declared = cap.hasNonNull("status") ? cap.get("status").asText() : null;
-        if (cap.has("status") && !cap.get("status").isNull()) {
-            if (!cap.get("status").isTextual()) {
-                f.warning("status-not-string", "status is not a string", subject, null, "a string", cap.get("status").toString(), null);
+        String declared = cap.hasNonNull(STATUS_FIELD) ? cap.get(STATUS_FIELD).asText() : null;
+        if (cap.has(STATUS_FIELD) && !cap.get(STATUS_FIELD).isNull()) {
+            if (!cap.get(STATUS_FIELD).isTextual()) {
+                f.warning("status-not-string", "status is not a string", subject, null, "a string", cap.get(STATUS_FIELD).toString(), null);
             } else if (!RECOMMENDED_STATUSES.contains(normaliseStatus(declared))) {
                 f.warning("status-not-recommended", "status '" + declared + "' is not one of the values the model recommends",
                         subject, null, "one of " + String.join(", ", RECOMMENDED_STATUSES), declared,
@@ -136,7 +136,7 @@ public final class CapabilitiesModel {
         }
 
         // endpoint
-        JsonNode endpoint = cap.path("endpoint");
+        JsonNode endpoint = cap.path(ENDPOINT_FIELD);
         String endpointText = endpoint.isTextual() ? endpoint.asText().trim() : "";
         if (endpointText.isEmpty()) {
             boolean live = declaresLive(declared);
@@ -147,7 +147,7 @@ public final class CapabilitiesModel {
             f.add(new Finding(severity, "endpoint-missing",
                     "The capability has no endpoint" + (live ? "" : ", but the node does not say it is operational"),
                     subject, null, "endpoint: an absolute URI",
-                    endpoint.isMissingNode() ? "absent" : endpoint.isNull() ? "null" : endpoint.toString(),
+                    endpoint.isMissingNode() ? ABSENT : endpoint.isNull() ? "null" : endpoint.toString(),
                     hint == null && !live ? "A capability that is not live should not be advertised without an endpoint" : hint));
         } else if (!isAbsoluteUri(endpointText)) {
             f.error("endpoint-invalid", "The endpoint is not an absolute URI", subject, endpointText,
@@ -158,32 +158,32 @@ public final class CapabilitiesModel {
         }
 
         // version
-        if (cap.has("version") && !cap.get("version").isNull()) {
-            if (!cap.get("version").isTextual()) {
+        if (cap.has(VERSION_FIELD) && !cap.get(VERSION_FIELD).isNull()) {
+            if (!cap.get(VERSION_FIELD).isTextual()) {
                 f.warning("version-not-string", "version is not a string", subject, null, "a string such as \"1.0.0\"",
-                        cap.get("version").toString(), null);
-            } else if (cap.get("version").asText().isBlank()) {
+                        cap.get(VERSION_FIELD).toString(), null);
+            } else if (cap.get(VERSION_FIELD).asText().isBlank()) {
                 f.warning("version-empty", "version is empty", subject, null, "a version or no version", "an empty string", null);
             }
         }
 
         // api_spec
-        if (cap.has("api_spec") && !cap.get("api_spec").isNull()) {
-            String spec = cap.get("api_spec").asText("");
-            if (!cap.get("api_spec").isTextual() || !isAbsoluteUri(spec)) {
+        if (cap.has(API_SPEC_FIELD) && !cap.get(API_SPEC_FIELD).isNull()) {
+            String spec = cap.get(API_SPEC_FIELD).asText("");
+            if (!cap.get(API_SPEC_FIELD).isTextual() || !isAbsoluteUri(spec)) {
                 f.error("api-spec-invalid", "api_spec is not an absolute URI", subject, null, "an absolute URI",
-                        cap.get("api_spec").toString(), null);
+                        cap.get(API_SPEC_FIELD).toString(), null);
             }
         }
 
         // protocol
-        if (cap.has("protocol") && !cap.get("protocol").isNull()) {
-            if (!cap.get("protocol").isTextual()) {
-                f.warning("protocol-not-string", "protocol is not a string", subject, null, "a string", cap.get("protocol").toString(), null);
-            } else if (!isRecommendedProtocol(cap.get("protocol").asText())) {
+        if (cap.has(PROTOCOL_FIELD) && !cap.get(PROTOCOL_FIELD).isNull()) {
+            if (!cap.get(PROTOCOL_FIELD).isTextual()) {
+                f.warning("protocol-not-string", "protocol is not a string", subject, null, "a string", cap.get(PROTOCOL_FIELD).toString(), null);
+            } else if (!isRecommendedProtocol(cap.get(PROTOCOL_FIELD).asText())) {
                 f.warning("protocol-not-recommended",
-                        "protocol '" + cap.get("protocol").asText() + "' is not one of the values the model recommends",
-                        subject, null, "one of " + String.join(", ", RECOMMENDED_PROTOCOLS), cap.get("protocol").asText(),
+                        "protocol '" + cap.get(PROTOCOL_FIELD).asText() + "' is not one of the values the model recommends",
+                        subject, null, "one of " + String.join(", ", RECOMMENDED_PROTOCOLS), cap.get(PROTOCOL_FIELD).asText(),
                         "The model accepts other values, so this is a warning");
             }
         }
@@ -204,7 +204,7 @@ public final class CapabilitiesModel {
             URI uri = new URI(text.trim());
             return uri.isAbsolute() && uri.getScheme() != null && (uri.getHost() != null || uri.getAuthority() != null
                     || uri.getSchemeSpecificPart() != null && !uri.getSchemeSpecificPart().isBlank() && !isHttpScheme(uri.getScheme()));
-        } catch (java.net.URISyntaxException e) {
+        } catch (URISyntaxException e) {
             return false;
         }
     }
@@ -212,10 +212,14 @@ public final class CapabilitiesModel {
     public static boolean isHttp(String text) {
         try {
             URI uri = new URI(text.trim());
-            return isHttpScheme(uri.getScheme()) && uri.getHost() != null;
-        } catch (java.net.URISyntaxException e) {
+            return isHttp(uri);
+        } catch (URISyntaxException e) {
             return false;
         }
+    }
+
+    public static boolean isHttp(URI uri) {
+        return isHttpScheme(uri.getScheme()) && uri.getHost() != null;
     }
 
     private static boolean isHttpScheme(String scheme) {

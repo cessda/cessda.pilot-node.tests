@@ -18,8 +18,6 @@
 package eu.cessda.pilotnode.common;
 
 import com.fasterxml.jackson.annotation.JsonInclude;
-import com.fasterxml.jackson.databind.ObjectMapper;
-import com.fasterxml.jackson.databind.node.ObjectNode;
 
 /**
  * One thing a strict check found, stated so that it can be acted on: what was looked at, what was expected,
@@ -36,19 +34,30 @@ import com.fasterxml.jackson.databind.node.ObjectNode;
 public record Finding(Severity severity, String code, @JsonInclude(JsonInclude.Include.ALWAYS) String message,
                       String subject, String url, String expected, String actual, String hint) {
 
-    /** ERROR: the node does not conform or something does not work. WARNING: accepted but not as recommended. INFO: worth knowing. */
-    public enum Severity {
-        ERROR, WARNING, INFO
+    /**
+     * Get the suggested fix for the given {@link code}.
+     *
+     * @return the fix.
+     */
+    public String getFix() {
+        return Guidance.fix(code);
     }
 
-    /** The finding as JSON. Optional fields that are absent or empty are left out; {@code message} is always written. {@code fix} says what to change, if anything. */
-    public ObjectNode toJson(ObjectMapper mapper) {
-        ObjectNode json = mapper.valueToTree(this);
-        // What to change, where there is something for the node to do (see Guidance)
-        String fix = Guidance.fix(code);
-        if (fix != null) {
-            json.put("fix", fix);
-        }
-        return json;
+    /**
+     * The severity of the finding.
+     */
+    public enum Severity {
+        /**
+         * The node does not conform or something does not work
+         */
+        ERROR,
+        /**
+         * Accepted but not as recommended
+         */
+        WARNING,
+        /**
+         * Worth knowing
+         */
+        INFO
     }
 }

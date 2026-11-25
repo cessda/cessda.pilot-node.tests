@@ -17,31 +17,16 @@
 
 package eu.cessda.pilotnode.catalogue.lenient;
 
-import eu.cessda.pilotnode.catalogue.CatalogueCandidates;
-import eu.cessda.pilotnode.catalogue.Lot1Adapter;
-import eu.cessda.pilotnode.catalogue.CatalogueList;
-import eu.cessda.pilotnode.catalogue.CatalogueCandidate;
-import eu.cessda.pilotnode.catalogue.CatalogueAdapter;
-import eu.cessda.pilotnode.catalogue.BeyondAdapter;
-import eu.cessda.pilotnode.catalogue.CatalogueContext;
-import eu.cessda.pilotnode.catalogue.JsonFetcher;
-import eu.cessda.pilotnode.catalogue.Lot1Validator;
-import java.io.IOException;
-import java.net.URI;
-import java.net.http.HttpClient;
-import java.util.ArrayList;
-import java.util.Comparator;
-import java.util.HashMap;
-import java.util.List;
-import java.util.Map;
-import java.util.Optional;
-
 import com.fasterxml.jackson.databind.JsonNode;
-
+import com.fasterxml.jackson.databind.ObjectMapper;
 import eu.cessda.pilotnode.catalogue.*;
 import eu.cessda.pilotnode.catalogue.CatalogueCandidates.Attempt;
 import eu.cessda.pilotnode.catalogue.CatalogueCandidates.Selection;
-import com.fasterxml.jackson.databind.ObjectMapper;
+
+import java.io.IOException;
+import java.net.URI;
+import java.net.http.HttpClient;
+import java.util.*;
 
 /**
  * Chooses which of a node's catalogue endpoints to read, and reads it.

@@ -17,15 +17,10 @@
 
 package eu.cessda.pilotnode.common;
 
-import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertFalse;
-import static org.junit.jupiter.api.Assertions.assertNotNull;
-import static org.junit.jupiter.api.Assertions.assertNull;
-import static org.junit.jupiter.api.Assertions.assertTrue;
-
+import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.Test;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
+import static org.junit.jupiter.api.Assertions.*;
 
 class GuidanceTest {
 
@@ -47,11 +42,10 @@ class GuidanceTest {
 
     @Test
     void aFindingCarriesItsFixInTheReport() {
-        var json = new Finding(Finding.Severity.ERROR, "api-spec-unreachable", "api_spec could not be read", null, null,
-                null, null, null).toJson(new ObjectMapper());
+        var json = new ObjectMapper().valueToTree(new Finding(Finding.Severity.ERROR, "api-spec-unreachable", "api_spec could not be read", null, null,
+                null, null, null));
         assertEquals(Guidance.fix("api-spec-unreachable"), json.path("fix").asText());
-        var note = new Finding(Finding.Severity.INFO, "api-spec-openapi", "ok", null, null, null, null, null)
-                .toJson(new ObjectMapper());
+        var note = new ObjectMapper().valueToTree(new Finding(Finding.Severity.INFO, "api-spec-openapi", "ok", null, null, null, null, null));
         assertFalse(note.has("fix"));
     }
 }
