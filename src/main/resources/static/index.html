@@ -34,6 +34,23 @@
     <button class="about-btn" onclick="openAbout('about_index.html')">
       About
     </button>
+    <!-- Mode menu: the mode that the pages show and the checks run in -->
+    <div class="run-menu mode-menu" id="mode-menu" aria-expanded="false">
+      <button class="run-menu-btn" aria-haspopup="true" aria-controls="mode-dropdown" onclick="toggleModeMenu()">
+        Mode: <span id="mode-current">Lenient</span>
+        <svg viewBox="0 0 10 6" fill="currentColor" aria-hidden="true"><path d="M0 0l5 6 5-6z"/></svg>
+      </button>
+      <div class="run-dropdown" id="mode-dropdown" role="menu">
+        <label class="mode-choice" role="menuitemradio">
+          <input type="radio" name="run-mode" value="lenient" onchange="setRunMode(this.value)" checked>
+          <span><strong>Lenient</strong><small>The dashboard completes URLs, tries alternatives and falls back to other sources to get an answer.</small></span>
+        </label>
+        <label class="mode-choice" role="menuitemradio">
+          <input type="radio" name="run-mode" value="strict" onchange="setRunMode(this.value)">
+          <span><strong>Strict</strong><small>URLs are used exactly as published, nothing is guessed, and every deviation is a finding. Only Node Capabilities and Exchange Services run in strict mode.</small></span>
+        </label>
+      </div>
+    </div>
     <div class="run-menu" id="run-menu" aria-expanded="false">
       <button class="run-menu-btn" aria-haspopup="true"
               aria-controls="run-dropdown" onclick="toggleRunMenu()">
@@ -41,14 +58,6 @@
         <svg viewBox="0 0 10 6" fill="currentColor" aria-hidden="true"><path d="M0 0l5 6 5-6z"/></svg>
       </button>
       <div class="run-dropdown" id="run-dropdown" role="menu">
-        <div class="run-mode" role="group" aria-labelledby="run-mode-label">
-          <div class="run-mode-head">
-            <span class="run-mode-title" id="run-mode-label">Mode</span>
-            <label class="run-mode-option"><input type="radio" name="run-mode" value="lenient" onchange="setRunMode(this.value)" checked> Lenient</label>
-            <label class="run-mode-option"><input type="radio" name="run-mode" value="strict" onchange="setRunMode(this.value)"> Strict</label>
-          </div>
-          <div class="run-mode-help" id="run-mode-help"></div>
-        </div>
         <div class="run-dropdown-header">Data collection checks</div>
         <div class="run-item" role="menuitem">
           <div class="run-item-info">
@@ -129,15 +138,34 @@
     document.getElementById('generated-ts').textContent    = 'Generated: ' + (registry.generated || '—');
     document.getElementById('node-count').textContent      = registry.nodes.length;
 
-    // Fetch all three report files for every node simultaneously
+    const grid = document.getElementById('nodes-grid');
+
+    if (runMode() === 'strict') {
+      // The stored strict results of every node
+      const strictReports = await Promise.all(registry.nodes.map(n => fetchStrictReports(n.node_name)));
+      if (!strictReports.some(r => summariseStrict(r))) {
+        document.getElementById('summary-stats').innerHTML = '';
+        grid.innerHTML = `<div class="state-msg">No strict results yet.<br>
+          Choose <strong>Check All</strong> in the Run checks menu to create them.</div>`;
+        return;
+      }
+      renderStrictSummaryStats(registry, strictReports);
+      grid.innerHTML = registry.nodes.map((node, i) => renderStrictNodeCard(node, strictReports[i])).join('');
+      return;
+    }
+
+    // The stored lenient results of every node
     const allReports = await Promise.all(
             registry.nodes.map(n => fetchNodeReports(n.node_name))
     );
-
+    if (allReports.every(r => Object.values(r).every(v => v === null))) {
+      document.getElementById('summary-stats').innerHTML = '';
+      grid.innerHTML = `<div class="state-msg">No lenient results yet.<br>
+        Choose <strong>Check All</strong> in the Run checks menu to create them.</div>`;
+      return;
+    }
     renderSummaryStats(registry, allReports);
-
-    document.getElementById('nodes-grid').innerHTML =
-            registry.nodes.map((node, i) => renderNodeCard(node, allReports[i])).join('');
+    grid.innerHTML = registry.nodes.map((node, i) => renderNodeCard(node, allReports[i])).join('');
   }
 
   init().catch(e => {
