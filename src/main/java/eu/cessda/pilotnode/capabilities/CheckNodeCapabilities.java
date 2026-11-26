@@ -359,13 +359,13 @@ public class CheckNodeCapabilities {
             for (JsonNode nodeJson : nodesArray) {
 
                 var node = new Node(
-                        nodeJson.path(NAME_PATH).asText(),
-                        nodeJson.path(ID_PATH).asText(),
-                        nodeJson.path(PID_PATH).asText(),
-                        nodeJson.path(NODE_ENDPOINT_PATH).asText(),
-                        nodeJson.path(LOGO_PATH).asText(),
-                        nodeJson.path(LEGAL_ENTITY_PATH).path(NAME_PATH).asText(),
-                        nodeJson.path(LEGAL_ENTITY_PATH).path(ROR_ID_PATH).asText()
+                        nodeJson.path(NAME_PATH).asText(null),
+                        nodeJson.path(ID_PATH).asText(null),
+                        nodeJson.path(PID_PATH).asText(null),
+                        nodeJson.path(NODE_ENDPOINT_PATH).asText(null),
+                        nodeJson.path(LOGO_PATH).asText(null),
+                        nodeJson.path(LEGAL_ENTITY_PATH).path(NAME_PATH).asText(null),
+                        nodeJson.path(LEGAL_ENTITY_PATH).path(ROR_ID_PATH).asText(null)
                 );
 
                 ObjectNode summary;
