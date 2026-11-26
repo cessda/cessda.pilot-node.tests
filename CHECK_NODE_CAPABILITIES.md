@@ -2,7 +2,7 @@
 
 ## Overview
 
-`eu.cessda.pilotnode.CheckNodeCapabilities` (a plain Java class, not a
+`eu.cessda.pilotnode.capabilities.CheckNodeCapabilities` (a plain Java class, not a
 shell script) queries the **EOSC Beyond Node Registry** to automatically
 discover all registered nodes and test their endpoint capabilities. This
 eliminates the need to hardcode individual node endpoint URLs and enables
@@ -27,7 +27,7 @@ command line; see [Running Directly](#running-directly) below.
 ### Output Location
 
 Per-node reports are written to
-`<dashboard_dir>/<NODE_NAME>/endpoint_report.json` and the registry summary
+`<dashboard_dir>/<NODE_NAME>/lenient/endpoint_report.json` and the registry summary
 to `<dashboard_dir>/node_registry_summary.json`. `dashboard_dir` defaults to
 `dashboard/data` when run directly, or to `dashboard.data-dir` from
 `application.properties` when triggered from the dashboard.
@@ -69,7 +69,8 @@ HttpClient's default `User-Agent` outright.
 
 ## Running via the Dashboard
 
-Triggered via: `POST /api/run/node-capabilities` (no request body). Requires
+Triggered via: `POST /api/run/node-capabilities`, with an optional body `{ "mode": "strict" }` for a
+[strict run](STRICT_MODE.md#running-strict-mode). Requires
 `check.api-key-node` and `check.node-name` to be set in
 `application.properties` — the endpoint returns an error if either is
 blank. It runs as an asynchronous job; poll
@@ -96,35 +97,37 @@ putting the compiled classes and the project's runtime dependencies
 ```bash
 mvn compile dependency:build-classpath -Dmdep.outputFile=cp.txt
 java -cp "target/classes:$(cat cp.txt)" \
-  eu.cessda.pilotnode.CheckNodeCapabilities YOUR_API_KEY json dashboard/data
+  eu.cessda.pilotnode.capabilities.CheckNodeCapabilities YOUR_API_KEY json dashboard/data
 ```
 
 ### Examples
 
 ```bash
 # Write a JSON report to the default dashboard data directory
-java -cp "target/classes:$(cat cp.txt)" eu.cessda.pilotnode.CheckNodeCapabilities YOUR_API_KEY json
+java -cp "target/classes:$(cat cp.txt)" eu.cessda.pilotnode.capabilities.CheckNodeCapabilities YOUR_API_KEY json
 
 # Write reports to an explicit path
-java -cp "target/classes:$(cat cp.txt)" eu.cessda.pilotnode.CheckNodeCapabilities YOUR_API_KEY json /path/to/dashboard/data
+java -cp "target/classes:$(cat cp.txt)" eu.cessda.pilotnode.capabilities.CheckNodeCapabilities YOUR_API_KEY json /path/to/dashboard/data
 
 # Generate both text and JSON
-java -cp "target/classes:$(cat cp.txt)" eu.cessda.pilotnode.CheckNodeCapabilities YOUR_API_KEY both
+java -cp "target/classes:$(cat cp.txt)" eu.cessda.pilotnode.capabilities.CheckNodeCapabilities YOUR_API_KEY both
 ```
 
 ## Output Files
 
-Per-node reports are written to `<dashboard_dir>/<NODE_NAME>/endpoint_report.json`
-(and, in `text`/`both` mode, `endpoint_report.txt` alongside it):
+Per-node reports are written to `<dashboard_dir>/<NODE_NAME>/lenient/endpoint_report.json` (and, in `text`/`both`
+mode, `endpoint_report.txt` alongside it). A [strict run](STRICT_MODE.md) writes `<dashboard_dir>/<NODE_NAME>/endpoint_report.json`
+instead. The summary, `<dashboard_dir>/node_registry_summary.json`, lists the nodes and is the same for both modes:
 
 ```text
-dashboard/data/CESSDA/endpoint_report.json
-dashboard/data/EOSC-Beyond/endpoint_report.json
-dashboard/data/NI4OS-EUROPE/endpoint_report.json
+dashboard/data/node_registry_summary.json
+dashboard/data/CESSDA/lenient/endpoint_report.json
+dashboard/data/EOSC-Beyond/lenient/endpoint_report.json
+dashboard/data/NI4OS-EUROPE/lenient/endpoint_report.json
 ```
 
 The registry summary is written to `<dashboard_dir>/node_registry_summary.json`
-(and `node_registry_summary.txt` in `text`/`both` mode).
+(and `node_registry_summary.txt` in `text`/`both` mode). It is written once, by either mode, and lists the nodes only.
 
 ## Report Structure
 
@@ -144,7 +147,7 @@ The registry summary is written to `<dashboard_dir>/node_registry_summary.json`
   },
   "total_capabilities": 2,
   "available_capabilities": 2,
-  "report_file": "dashboard/data/CESSDA/endpoint_report.json",
+  "report_file": "dashboard/data/CESSDA/lenient/endpoint_report.json",
   "capabilities": [
     {
       "capability_type": "CESSDA Data Catalogue",
@@ -210,8 +213,8 @@ and an empty `capabilities` array, rather than failing the whole run.
 
 ### Registry Summary JSON Report
 
-The summary's `nodes` array is simply every individual node report above,
-collected together:
+The summary lists the nodes the Node Registry gives, and nothing a check found, so it is the same whichever mode ran
+(what was found for a node is in the node's own report above):
 
 ```json
 {
@@ -219,24 +222,20 @@ collected together:
   "registry_source": "https://node-devel.eosc.grnet.gr/federation-backend/tenants/eosc-beyond/nodes",
   "nodes": [
     {
-      "generated": "2026-02-25T14:30:00+00:00",
       "node_name": "CESSDA",
       "node_id": "6",
       "node_pid": "21.T15999/CESSDA",
       "node_endpoint": "https://node-endpoint-staging.beyond.cessda.eu/api/endpoint",
-      "legal_entity": { "name": "...", "ror_id": "..." },
-      "total_capabilities": 5,
-      "available_capabilities": 5,
-      "report_file": "dashboard/data/CESSDA/endpoint_report.json",
-      "capabilities": [ "..." ]
+      "logo": "https://idp.cessda.eu/static/images/CESSDA_logo.svg",
+      "legal_entity": { "name": "...", "ror_id": "..." }
     }
   ]
 }
 ```
 
-(Some other parts of the dashboard — e.g. `index.html` — only read
-`node_name` from each entry here; the rest of the fields are the same
-per-node report written to `endpoint_report.json`.)
+(Earlier versions also put each node's result (`total_capabilities`, `capabilities`, ...) in this file. Those were the
+same as the node's `endpoint_report.json`, and differed between lenient and strict runs, so they are no longer
+written. The dashboard reads the node list from here and the results from the node's reports.)
 
 ## Status Indicators
 
@@ -269,7 +268,7 @@ distinguish 404):
    │   ├─> Record the HTTP status code
    │   └─> Determine Available / Not available
    ├─> Write endpoint_report.json (and endpoint_report.txt in text/both mode)
-   └─> Add the same report as an entry in the registry summary
+   └─> Add the node to the registry summary
 
 3. Write node_registry_summary.json (and node_registry_summary.txt in text/both mode)
 ```
@@ -370,7 +369,7 @@ with open('dashboard/data/node_registry_summary.json') as f:
     data = json.load(f)
 
 for node in data['nodes']:
-    path = f"dashboard/data/{node['node_name']}/endpoint_report.json"
+    path = f"dashboard/data/{node['node_name']}/lenient/endpoint_report.json"
     with open(path) as nf:
         node_data = json.load(nf)
         for cap in node_data['capabilities']:
@@ -395,7 +394,7 @@ already running:
 
 ```bash
 # Run every 15 minutes from the project root
-*/15 * * * * cd /path/to/cessda.pilot-node.tests && java -cp "target/classes:$(cat cp.txt)" eu.cessda.pilotnode.CheckNodeCapabilities YOUR_API_KEY json >> /var/log/endpoint_check.log 2>&1
+*/15 * * * * cd /path/to/cessda.pilot-node.tests && java -cp "target/classes:$(cat cp.txt)" eu.cessda.pilotnode.capabilities.CheckNodeCapabilities YOUR_API_KEY json >> /var/log/endpoint_check.log 2>&1
 ```
 
 ## Troubleshooting

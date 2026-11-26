@@ -12,24 +12,68 @@ The checks can run in two modes.
 Lenient mode is for monitoring: it should keep working when a node is a little untidy. Strict mode is for
 conformance: it reports the untidiness.
 
-> **Status.** The strict core is in place for **Node Capabilities** and **Exchange Services**. It is not yet
-> reachable from the dashboard's menus or REST interface, and the other checks (Service Monitoring, Core Service
-> integrations, Federated Search) have no strict mode yet. Federated Search cannot be strict as it stands: a Front
-> Office capability publishes a web address, not a search API, so there is no URL to take "as published".
+> **Status.** Strict mode covers **Node Capabilities** and **Exchange Services**. **Service Monitoring** and **Core
+> Service integrations** have no strict mode yet. **Federated Search** cannot be strict as it stands: a Front Office
+> capability publishes a web address, not a search API, so there is no URL to take "as published". The Node page
+> is therefore always a lenient result.
+
+## Running strict mode
+
+- **Dashboard.** The *Run checks* menu has a **Mode** choice, *Lenient* (the default) or *Strict*, remembered in the browser. With *Strict* chosen, *Node Capabilities* and *Exchange Services* run strictly; the other checks have
+  no strict mode and would run leniently. On the Node page, *Run All Node Checks* therefore runs only Exchange
+  Services in strict mode, rather than quietly giving lenient results for the others. The strict check that reads a node's endpoints (Exchange Services) needs the node's
+  **strict** `endpoint_report.json`, which only a strict *Node Capabilities* run writes, and that run covers every node
+  in the registry. *Run All Node Checks* therefore runs it first when the node has no report of the chosen mode yet
+  (saying so, as it takes longer), in lenient mode as well as in strict mode. The Node page menu also has a *Node
+  Capabilities* item. A strict check that fails for want of the strict report says where to run Node Capabilities.
+- **REST.** `POST /api/run/node-capabilities`, `POST /api/run/catalogue-services` and `POST /api/run/check-all` take an optional JSON body with `"mode": "strict"`
+  (or `"lenient"`, the default); an unknown mode is a `400`. A strict `catalogue-services` request takes no
+  `catalogueUrl`, because a strict run reads the endpoints the node published. A job's `type` says `(strict)` when it
+  was a strict run.
+- **Check All** in strict mode runs Node Capabilities and then Exchange Services for every node (the other checks have
+  no strict mode). It reads and writes each node's own folder, and its summary says which checks were not run.
+
+## Seeing the results
+
+The results are the strict reports of each node (see below), which can be read from `/api/data/<NODE>/`. The
+dashboard pages do not show them yet; the lenient results are shown as before.
 
 ## Where the results go
 
-Strict results never replace lenient ones. They are written under a `strict` directory that mirrors the data
-directory:
+A node's reports are kept together, and the two modes never overwrite each other:
 
 ```text
-dashboard/data/<NODE>/endpoint_report.json                  lenient
-dashboard/data/strict/<NODE>/endpoint_report.json           strict
-dashboard/data/strict/node_registry_summary.json            strict
+dashboard/data/node_registry_summary.json                   the list of nodes, once, for both modes
+dashboard/data/<NODE>/endpoint_report.json                  strict
+dashboard/data/<NODE>/catalogue_services_report.json        strict
+dashboard/data/<NODE>/lenient/endpoint_report.json          lenient
+dashboard/data/<NODE>/lenient/catalogue_services_report.json  lenient
+...
 ```
 
-Every report has a `mode` field. A strict Exchange Services run reads the **strict** `endpoint_report.json`, so
-Node Capabilities has to be run in strict mode first.
+- **Strict is the node's own folder** because it is meant to become the default, and **lenient has a folder of its
+  own** so that it can be dropped when it is no longer wanted (delete the `lenient` folders; nothing else refers to
+  them).
+- **`node_registry_summary.json` exists once.** It lists the nodes the Node Registry gives (name, id, PID, endpoint,
+  logo, legal entity) and nothing that a check found, so it is the same whichever mode ran. What a mode found for a
+  node is in that node's reports.
+- Every strict report says `"mode": "strict"`. That is how a strict report is told from a lenient report written by
+  an earlier version of the dashboard, which kept lenient reports in `<NODE>/` (see below).
+- A strict Exchange Services run reads the **strict**
+  `endpoint_report.json`, so Node Capabilities has to be run in strict mode first.
+
+### Moving from the earlier layout
+
+Earlier versions wrote lenient reports to `<NODE>/` and (in preview) strict ones to `strict/<NODE>/`. Nothing needs
+to be moved by hand:
+
+- Until a lenient run has written to `<NODE>/lenient/`, the dashboard and the lenient checks use the lenient file
+  that is in `<NODE>/`, if it does not say it is strict. The scheduled lenient Check All populates the `lenient`
+  folders (overnight, if it is enabled).
+- A strict run writes to `<NODE>/` and so replaces those earlier lenient files. A report in `<NODE>/` that does not say
+  `"mode": "strict"` is never taken for a strict one.
+- The old `dashboard/data/strict/` folder is no longer read or written and can be deleted. So can an old
+  `node_registry_summary.txt` or any other file the new layout no longer mentions.
 
 ## Findings
 
@@ -47,7 +91,8 @@ Every strict report has `findings`, counts per severity, and `strict_result`:
       "url": "https://node.example.org/api",
       "expected": "a 2xx answer to GET https://node.example.org/api",
       "actual": "HTTP 404",
-      "hint": "Lenient mode would request https://node.example.org/api/api/service/all instead of the URL as published" }
+      "hint": "Lenient mode would request https://node.example.org/api/api/service/all instead of the URL as published",
+      "fix": "Make the endpoint answer with HTTP 200. Check the address in your Node Endpoint and the service behind it." }
   ]
 }
 ```
@@ -61,10 +106,20 @@ Every strict report has `findings`, counts per severity, and `strict_result`:
 A failure that the node itself declares (for example a capability whose `status` is `MAINTENANCE` that does not
 answer) is an INFO, not an error.
 
+### What to change
+
+A node needs to know what to change in its Node Endpoint, so a finding also has a `fix`: a sentence of guidance for
+the node, shown as **What to change** at the top of the finding's details. It is chosen by the finding's `code` from
+a list in the source (`Guidance`), and is absent when there is nothing for the node to change (for example when the
+fault is the federation's or the dashboard's). `expected`, `actual` and `hint` say what the check saw; `fix` says
+what to do about it.
+
 ## Node Capabilities
 
-The document is checked against the **EOSC Node Endpoint capabilities model**, release 1.1.0
-(<https://github.com/madgeek-arc/eosc-node-endpoint>, module `eosc-node-capabilities-model`).
+The document is checked against the **EOSC Node Endpoint capabilities model**
+(<https://github.com/madgeek-arc/eosc-node-endpoint>, module `eosc-node-capabilities-model`). There is no
+machine-actionable specification and nodes publish different releases of the model, so the dashboard does not keep a
+list of its fields: a field it does not know, such as `id`, is accepted and not reported.
 
 - The node's `node_endpoint` is taken from the Node Registry exactly as given. It must be an absolute http(s) URL.
 - The document is requested with `GET`. A failed request is repeated, up to three attempts, as in lenient mode, and
@@ -72,7 +127,7 @@ The document is checked against the **EOSC Node Endpoint capabilities model**, r
   empty with an `error`: earlier data is **not** kept.
 - The model has **one `endpoint` per capability**. A capability that lists its interfaces in an `endpoints` array
   is not expanded: it has no endpoint (error `endpoint-missing`, with a hint to list each interface as its own
-  capability) and the extra field is a `field-not-in-model` warning.
+  capability).
 - `protocol` and `status` are extensible strings. Values the model recommends (`REST`, `SOAP`, `gRPC`, `SSE`,
   `WebSocket`, `RSocket`; `OPERATIONAL`, `MAINTENANCE`, `UNAVAILABLE`) pass; others such as `OAI-PMH` or `PLANNED`
   are warnings. An absent protocol or status means `REST` and `OPERATIONAL`.
@@ -112,8 +167,50 @@ The capability types and their order are those of lenient mode (`check.catalogue
 
 ## What is not done yet
 
-- The mode toggle in the *Run checks* menu of the index and node pages, and the `mode` setting in the REST requests.
-- Running both modes in the scheduled run.
-- Showing the findings on the Node page and in the index summary.
-- Strict versions of Service Monitoring and Core Service integrations.
-- Checking payloads against an OpenAPI `api_spec` (only the EOSC-Lot-1 releases are checked so far).
+- A strict Service Monitoring and Core Service integrations, and a strict Federated Search (see the status above).
+- Showing the strict results on the Node page and the index page.
+- Controlled vocabularies for `protocol` and `status`. Until there are some, the values the model recommends are kept
+  in `CapabilitiesModel`; the model is at
+  <https://github.com/madgeek-arc/eosc-node-endpoint/tree/main/eosc-node-capabilities-model>.
+
+## For developers
+
+### Source layout
+
+The code of each category is in the package of that name under `eu.cessda.pilotnode`. Strict code and code that
+both modes use are in the category package; the lenient code is in its `lenient` subpackage; what is shared across
+categories is in `common`:
+
+| Package | Strict and shared | `lenient/` |
+| ------- | ----------------- | ---------- |
+| `capabilities` | `StrictNodeCapabilities`, `CapabilitiesModel`, `CheckNodeCapabilities` (the run over the registry, which both modes use) | `LenientNodeCapabilities` |
+| `catalogue` | `StrictCatalogueServices`, `StrictCatalogueSelector`, `CatalogueCandidates`, `CatalogueReport`, the format adapters | `CheckCatalogueServices`, `CatalogueSelector` |
+| `monitoring` | `ArgoMetrics` | `CheckServiceUptime` |
+| `core` | `ArgoStatus` | `CheckCoreIntegrations` |
+| `federatedsearch` | | `CheckOtherMetrics` |
+| `common` | `CheckMode`, `ReportFiles`, `Finding`, `Findings`, `Guidance` | |
+
+`CheckAll`, `CheckAllScheduler` and `CheckRunnerController` are in the root package: they choose the mode. The tests
+are in the same packages.
+
+### Writing a strict check
+
+- Request what the node published, as published. Report what differs as a `Finding` (`Findings.error`, `warning`
+  or `info`), with a stable `code`, and put the guidance for the node in `Guidance` under that code: an
+  error or a warning should have an entry; `GuidanceTest` checks a sample of them.
+- Write the report with `findings.writeTo(report, mapper)`, into `CheckMode.STRICT.nodeDir(dataDir, node)`. Read
+  other reports with `ReportFiles`, which knows both layouts and never takes a lenient report for a strict one.
+- The package structure is checked by `LenientIsRemovableTest`.
+
+### Removing lenient mode
+
+When lenient mode is no longer wanted:
+
+1. Delete the `lenient` packages (and their tests) and the `lenient` folders under `dashboard/data/<NODE>/`.
+2. Edit the four classes that choose a mode, the only ones allowed to refer to a `lenient` package:
+   `CheckAll`, `CheckAllScheduler`, `CheckRunnerController` and `CheckNodeCapabilities`.
+   `LenientIsRemovableTest` fails if any other class outside a `lenient` package refers to one.
+3. Remove the Mode menu and the lenient panels from the static pages (`scripts.js`, `index.html`, `node.html`).
+
+`CatalogueSelector` (lenient) is where `CheckAll` and the controller get the strict check's list of candidate
+endpoints from today (`candidateSource()`); that is the one piece to move into `catalogue` when step 1 is done.

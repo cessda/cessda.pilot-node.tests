@@ -43,6 +43,14 @@
         <svg viewBox="0 0 10 6" fill="currentColor" aria-hidden="true"><path d="M0 0l5 6 5-6z"/></svg>
       </button>
       <div class="run-dropdown" id="run-dropdown" role="menu">
+        <div class="run-mode" role="group" aria-labelledby="run-mode-label">
+          <div class="run-mode-head">
+            <span class="run-mode-title" id="run-mode-label">Mode</span>
+            <label class="run-mode-option"><input type="radio" name="run-mode" value="lenient" onchange="setRunMode(this.value)" checked> Lenient</label>
+            <label class="run-mode-option"><input type="radio" name="run-mode" value="strict" onchange="setRunMode(this.value)"> Strict</label>
+          </div>
+          <div class="run-mode-help" id="run-mode-help"></div>
+        </div>
         <div class="run-dropdown-header">Node-specific checks</div>
         <div class="run-item" role="menuitem">
           <div class="run-item-info">
@@ -50,6 +58,13 @@
             <div class="run-item-desc">All four checks below, one after another, for this node</div>
           </div>
           <button class="run-btn" id="btn-run-all-node" onclick="runAllNodeChecks()">Run all</button>
+        </div>
+        <div class="run-item" role="menuitem">
+          <div class="run-item-info">
+            <div class="run-item-label">Node Capabilities</div>
+            <div class="run-item-desc">Every node in the registry · endpoint_report.json</div>
+          </div>
+          <button class="run-btn" id="btn-node-capabilities" onclick="runCheck('node-capabilities')">Run</button>
         </div>
         <div class="run-item" role="menuitem">
           <div class="run-item-info">
@@ -129,11 +144,11 @@
     const base = `/api/data/${encodeURIComponent(nodeName)}`;
 
     const [ep, cat, argo, fom, core] = await Promise.all([
-      tryFetchJSON(`${base}/endpoint_report.json`),
-      tryFetchJSON(`${base}/catalogue_services_report.json`),
-      tryFetchJSON(`${base}/argo_uptime_report.json`),
-      tryFetchJSON(`${base}/front_office_metrics_report.json`),
-    tryFetchJSON(`${base}/core_integrations_report.json`),
+      fetchLenientReport(nodeName, 'endpoint_report.json'),
+      fetchLenientReport(nodeName, 'catalogue_services_report.json'),
+      fetchLenientReport(nodeName, 'argo_uptime_report.json'),
+      fetchLenientReport(nodeName, 'front_office_metrics_report.json'),
+    fetchLenientReport(nodeName, 'core_integrations_report.json'),
   ]);
 
     if (!ep && !cat && !argo && !fom) {

@@ -211,6 +211,13 @@ public final class FakeNode implements AutoCloseable {
         return r;
     }
 
+    /** As {@link #report}, marked as written by a strict run, which is how a strict report is told from an older lenient one. */
+    public static ObjectNode strictReport(String nodePid, ObjectNode... rows) {
+        ObjectNode r = report(nodePid, rows);
+        r.put("mode", "strict");
+        return r;
+    }
+
     public static ObjectNode report(String nodePid, ObjectNode... rows) {
         ObjectNode r = MAPPER.createObjectNode();
         r.put("node_name", "N");

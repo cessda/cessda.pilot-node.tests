@@ -1,6 +1,6 @@
 # Check Catalogue Services
 
-`eu.cessda.pilotnode.CheckCatalogueServices` (a plain Java class, not a
+`eu.cessda.pilotnode.catalogue.lenient.CheckCatalogueServices` (a plain Java class, not a
 shell script) checks the availability of the Exchange services listed in a
 Node's Resource Catalogue and generates a JSON report. On the dashboard
 this check is labelled **Exchange Services**.
@@ -22,7 +22,8 @@ Services** entry in a node's own Run checks menu on `node.html`, or as part
 of **Check All** (see [Dashboard](DASHBOARD_README.md)).
 
 Triggered via: `POST /api/run/catalogue-services` with JSON body
-`{ "node": "...", "catalogueUrl": "...", "nodePid": "..." }`. `catalogueUrl`
+`{ "node": "...", "catalogueUrl": "...", "nodePid": "...", "mode": "strict" }` (`mode` is optional; a
+[strict run](STRICT_MODE.md#running-strict-mode) takes no `catalogueUrl`). `catalogueUrl`
 is the node's Resource Catalogue endpoint, read from that node's
 `endpoint_report.json` (capability_type `Resource Catalogue`) — the
 dashboard's JavaScript does this lookup automatically before calling the
@@ -39,7 +40,7 @@ putting the compiled classes and the project's runtime dependencies
 ```bash
 mvn compile dependency:build-classpath -Dmdep.outputFile=cp.txt
 java -cp "target/classes:$(cat cp.txt)" \
-  eu.cessda.pilotnode.CheckCatalogueServices NODE_NAME [api_base_url] [quantity] [dashboard_dir] [node_pid]
+  eu.cessda.pilotnode.catalogue.lenient.CheckCatalogueServices NODE_NAME [api_base_url] [quantity] [dashboard_dir] [node_pid]
 ```
 
 ### Arguments
@@ -57,24 +58,25 @@ java -cp "target/classes:$(cat cp.txt)" \
 ```bash
 # Write a JSON report to the default dashboard data directory,
 # querying the node's own Resource Catalogue
-java -cp "target/classes:$(cat cp.txt)" eu.cessda.pilotnode.CheckCatalogueServices \
+java -cp "target/classes:$(cat cp.txt)" eu.cessda.pilotnode.catalogue.lenient.CheckCatalogueServices \
   CESSDA https://datacatalogue.cessda.eu/api
 
 # Retrieve up to 20 services if falling back to the Sandbox catalogue
-java -cp "target/classes:$(cat cp.txt)" eu.cessda.pilotnode.CheckCatalogueServices \
+java -cp "target/classes:$(cat cp.txt)" eu.cessda.pilotnode.catalogue.lenient.CheckCatalogueServices \
   CESSDA https://datacatalogue.cessda.eu/api 20
 
 # Write to an explicit dashboard path, with a node_pid fallback
-java -cp "target/classes:$(cat cp.txt)" eu.cessda.pilotnode.CheckCatalogueServices \
+java -cp "target/classes:$(cat cp.txt)" eu.cessda.pilotnode.catalogue.lenient.CheckCatalogueServices \
   CESSDA https://datacatalogue.cessda.eu/api 10 /path/to/dashboard/data 21.T15999/CESSDA
 ```
 
 ## Output Files
 
-The report is written to `<dashboard_dir>/<NODE_NAME>/catalogue_services_report.json`:
+The report is written to `<dashboard_dir>/<NODE_NAME>/lenient/catalogue_services_report.json` (a strict run writes
+`<dashboard_dir>/<NODE_NAME>/catalogue_services_report.json`):
 
 ```text
-dashboard/data/CESSDA/catalogue_services_report.json
+dashboard/data/CESSDA/lenient/catalogue_services_report.json
 ```
 
 There is no text/terminal-only output format — JSON is always written; the
@@ -111,7 +113,7 @@ CESSDA Vocabulary Service                         Available
 CESSDA European Language Social Science Thesaurus Available
 CESSDA Data Management Expert Guide               Available
 CESSDA Data Archiving Guide                       Available
-Report generated: JSON: dashboard/data/CESSDA/catalogue_services_report.json
+Report generated: JSON: dashboard/data/CESSDA/lenient/catalogue_services_report.json
 ```
 
 ### JSON Report Format

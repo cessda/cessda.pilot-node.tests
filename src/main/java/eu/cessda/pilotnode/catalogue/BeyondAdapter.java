@@ -17,16 +17,17 @@
 
 package eu.cessda.pilotnode.catalogue;
 
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.node.ObjectNode;
+
 import java.net.URI;
 import java.net.http.HttpClient;
 import java.util.List;
 import java.util.Optional;
 
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
-import com.fasterxml.jackson.databind.node.ObjectNode;
+import static eu.cessda.pilotnode.common.JsonConstants.RESULTS_FIELD;
 
-import eu.cessda.pilotnode.CheckCatalogueServices;
 
 /**
  * The EOSC Beyond Resource Catalogue's own list ({@code <base>/api/service/all}). It already is in the shape
@@ -36,6 +37,11 @@ import eu.cessda.pilotnode.CheckCatalogueServices;
 public final class BeyondAdapter implements CatalogueAdapter {
 
     static final String FORMAT = "EOSC Beyond service list";
+
+    public static final String CONTEXT_FIELD = "@context";
+    public static final String FACETS_FIELD = "facets";
+    public static final String NAME_FIELD = "name";
+    public static final String SERVICE_FIELD = "service";
 
     @Override
     public String id() {
@@ -49,18 +55,18 @@ public final class BeyondAdapter implements CatalogueAdapter {
 
     @Override
     public List<URI> probeUrls(URI endpoint) {
-        return List.of(CheckCatalogueServices.buildApiServiceUrl(endpoint));
+        return List.of(buildApiServiceUrl(endpoint));
     }
 
     @Override
     public Optional<String> detect(JsonNode sample) {
-        if (!sample.isObject() || sample.has("@context") || !sample.path("results").isArray()) {
+        if (!sample.isObject() || sample.has(CONTEXT_FIELD) || !sample.path(RESULTS_FIELD).isArray()) {
             return Optional.empty();
         }
-        JsonNode results = sample.get("results");
+        JsonNode results = sample.get(RESULTS_FIELD);
         if (results.isEmpty()) {
             // An empty list could be any format; the Beyond catalogue's list carries its facets.
-            return sample.has("facets") ? Optional.of(FORMAT) : Optional.empty();
+            return sample.has(FACETS_FIELD) ? Optional.of(FORMAT) : Optional.empty();
         }
         int looked = 0;
         for (JsonNode item : results) {
@@ -68,7 +74,7 @@ public final class BeyondAdapter implements CatalogueAdapter {
                 break;
             }
             // Lot-1 wraps each service as {id, service: {...}}; a Beyond list has the service's fields directly.
-            if (!item.isObject() || item.path("name").asText("").isBlank() || item.path("service").isObject()) {
+            if (!item.isObject() || item.path(NAME_FIELD).asText("").isBlank() || item.path(SERVICE_FIELD).isObject()) {
                 return Optional.empty();
             }
         }
@@ -78,5 +84,30 @@ public final class BeyondAdapter implements CatalogueAdapter {
     @Override
     public CatalogueList read(CatalogueContext context, Probe probe, String format, HttpClient http, ObjectMapper mapper) {
         return new CatalogueList((ObjectNode) probe.root(), List.of(), List.of(), false);
+    }
+
+    /**
+     * Strips a trailing {@code /api} or {@code /api/} from
+     * {@code url}, then appends {@code /api/service/all}, ensuring
+     * exactly one {@code /} between the base and the path.
+     */
+    public static URI buildApiServiceUrl(URI url) {
+        String base = url.toString();
+        // Some nodes advertise the service list itself (…/api/service/all) as their Resource Catalogue
+        // endpoint; appending the path again would ask for …/api/service/all/api/service/all.
+        if (base.endsWith("/api/service/all") || base.endsWith("/api/service/all/")) {
+            return URI.create(base.endsWith("/") ? base.substring(0, base.length() - 1) : base);
+        }
+        if (url.toString().endsWith("/api/")) {
+            base = base.substring(0, base.length() - 5);
+        } else if (base.endsWith("/api")) {
+            base = base.substring(0, base.length() - 4);
+        }
+        // Remove any remaining trailing slash before appending.
+        base = base.stripTrailing();
+        if (base.endsWith("/")) {
+            base = base.substring(0, base.length() - 1);
+        }
+        return URI.create(base + "/api/service/all");
     }
 }
