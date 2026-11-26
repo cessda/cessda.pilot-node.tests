@@ -148,6 +148,7 @@ public final class LenientNodeCapabilities implements NodeCapabilities {
     /** Outcome of fetching a node's capability list: the parsed body, or why it could not be had. */
     private record Fetch(JsonNode root, String failure) {}
 
+    @Override
     public ObjectNode check(Node node) throws IOException, InterruptedException {
 
         log.log(Level.INFO, """

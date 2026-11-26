@@ -131,6 +131,7 @@ public final class StrictNodeCapabilities implements NodeCapabilities {
     }
 
     /** Checks one node, writes its {@code endpoint_report.json} in the strict directory, and returns the report. */
+    @Override
     public ObjectNode check(Node node) throws InterruptedException {
         Findings findings = new Findings();
         ArrayNode rows = mapper.createArrayNode();
